@@ -154,6 +154,7 @@ jobs:
           else
             echo "已有開啟中的同名 issue，略過。"
           fi
+          exit 1   # 通知後仍維持 workflow 紅燈，不能把「未建立 PR」顯示成成功
 
       - name: 掛點失效（smoke 紅）→ 開 issue 通知
         if: steps.chk.outputs.changed == 'true' && steps.merge.outcome == 'success' && steps.smoke.outcome == 'failure'
@@ -168,3 +169,4 @@ jobs:
           else
             echo "已有開啟中的同名 issue，略過。"
           fi
+          exit 1   # 通知後仍維持 workflow 紅燈，不能把「未建立 PR」顯示成成功
