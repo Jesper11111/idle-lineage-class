@@ -101,7 +101,10 @@
   function migrationKey(slot) { return MIGRATION_PREFIX + (slot == null ? currentSlot : slot); }
   function migrationDone(slot) { try { return localStorage.getItem(migrationKey(slot)) === '1'; } catch (e) { return false; } }
   function markMigrationDone(slot) { try { localStorage.setItem(migrationKey(slot), '1'); return true; } catch (e) { return false; } }
-  function blockedInstanceMap(map) { return /^antharas_(?:nest_[123]|lair)$/.test(String(map || '')); }
+  function blockedInstanceMap(map) {
+    map = String(map || '');
+    return /^antharas_(?:nest_[123]|lair)$/.test(map) || /^siege_v2_/.test(map);
+  }
   function readTs()     { try { return +localStorage.getItem(tsKey()) || 0; } catch (e) { return 0; } }
   function readMap()    { try { return localStorage.getItem(mapKey()) || ''; } catch (e) { return ''; } }
   // 攀登狀態:原作 saveGame 不存 state.prideClimb/...(且 loadGame 一律回村),所以由外掛自己記一份,
@@ -1225,9 +1228,11 @@
       return;
     }
     if (blockedInstanceMap(savedMap)) {
-      // 🐉 安塔瑞斯副本進度只存在暫態 state.antharas，重載即視為挑戰失敗；不得把 DB.maps 裡的怪池當一般地圖續算。
-      console.info('[AFK] 上次位於侵蝕的安塔瑞斯巢穴：副本不支援離線結算。');
-      skipNote('上次位於「侵蝕的安塔瑞斯巢穴」副本：離線視同離場，期間不結算戰鬥收益。');
+      // 🐉 安塔瑞斯與 🏰 攻城 V2 的關卡進度只存在暫態 state；重載即視為離場，
+      // 不得把 DB.maps 裡可能存在的怪池當一般狩獵圖續算，否則可繞過副本流程刷收益。
+      var blockedName = /^siege_v2_/.test(savedMap) ? '攻城戰 V2' : '侵蝕的安塔瑞斯巢穴';
+      console.info('[AFK] 上次位於' + blockedName + '：特殊副本不支援離線結算。');
+      skipNote('上次位於「' + blockedName + '」特殊副本：離線視同離場，期間不結算戰鬥收益。');
       return;
     }
     // 🌑 黑暗妖精聖地兩間純 BOSS 房（吉爾塔斯／冥皇丹特斯）：比照「離線＝線上照跑」，照常結算——
