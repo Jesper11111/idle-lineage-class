@@ -315,6 +315,7 @@ function _slotOfflineMeta(n, sum){
     return { roleFp: sum.roleFp || '', offlineId: id, savedHunt: sum.offlineHunt || null };
 }
 function _slotOfflineStatusNow(meta, activeRoleFps){
+    if (window.__afkLegacyOfflineOwnsSettlement === true) return null;   // 🔌 舊版離線引擎接手：新版 checkpoint 已停寫，不顯示凍結徽章
     if(!meta) return null;
     if(meta.roleFp && activeRoleFps && activeRoleFps.has(String(meta.roleFp))) return null;   // 有分頁正在玩＝補幀軌，不是離線掛機
     let src = meta.savedHunt;

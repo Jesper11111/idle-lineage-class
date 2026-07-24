@@ -641,6 +641,11 @@
         _offlineRestoredCatchupKey = '';
         return true;
     }
+    // 🔌 加掛版補丁：離線收益由 afk-offline 實戰模擬引擎獨占；以下新版 checkpoint／結算／事件鉤子全部不安裝。
+    //    此標記也是 afk-offline 的 fail-closed 握手：看不到標記就拒絕啟動，避免快取混搭造成雙重發獎。
+    window.__afkLegacyOfflineOwnsSettlement = true;
+    return;
+
     window.offlineCatchupSaveCommitted = _offlineCommitRestoredCatchup;
 
     function _offlineReadClaimAt(now) {
