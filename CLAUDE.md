@@ -2,7 +2,7 @@
 
 ## 專案性質與架構（2026-07-19 起・純上游鏡像＋外掛層）
 
-- 網頁放置遊戲。遊戲本體由原作者(巴哈姆特 秋玥)製作,原版:**https://shines871.github.io/idle-lineage-class/**;本站(加掛版):https://pp771007.github.io/idle-lineage-class/。
+- 網頁放置遊戲。遊戲本體由原作者(巴哈姆特 秋玥)製作,原版:**https://shines871.github.io/idle-lineage-class/**;本站(加掛版):https://jesper11111.github.io/idle-lineage-class/。
 - **架構=「上游原版鏡像＋外掛層」**:核心(`js/NN-*.js`、`css/*`、`index.html`、`assets/`、`public/`)永遠是上游原文/原檔的位元組級鏡像;我們的所有功能都在**外掛層**——根目錄 `afk-*.js`(49 支)＋`sw.js`(PWA,上游沒有)＋極少量**錨點式核心補丁**(`scripts/apply-core-patches.mjs`)。
 - 歷史一句話:2026-07-06 曾與上游分家獨立維護(直接改核心);2026-07-19 起改回本架構(`rearch-plugins`),核心修改全數退回外掛/補丁,以便隨時整包跟進上游。舊的 3-way 逐功能移植 SOP 已作廢。
 - 上游本機 clone:`D:/otherPersonRepos/idle-lineage-class`。**引用上游做任何判斷前先 `git -C <clone> fetch`**——舊 clone 會讓「上游也是這樣」的結論整個相反(踩過)。
@@ -56,7 +56,7 @@
 4. 更新 `upstream-checkpoint.json` → commit(不主動 push)。
 5. 後續提醒:小百科/掉落查詢內容要另跑 `/update-wiki` 對齊(看上游 BASE..TARGET 的遊戲資料 diff);上游 commit message 全是「1」不可依賴,一律讀 diff。
 
-CI 版:GitHub Actions `sync-upstream.yml`(**只有 `workflow_dispatch`,無 GitHub schedule**;**目前完全沒有定時觸發,同步時機由人決定**——`cf-sync-trigger/` 的 Cloudflare Worker 還在,但 cron 已於 2026-07-21 清空(`crons = []`,API 查 schedules 為空)。要恢復每天自動:把 `wrangler.toml` 的 `crons` 填回 `["20 10 * * *"]`(=台灣 18:20)再 `npx wrangler triggers deploy`;不用 GitHub 自家 schedule 是因為它常延遲 1~2 小時)做同一件事:ls-remote 比 checkpoint 早退 → 鏡像資產(`rsync --delete`)→ sync 腳本(AFK_SKIP_SMOKE=1)→ smoke → **全綠直推 main(Pages 自動部署)+ 發 Release(tag `vYYYYMMDD-HHMM`,標題帶原作者版本號)**;錨點失效/smoke 紅 → 各開 issue、不推壞版。commit 用路徑白名單 add(CI 臨時裝的 playwright/package.json 不進版控)。**因此 `assets/`、`public/` 下不可放我方獨有檔案**(會被 `--delete` 刪)——外掛需要圖優先引用上游既有檔(例:afk-training 背景用 `assets/area/1920x1080/新兵修練場.jpg`);真的要自有素材就放 assets 之外,或改 workflow 加 exclude。
+CI 版:GitHub Actions `sync-upstream.yml`(**只有 `workflow_dispatch`,無 GitHub schedule**;目前完全沒有定時觸發,同步時機由人決定)做同一件事:ls-remote 比 checkpoint 早退 → 鏡像資產(`rsync --delete`)→ sync 腳本(AFK_SKIP_SMOKE=1)→ smoke → **全綠只推 `sync/upstream-*` 分支並建立 PR,絕不直推 main**;錨點失效/smoke 紅 → 各開 issue、不建立 PR。人工 review/merge 後,`deploy-pages.yml` 才部署正式站,`release-synced-upstream.yml` 才發 Release。commit 用路徑白名單 add(CI 臨時裝的 playwright/package.json 不進版控)。**因此 `assets/`、`public/` 下不可放我方獨有檔案**(會被 `--delete` 刪)——外掛需要圖優先引用上游既有檔;真的要自有素材就放 assets 之外,或改 workflow 加 exclude。
 
 ## 目前的外掛(49 支;載入順序見 `scripts/afk-plugin-block.html`)
 
@@ -168,7 +168,7 @@ CI 版:GitHub Actions `sync-upstream.yml`(**只有 `workflow_dispatch`,無 GitHu
 5. `apply-core-patches.mjs --check` exit 0(核心補丁都在)。
 6. commit 階段**不** bump/stamp——那是 push/發版流程的事(使用者明訂:功能做完就 commit,等說要 push 才跑 /prepush 一次處理)。
 
-**push 後要等 GitHub Pages 重建**(~40s-1min)才算上線:輪詢丟背景跑(`run_in_background`,不要同步 sleep 佔住回合),判準=curl 線上 `version.json`/`?v=`(不要只信 pages/builds API,連續 push 時它會落後);BUILT 才通知使用者。
+**合併進 main 後要等 `deploy-pages.yml` 成功**才算上線:再以線上 `version.json`/`?v=` 驗證內容(不要只信 workflow 綠燈);確認部署版本吻合後才通知使用者。
 
 ## 暫存 / 測試
 

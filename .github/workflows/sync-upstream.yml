@@ -1,8 +1,8 @@
 name: 同步上游原版
 
-# 只在被觸發時檢查原作者 repo（定時由 cf-sync-trigger Worker 每天台灣 18:20 打 workflow_dispatch）：有更新 → 鏡像資產 + 核心整包換 + 套錨點補丁 + 重產 manifest/版本 + smoke，
-# 全綠直接推 main（Pages 自動部署）並發 Release（標題帶原作者版本號）。
-# 失敗不推壞版本：錨點失效/同步錯誤、或外掛掛點 smoke 紅 → 各開 issue 通知，等人工處理。
+# 只在手動觸發時檢查原作者 repo：有更新 → 鏡像資產 + 核心整包換 + 套錨點補丁 + 重產 manifest/版本 + smoke。
+# 全綠只建立同步分支與 PR，絕不直接推 main；人工 review/merge 後才由 deploy-pages.yml 上線。
+# 失敗不建立 PR：錨點失效/同步錯誤、或外掛掛點 smoke 紅 → 各開 issue 通知，等人工處理。
 
 on:
   workflow_dispatch: {}
@@ -10,6 +10,7 @@ on:
 permissions:
   contents: write
   issues: write
+  pull-requests: write
 
 concurrency:
   group: sync-upstream
@@ -86,9 +87,11 @@ jobs:
         continue-on-error: true
         run: node scripts/smoke-hooks.mjs
 
-      - name: 提交並推送 main（全綠才推；Pages 隨之自動部署）
+      - name: 建立上游同步 PR（全綠才建立；不直推 main）
         if: steps.chk.outputs.changed == 'true' && steps.merge.outcome == 'success' && steps.smoke.outcome == 'success'
-        id: push
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -96,28 +99,46 @@ jobs:
           git add -A -- index.html js/ css/ assets/ public/ sw.js version.json anim-manifest.json assets-manifest.json upstream-checkpoint.json
           if git diff --cached --quiet; then
             echo "同步後與現況一致，無需 commit。"
-            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            echo "created=false" >> "$GITHUB_OUTPUT"
           else
+            BASE_BRANCH="sync/upstream-${{ steps.up.outputs.sha_short }}"
+            BRANCH="$BASE_BRANCH"
+            EXISTING=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --base main --head "$BASE_BRANCH" --json url --jq '.[0].url // empty')
+            if [ -n "$EXISTING" ]; then
+              echo "同一上游版本已有待審 PR：$EXISTING"
+              echo "created=false" >> "$GITHUB_OUTPUT"
+              echo "url=$EXISTING" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if git ls-remote --exit-code --heads origin "$BRANCH" > /dev/null 2>&1; then
+              BRANCH="${BASE_BRANCH}-run-${GITHUB_RUN_NUMBER}"
+            fi
+            git switch -c "$BRANCH"
             git commit -m "chore(sync): 同步上游原版 ${{ steps.up.outputs.ver }}（${{ steps.up.outputs.sha_short }}）"
-            git push
-            echo "pushed=true" >> "$GITHUB_OUTPUT"
-          fi
+            git push -u origin "$BRANCH"
 
-      - name: 打 tag + 發 Release（標題帶原作者版本號）
-        if: steps.chk.outputs.changed == 'true' && steps.push.outputs.pushed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="v$(TZ='Asia/Taipei' date +%Y%m%d-%H%M)"
-          SHA="$(git rev-parse HEAD)"
-          GAME="${{ steps.up.outputs.title }}"
-          VER="${{ steps.up.outputs.ver }}"
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            echo "已有同名 release $TAG，略過（避免重複）。"
-          else
-            # ⚠️ 這段文字與 .claude/skills/release/SKILL.md 的說明範本必須逐字一致（人工發版走那支，兩邊同一套）。
-            printf '《%s》加掛版 — 已同步原作者最新版（原版版本 %s），外掛層照常疊加、不改動原遊戲內容（手機版面／掉落查詢／小百科／木人場／賽狗場等，遊戲內「外掛開關」可逐一管理）。\n\n原始碼請由下方 Source code (zip / tar.gz) 下載。\n線上遊玩：https://pp771007.github.io/idle-lineage-class/\n' "$GAME" "$VER" > /tmp/relnotes.md
-            gh release create "$TAG" --target "$SHA" --title "《${GAME}》加掛版 ${TAG}（原版 ${VER}）" --notes-file /tmp/relnotes.md
+            BODY="$(mktemp)"
+            cat > "$BODY" <<'EOF'
+          ## 自動同步結果
+
+          此 PR 由「同步上游原版」workflow 建立，**不會自動合併或直接部署**。
+
+          已通過：
+          - 核心同步與存檔 I/O 契約檢查
+          - 所有錨點式核心補丁
+          - Playwright 外掛掛點與離線引擎互斥 smoke
+
+          請人工檢查上游差異與遊戲行為；合併進 `main` 後，GitHub Pages 才會自動部署。
+          EOF
+            PR_URL=$(gh pr create \
+              --repo "$GITHUB_REPOSITORY" \
+              --base main \
+              --head "$BRANCH" \
+              --title "chore(sync): 同步上游原版 ${{ steps.up.outputs.ver }}（${{ steps.up.outputs.sha_short }}）" \
+              --body-file "$BODY")
+            echo "created=true" >> "$GITHUB_OUTPUT"
+            echo "url=$PR_URL" >> "$GITHUB_OUTPUT"
+            echo "已建立待審 PR：$PR_URL"
           fi
 
       - name: 同步失敗（錨點/腳本）→ 開 issue 通知
@@ -129,7 +150,7 @@ jobs:
           if [ "$existing" = "0" ]; then
             gh issue create \
               --title "⚠️ 同步腳本失敗（上游 ${{ steps.up.outputs.ver }}），可能是核心補丁錨點被改壞" \
-              --body "自動同步在 sync-upstream.mjs 階段失敗。常見兩種：①上游改寫了 apply-core-patches.mjs 依賴的錨點字串；②check-save-io.mjs 擋下（上游動到存檔寫入/壓縮 _lzSet 那組，afk-synccompress 可能寫壞存檔，需人工複核後 --accept）。已暫停推送。請本機跑 /sync-upstream 處理後再推，詳見本次 workflow run log。"
+              --body "自動同步在 sync-upstream.mjs 階段失敗。常見兩種：①上游改寫了 apply-core-patches.mjs 依賴的錨點字串；②check-save-io.mjs 擋下（上游動到存檔寫入/壓縮 _lzSet 那組，afk-synccompress 可能寫壞存檔，需人工複核後 --accept）。未建立同步 PR。請本機跑 /sync-upstream 處理，詳見本次 workflow run log。"
           else
             echo "已有開啟中的同名 issue，略過。"
           fi
@@ -143,7 +164,7 @@ jobs:
           if [ "$existing" = "0" ]; then
             gh issue create \
               --title "⚠️ 原作者更新了（${{ steps.up.outputs.ver }}），但外掛掛點失效，需人工處理" \
-              --body "自動同步完成，但 Playwright 冒煙測試發現有外掛沒成功 hook（原作者可能改了 DOM 結構／id）。已暫停推送，避免推出外掛失效的版本。請本機跑 /sync-upstream 並修正失效的外掛掛點，詳見本次 workflow run log。"
+              --body "自動同步完成，但 Playwright 冒煙測試發現有外掛沒成功 hook（原作者可能改了 DOM 結構／id）。未建立同步 PR，避免壞版本進入審查與部署。請本機跑 /sync-upstream 並修正失效的外掛掛點，詳見本次 workflow run log。"
           else
             echo "已有開啟中的同名 issue，略過。"
           fi

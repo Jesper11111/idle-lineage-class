@@ -15,6 +15,6 @@ crons = []
 # GH_PAT 不放這裡,用:  npx wrangler secret put GH_PAT
 # 觸發目標(repo / workflow / 分支)放成可改的環境變數,程式碼讀 env.*
 [vars]
-GH_REPO = "pp771007/idle-lineage-class"
+GH_REPO = "Jesper11111/idle-lineage-class"
 GH_WORKFLOW = "sync-upstream.yml"
 GH_REF = "main"

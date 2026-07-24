@@ -29,7 +29,7 @@ npx wrangler deploy
 
 ```bash
 gh api --method POST -H "Accept: application/vnd.github+json" \
-  /repos/pp771007/idle-lineage-class/actions/workflows/sync-upstream.yml/dispatches -f ref=main
+  /repos/Jesper11111/idle-lineage-class/actions/workflows/sync-upstream.yml/dispatches -f ref=main
 ```
 
 回 204 代表 dispatch 成功;到 GitHub Actions 頁可看到一筆 `workflow_dispatch` 的 run。
