@@ -4,6 +4,11 @@ name: 部署 GitHub Pages
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '.github/**'
+      - 'CLAUDE.md'
+      - 'README.md'
+      - 'cf-sync-trigger/**'
   workflow_dispatch: {}
 
 permissions:
