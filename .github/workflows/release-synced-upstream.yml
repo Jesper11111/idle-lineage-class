@@ -1,0 +1,38 @@
+name: 發布已審核的上游同步
+
+# 上游同步 PR 必須先人工合併；合併後才補發 Release。
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: >-
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'sync/upstream-')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: 打 tag 並發布 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          TAG="v$(TZ='Asia/Taipei' date +%Y%m%d-%H%M)"
+          VER=$(sed -n "s/.*GAME_VERSION = '\([^']*\)'.*/\1/p" js/00-data.js | head -1); [ -n "$VER" ] || VER='?'
+          GAME=$(sed -n 's/.*<title>\([^<]*\)<\/title>.*/\1/p' index.html | head -1); [ -n "$GAME" ] || GAME='放置天堂'
+          SITE="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "已有同名 release $TAG，略過（避免重複）。"
+          else
+            printf '《%s》加掛版 — 已同步原作者最新版（原版版本 %s），並經 PR 人工審核後合併。\n\n原始碼請由下方 Source code (zip / tar.gz) 下載。\n線上遊玩：%s\n' "$GAME" "$VER" "$SITE" > /tmp/relnotes.md
+            gh release create "$TAG" --target "$MERGE_SHA" --title "《${GAME}》加掛版 ${TAG}（原版 ${VER}）" --notes-file /tmp/relnotes.md
+          fi

@@ -4,7 +4,7 @@
 
 ## ▶ 立即遊玩
 
-### 👉 https://pp771007.github.io/idle-lineage-class/
+### 👉 https://jesper11111.github.io/idle-lineage-class/
 
 用電腦或手機的瀏覽器點開網址就能玩，不用安裝、不用註冊。
 
@@ -27,7 +27,7 @@
 
 ## 原作者與版本
 
-遊戲本體由 **巴哈姆特 秋玥** 製作。本站以原作為基礎加掛上面那些功能，**自 2026 年 7 月起獨立維護、不再跟進原作者的後續版本**（伺服器永久開放）。加掛版有自己的版本號（首頁可看到「加掛版 vX.Y.Z」），每次更新內容見 [Releases](https://github.com/pp771007/idle-lineage-class/releases)。
+遊戲本體由 **巴哈姆特 秋玥** 製作。本站以原作為基礎加掛上面那些功能；原作者更新會先進入獨立 PR，通過自動測試與人工審查、合併後才部署到正式站。加掛版有自己的版本號（首頁可看到「加掛版 vX.Y.Z」），每次更新內容見 [Releases](https://github.com/Jesper11111/idle-lineage-class/releases)。
 
 - 原版遊戲：https://shines871.github.io/idle-lineage-class/
 - 巴哈討論串：https://forum.gamer.com.tw/C.php?page=1&bsn=84452&snA=8362&tnum=273
