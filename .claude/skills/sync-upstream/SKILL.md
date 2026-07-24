@@ -1,45 +1,65 @@
 ---
 name: sync-upstream
-description: 把本 repo 同步到原作者(shines871)最新版——核心整包換上游原文、資產鏡像、套錨點補丁、重產 manifest/版本、smoke。當使用者說「同步原版」「同步上游」「更新上游」「跟進原作者」或 /sync-upstream 時使用。
+description: 把本 repo 同步到 pp771007/idle-lineage-class 最新版，鏡像 PP 完整成品後重套本地舊傭兵政策、離線安全補丁與精靈傭兵技能例外，再重產 manifest、版本並測試。當使用者說「同步 PP」「同步上游」「更新上游」「跟進 PP」或 /sync-upstream 時使用。
 ---
 
-# /sync-upstream — 同步上游原版(純鏡像＋外掛架構)
+# /sync-upstream — 同步 PP 上游並保留本地政策
 
-本 repo 架構=「上游原版鏡像＋外掛層」(見 CLAUDE.md)。同步=**整包蓋上游**,我們的東西(afk-*.js、sw.js、scripts/、補丁)不在覆蓋範圍。舊的 3-way 逐功能移植 SOP 已作廢。
+本 repo 以 `pp771007/idle-lineage-class` 為直接上游。PP 已包含原作者 shines871 的新版內容與 PP 外掛；同步時先鏡像 PP 完整成品，再用可檢查、可重跑的補丁重套本地政策。不要再直接從 shines871 組裝本站。
+
+## 固定保留的本地政策
+
+1. 舊傭兵獎勵規則：經驗分攤、無隊伍金幣／掉寶倍率、付費招募／刷新、可重複受僱、非安全區也可管理。
+2. 離線安全：舊離線引擎嚴格獨占、首次遷移不補算、特殊副本禁止離線模擬。
+3. 妖精傭兵不套 PP 的「只能使用當前屬性精靈魔法」限制。
 
 ## 名詞
 
-- **上游 clone**:`D:/otherPersonRepos/idle-lineage-class`(`upstream-checkpoint.json` 的 `localClone`)。
-- **BASE**:`upstream-checkpoint.json` 的 `syncedUpstreamCommit`(目前鏡像的上游 commit)。
-- **TARGET**:上游 `origin/main` 最新(或使用者指定)。
+- **PP clone**：`upstream-checkpoint.json` 的 `localClone`，或本 repo 的 `upstream` remote。
+- **BASE**：`upstream-checkpoint.json.syncedUpstreamCommit`。
+- **TARGET**：`pp771007/idle-lineage-class` 的 `main` 最新 commit（或使用者指定）。
 
 ## 流程
 
-1. **更新 clone 並 checkout**:`git -C <clone> fetch origin --quiet`;`TARGET=$(git -C <clone> rev-parse origin/main)`。BASE==TARGET → 回報「原版無更新」結束。否則 `git -C <clone> checkout -q $TARGET`(sync 腳本讀的是 clone 的**工作樹**,必須真的 checkout)。
-2. **總覽**(回報給使用者):版本跳幅(`git -C <clone> show BASE:js/00-data.js | grep -m1 GAME_VERSION` vs TARGET)、`diff --stat`、assets 變動量。🚨 上游 commit message 全是「1」,一律讀 diff 本身。
-3. **assets/public 鏡像(先於 sync 腳本)**——**比 blob sha,不是比檔名**(「兩邊都有但內容不同」曾一次 10,149 檔):
-   ```bash
-   git -c core.quotepath=false ls-files -s assets public | sed 's/^[0-9]* \([0-9a-f]*\) [0-9]\t/\1\t/' | awk -F'\t' '{print $2"\t"$1}' | sort > /d/ppRepos/_scratch/ours.txt
-   git -C <clone> -c core.quotepath=false ls-files -s assets public | <同上> > /d/ppRepos/_scratch/up.txt
-   # 要複製 = 內容不同(join 比 sha) ∪ 上游新增(comm -13);要刪除 = 我方多出(comm -23)
-   tar -C <clone> -c -T <清單檔> | tar -x -C <本repo>     # 中文檔名不經 exe 參數,安全
-   git rm -q --pathspec-from-file=<刪除清單>
+1. `git fetch upstream --tags --prune`，取得 `TARGET=$(git rev-parse upstream/main)`；先檢查工作樹與 BASE..TARGET diff。
+2. 用 detach worktree 或獨立 clone checkout TARGET。同步腳本讀工作樹，不能只 fetch 不 checkout。
+3. `assets/`、`public/` 以 PP 為準完整鏡像；比對用 blob SHA，PP 已刪除的檔案本站也刪除。這兩個目錄不可放本站獨有檔。
+4. 跑：
+
+   ```text
+   node scripts/sync-upstream.mjs <PP-worktree>
    ```
-   - 刪除前 grep `afk-*.js` `scripts/` 確認外掛層沒引用要刪的檔(原則上不該有——assets 必須維持純鏡像,外掛引用上游既有檔)。
-   - 抽查幾個複製後的檔 `git hash-object` 對得上上游 sha。
-4. **跑同步腳本**:`node scripts/sync-upstream.mjs <clone>`——覆蓋核心 js/css → index.html=上游+`scripts/afk-plugin-block.html` → `apply-core-patches.mjs` → `tools/gen-anim-manifest.js`+`gen-manifests.mjs`+`stamp-code-versions.mjs`+`stamp-sw-version.mjs` → `smoke-hooks.mjs`。
-   - **錨點失效會 exit 1**(訊息指出哪個補丁):去讀上游該區域的 BASE..TARGET diff,更新 `apply-core-patches.mjs` 的錨點字串/邏輯,重跑。改完 `--check` 全綠才算。
-   - **`check-save-io.mjs` 失敗也會 exit 1**:代表上游動了存檔寫入/壓縮(`_lzSet`/`_lzGet`/壓縮 Worker/`_lzWorkerRev` 那組),而 `afk-synccompress`(存檔即時壓縮)是直接覆寫 `_lzSet`、自己拼 `"LZ1:"+compressToUTF16` 的——格式或對帳機制一變,開著那支的玩家會被寫出**讀不回來的存檔**。處理:讀那幾支的 BASE..TARGET diff → 判斷 afk-synccompress 要不要跟著改(真有風險就先在 afk-toggles 把 `synccompress` 加 `locked` 鎖起來) → 確認安全後 `node scripts/check-save-io.mjs --accept` 收下新基準再續。
-5. **收尾檢查**:`grep -nE "^<<<<<<< |^>>>>>>> |^=======$" index.html sw.js afk-*.js` 為空;每支外掛 index.html 引用恰一次;`apply-core-patches.mjs --check` exit 0;`stamp-code-versions.mjs --check` exit 0。
-6. **`upstream-checkpoint.json` 由 sync 腳本自動更新**(`syncedUpstreamCommit`/`syncedAt`/note;讀 clone 的 `git rev-parse HEAD`)——確認它有跟著變即可,不必手動改。
-7. **commit**(與同步同 commit 或緊接;訊息如 `chore(sync): 同步上游原版 vX→vY (<sha7>)`)。**不主動 push**(照 CLAUDE.md commit 節奏;push 時走 /prepush)。
-8. **回報+後續提醒**:
-   - 上游內容變動摘要(新系統/平衡/素材)。
-   - 小百科/掉落查詢尚未跟上 → 建議另跑 `/update-wiki`(以 BASE..TARGET 的遊戲資料 diff 為範圍)。
-   - 上游若動了 index/首頁/DOM 結構 → 人工掃首頁與手機版面(外掛 DOM 錨點失效只會安靜消失,smoke 驗不到 UI 細節)。
-   - 上游若新增「每 tick 遞減計時器/autoActions 自動行為/出怪規則」→ 過一遍 CLAUDE.md 離線掛機判準,評估 afk-offline 要不要跟。
 
-## 判準備忘
+   腳本依序：
 
-- CI 版(`.github/workflows/sync-upstream.yml`,只有 workflow_dispatch;定時由 `cf-sync-trigger/` 的 Cloudflare Worker 每天台灣 18:20 觸發)做同一件事並**直推 main+發 Release(標題帶原作者版本號)**;assets 用 `rsync --delete`——所以 assets/public 絕不可放我方獨有檔。CI 已會自動更新 checkpoint(sync 腳本內建);本機跑完腳本 checkpoint 也已自動更新,不必手動改。
-- 任何「上游也是這樣」的結論,出口前先 fetch clone 並註明比對的 commit。
+   - 鏡像 PP 的 `js/`、`css/`、根目錄 `afk-*.js`、`index.html`、`sw.js`、`wiki-checkpoint.json`
+   - 保留本站 `afk-offline-owner.js`、`afk-merc-policy.js`
+   - 在 PP 的 `afk-offline.js` 前注入 `scripts/local-policy-block.html`
+   - 跑 `check-save-io.mjs`
+   - 跑 `apply-core-patches.mjs`
+   - 跑 `apply-policy-patches.mjs`
+   - 跑 `apply-offline-safety-patches.mjs`
+   - 重產 manifest、程式版本與 Service Worker 版本
+   - 跑 smoke（CI 可用 `AFK_SKIP_SMOKE=1` 延後）
+
+5. 補丁錨點找不到、存檔 I/O 基準改變或 smoke 失敗都必須停止；讀 PP 的實際 diff 後修補，不可略過。
+6. 收尾至少跑：
+
+   ```text
+   node scripts/check-save-io.mjs
+   node scripts/apply-core-patches.mjs --check
+   node scripts/apply-policy-patches.mjs --check
+   node scripts/apply-offline-safety-patches.mjs --check
+   node scripts/stamp-code-versions.mjs --check
+   node scripts/smoke-hooks.mjs
+   node scripts/test-save-compat.mjs <測試存檔...>
+   ```
+
+7. 人工檢查 PP index/DOM 變動、手機版、傭兵與離線提示；確認本地政策以外的 `js/`、`css/`、`afk-*.js` 與 PP 一致。
+8. commit 後推同步分支並建立 PR。GitHub Actions 也只建立 PR；人工 review、測試、合併後才由 Pages workflow 部署，禁止同步流程直接推正式站。
+
+## 判準
+
+- 「PP 也是這樣」的結論必須註明已 fetch 的 TARGET SHA。
+- PP 若再次改傭兵、離線、存檔或 index 載入順序，要逐項重驗三條本地政策。
+- 原作者 shines871 僅作 PP 來源追溯；本站日常同步來源固定是 PP。

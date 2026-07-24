@@ -27,7 +27,8 @@
 
 ## 原作者與版本
 
-遊戲本體由 **巴哈姆特 秋玥** 製作。本站以原作為基礎加掛上面那些功能；原作者更新會先進入獨立 PR，通過自動測試與人工審查、合併後才部署到正式站。加掛版有自己的版本號（首頁可看到「加掛版 vX.Y.Z」），每次更新內容見 [Releases](https://github.com/Jesper11111/idle-lineage-class/releases)。
+遊戲本體由 **巴哈姆特 秋玥** 製作。本站以 **pp771007 加掛版**為直接同步基準，保留本站自己的傭兵與離線政策；PP 更新會先進入獨立 PR，通過自動測試與人工審查、合併後才部署到正式站。加掛版有自己的版本號（首頁可看到「加掛版 vX.Y.Z」），每次更新內容見 [Releases](https://github.com/Jesper11111/idle-lineage-class/releases)。
 
+- 直接上游：https://github.com/pp771007/idle-lineage-class
 - 原版遊戲：https://shines871.github.io/idle-lineage-class/
 - 巴哈討論串：https://forum.gamer.com.tw/C.php?page=1&bsn=84452&snA=8362&tnum=273

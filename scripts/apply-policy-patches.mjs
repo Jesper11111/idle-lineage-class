@@ -1,8 +1,8 @@
 /**
- * apply-policy-patches.mjs — 官方核心同步後，固定使用者指定的舊傭兵獎勵政策。
+ * apply-policy-patches.mjs — PP 核心同步後，固定使用者指定的舊傭兵獎勵政策。
  *
  * 只修改 js/05 的獎勵公式；招募費用、手動重招募、回村結算與受僱限制由
- * afk-merc-policy.js 覆寫。所有戰鬥函式仍來自官方 v3.8.1。
+ * afk-merc-policy.js 覆寫。其他戰鬥函式仍來自 PP 最新版。
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 
@@ -70,16 +70,17 @@ const mustHave = [
 const missing = mustHave.filter(x => !src.includes(x));
 if (missing.length) throw new Error(`[${FILE}] 舊傭兵政策驗證失敗：${missing.join(' | ')}`);
 
-const pluginBlock = readFileSync('scripts/afk-plugin-block.html', 'utf8');
-const mercAt = pluginBlock.indexOf('afk-merc-policy.js');
-const offlineAt = pluginBlock.indexOf('afk-offline.js');
-if (mercAt < 0 || offlineAt < 0 || mercAt > offlineAt) {
-  throw new Error('[scripts/afk-plugin-block.html] afk-merc-policy.js 必須存在且早於 afk-offline.js。');
+const indexHtml = readFileSync('index.html', 'utf8');
+const ownerAt = indexHtml.indexOf('<script src="afk-offline-owner.js');
+const mercAt = indexHtml.indexOf('<script src="afk-merc-policy.js');
+const offlineAt = indexHtml.indexOf('<script src="afk-offline.js');
+if (ownerAt < 0 || mercAt < 0 || offlineAt < 0 || ownerAt > mercAt || mercAt > offlineAt) {
+  throw new Error('[index.html] 載入順序必須是 afk-offline-owner → afk-merc-policy → afk-offline。');
 }
 
 if (CHECK) {
   console.log('✅ --check：舊傭兵獎勵政策與載入順序正確。');
 } else {
   writeFileSync(FILE, src);
-  console.log(`✅ 舊傭兵獎勵政策已固定（${FILE}）；戰鬥核心維持官方 v3.8.1。`);
+  console.log(`✅ 舊傭兵獎勵政策已固定（${FILE}）；其他戰鬥核心維持 PP 最新版。`);
 }

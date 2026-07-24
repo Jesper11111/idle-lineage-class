@@ -1,19 +1,19 @@
 # 放置天堂（加掛版）— 專案規則
 
-## 專案性質與架構（2026-07-19 起・純上游鏡像＋外掛層）
+## 專案性質與架構（2026-07-24 起・PP 鏡像＋本地政策層）
 
-- 網頁放置遊戲。遊戲本體由原作者(巴哈姆特 秋玥)製作,原版:**https://shines871.github.io/idle-lineage-class/**;本站(加掛版):https://jesper11111.github.io/idle-lineage-class/。
-- **架構=「上游原版鏡像＋外掛層」**:核心(`js/NN-*.js`、`css/*`、`index.html`、`assets/`、`public/`)永遠是上游原文/原檔的位元組級鏡像;我們的所有功能都在**外掛層**——根目錄 `afk-*.js`(49 支)＋`sw.js`(PWA,上游沒有)＋極少量**錨點式核心補丁**(`scripts/apply-core-patches.mjs`)。
-- 歷史一句話:2026-07-06 曾與上游分家獨立維護(直接改核心);2026-07-19 起改回本架構(`rearch-plugins`),核心修改全數退回外掛/補丁,以便隨時整包跟進上游。舊的 3-way 逐功能移植 SOP 已作廢。
-- 上游本機 clone:`D:/otherPersonRepos/idle-lineage-class`。**引用上游做任何判斷前先 `git -C <clone> fetch`**——舊 clone 會讓「上游也是這樣」的結論整個相反(踩過)。
-- 同步狀態記在 `upstream-checkpoint.json`(`syncedUpstreamCommit`=目前鏡像的上游 commit)。
+- 網頁放置遊戲。遊戲本體由原作者(巴哈姆特 秋玥)製作,原版:**https://shines871.github.io/idle-lineage-class/**;直接上游:**https://github.com/pp771007/idle-lineage-class**;本站:https://jesper11111.github.io/idle-lineage-class/。
+- **架構=「PP 完整成品鏡像＋本地政策層」**:PP 的核心、外掛、`index.html`、`sw.js`、`assets/`、`public/` 都整包同步;本站只以冪等補丁保留舊傭兵政策、離線安全與妖精傭兵技能例外。
+- PP 已負責跟進 shines871;本站不再直接從 shines 組裝。日常同步來源固定為 `pp771007/main`。
+- 本 repo 的 `upstream` remote 指向 PP。**引用上游做任何判斷前先 `git fetch upstream --tags --prune`**。
+- 同步狀態記在 `upstream-checkpoint.json`(`syncedUpstreamCommit`=目前鏡像的 PP commit)。
 
 ## ⭐ 修改原則(鐵則)
 
-**🚨 絕不直接手改核心檔(`js/NN-*.js`/`css/*`/`index.html`)——下次同步上游會整包覆蓋,改了就丟。** 要動遊戲行為,依序考慮:
+**🚨 絕不直接手改 PP 同步檔——下次同步會整包覆蓋。** 要動遊戲行為,依序考慮:
 
 1. **外掛 monkey-patch(首選)**:核心函式都是全域,外掛包裝(`var _orig = fn; fn = function(){...}`)能解決絕大多數需求。afk-offline 連整套離線結算都是這樣掛的。
-2. **錨點式核心補丁(最後手段)**:只有「外掛包不住」的才用——要抽函式、改函式簽名、改寫死的字面值。加進 `scripts/apply-core-patches.mjs`:靠「上游原文特徵字串」定位、冪等、**錨點找不到就 exit 1 大聲失敗**(不會默默壞)。補丁越少越好,現有 8 個:
+2. **錨點式補丁(最後手段)**:靠 PP 原文特徵定位、冪等、錨點找不到就 exit 1。一般相容補丁放 `apply-core-patches.mjs`;傭兵政策放 `apply-policy-patches.mjs`;離線互斥/遷移/禁圖放 `apply-offline-safety-patches.mjs`。
    | # | 檔 | 內容 |
    |---|---|---|
    | 1 | js/03 | `maybeSpawnMobs` 抽出(tick 出怪塊→具名函式,離線快速結算共用同一份排程) |
@@ -23,8 +23,7 @@
    | 5 | js/07 | 迴避頭目 × 自動找BOSS 互斥(`AFK_BOSSRING.huntActive`) |
    | 6 | js/08 | `useItem` 加 `keepModal` 參數(自動瞬移不關玩家視窗) |
    | 7 | js/10 | 「立即賣出」總開關關閉時不強制套規則(免誤賣沒標記的裝備) |
-   | 8 | js/27+js/13 | 舊版 `afk-offline` 獨占離線結算(js/27 在掛任何全域入口前退出;選角頁隱藏新版殘留狀態) |
-3. **index.html 不手改**:它=上游 index＋`scripts/afk-plugin-block.html` 注入到 `</body>` 前(sync 時自動重組)。**新增外掛 → 改 `afk-plugin-block.html`**(載入順序也在那裡管:afk-toggles 最先、afk-skin 最後),再把它的 `<script>` 行同步補進現行 index.html(或重跑 sync),有 DOM 掛點的加進 `scripts/smoke-hooks.mjs` 的 `need`。
+3. **index.html 不手改**:它=PP index,僅在 PP 的 `afk-offline.js` 前注入 `scripts/local-policy-block.html` 兩支本站政策外掛。PP 自帶外掛及順序全部照 PP;本站外掛順序固定為 owner → merc-policy → PP offline。
 4. **CSS 覆寫**寫在外掛注入的 `<style>` 裡(如 afk-mobile),不改 `css/*.css`。
 
 **外掛開關(afk-toggles.js,載入順序第一)**:每支外掛可被玩家單獨關掉——某支壞掉時玩家關掉它就能用原版繼續玩(逃生門)。契約:
@@ -48,17 +47,17 @@
 
 ## 🔄 同步上游 SOP → 跑 `/sync-upstream` skill
 
-使用者說「同步原版/更新上游」就跑 `.claude/skills/sync-upstream/`。摘要:
-1. `git -C <clone> fetch` + checkout 目標 commit(通常 origin/main)。
+使用者說「同步 PP/更新上游」就跑 `.claude/skills/sync-upstream/`。摘要:
+1. `git fetch upstream --tags --prune` + checkout `upstream/main` 到獨立 worktree。
 2. **assets 鏡像**:比對要用 **blob sha**(`git ls-files -s`),不能只比檔名——「兩邊都有但內容不同」佔過大宗(踩過:一次 10,149 檔)。補檔用 tar 走檔案清單(中文檔名不經 exe 參數);**上游沒有的檔要刪**(assets 已於 2026-07-19 達成純鏡像,刪前仍 grep `afk-*.js`+`scripts/` 確認外掛層沒引用)。
-3. `node scripts/sync-upstream.mjs <clone>`:覆蓋核心 js/css → **check-save-io** → 重組 index.html(上游+外掛區塊) → apply-core-patches → 重產 manifest → stamp 版本 → smoke。**錨點失效會 exit 1**→讀上游該處 diff、更新補丁錨點再跑。
+3. `node scripts/sync-upstream.mjs <PP-worktree>`:鏡像 PP 核心與外掛 → **check-save-io** → 注入本地政策外掛 → apply-core/apply-policy/apply-offline-safety → 重產 manifest → stamp 版本 → smoke。**錨點失效會 exit 1**→讀 PP 該處 diff、更新補丁錨點再跑。
    - **`scripts/check-save-io.mjs`(存檔寫入/壓縮把關)**:`afk-synccompress` 是唯一「整支覆寫核心存檔函式」的外掛(換掉 `_lzSet`、自己拼 `"LZ1:"+compressToUTF16`、bump `_lzWorkerRev`、退路呼叫 `_lsSet`),上游一改存檔格式/Worker 對帳,開著那支的玩家就會被寫出**讀不回來的存檔**,而 smoke 只驗掛點、驗不到。故同步時逐支比對這組核心函式的 sha(基準存在 `upstream-checkpoint.json` 的 `saveIo`),變了就 exit 1。處理:讀 diff → 判斷外掛要不要跟改(有疑慮先在 afk-toggles 給 `synccompress` 加 `locked` 鎖起來) → 確認安全再 `node scripts/check-save-io.mjs --accept` 收下新基準。
 4. 更新 `upstream-checkpoint.json` → commit(不主動 push)。
-5. 後續提醒:小百科/掉落查詢內容要另跑 `/update-wiki` 對齊(看上游 BASE..TARGET 的遊戲資料 diff);上游 commit message 全是「1」不可依賴,一律讀 diff。
+5. 小百科與掉落查詢直接鏡像 PP；仍須針對 PP BASE..TARGET 的資料變動做畫面抽查。
 
-CI 版:GitHub Actions `sync-upstream.yml`(**只有 `workflow_dispatch`,無 GitHub schedule**;目前完全沒有定時觸發,同步時機由人決定)做同一件事:ls-remote 比 checkpoint 早退 → 鏡像資產(`rsync --delete`)→ sync 腳本(AFK_SKIP_SMOKE=1)→ smoke → **全綠只推 `sync/upstream-*` 分支並建立 PR,絕不直推 main**;錨點失效/smoke 紅 → 各開 issue、不建立 PR。人工 review/merge 後,`deploy-pages.yml` 才部署正式站,`release-synced-upstream.yml` 才發 Release。commit 用路徑白名單 add(CI 臨時裝的 playwright/package.json 不進版控)。**因此 `assets/`、`public/` 下不可放我方獨有檔案**(會被 `--delete` 刪)——外掛需要圖優先引用上游既有檔;真的要自有素材就放 assets 之外,或改 workflow 加 exclude。
+CI 版:GitHub Actions `sync-upstream.yml`(**只有 `workflow_dispatch`,無 GitHub schedule**)監看 `pp771007/main`:ls-remote 比 checkpoint 早退 → 鏡像資產(`rsync --delete`)→ sync 腳本(AFK_SKIP_SMOKE=1)→ smoke → **全綠只推 `sync/upstream-*` 分支並建立 PR,絕不直推 main**;錨點失效/smoke 紅 → 開 issue、不建立 PR。人工 review/merge 後,`deploy-pages.yml` 才部署正式站,`release-synced-upstream.yml` 才發 Release。
 
-## 目前的外掛(49 支;載入順序見 `scripts/afk-plugin-block.html`)
+## 目前的外掛(PP 自帶外掛＋本站 2 支政策外掛;順序以 PP index 為準)
 
 | 檔案 | 功能 |
 |---|---|
@@ -68,7 +67,9 @@ CI 版:GitHub Actions `sync-upstream.yml`(**只有 `workflow_dispatch`,無 GitHu
 | `afk-lzcache.js` | 存檔解壓快取(同一份壓縮字串只解一次;核心每殺一隻怪都重讀整包血盟狀態,離線結算 4×) |
 | `afk-ui.js` | 共用彈窗:接管 alert、`AFK_UI.confirm`、openLayer/closeLayer(返回鍵/ESC 關最上層) |
 | `afk-extradata.js` | dex/wiki 共用手動補充資料(`AFK_EXTRA`:itemAcquire/武器特性白話/mapName) |
-| `afk-offline.js` | 舊版離線掛機整套(同圖實戰補跑、死亡即停、分段存檔、紀錄);獨占結算,上游 js/27 已由補丁 8 停用 |
+| `afk-offline-owner.js` | 在 PP offline 載入前宣告本站舊離線引擎擁有結算權 |
+| `afk-merc-policy.js` | 舊傭兵政策與妖精傭兵不限當前屬性精靈魔法 |
+| `afk-offline.js` | PP 舊版離線掛機整套;由本站安全補丁維持嚴格獨占、首次遷移不補算與特殊副本禁圖 |
 | `afk-mobile.js` | 手機版面薄殼(底部導覽列切三欄、手機幾何的彈窗讓位、浮動日誌;版面用上游原版) |
 | `afk-backnav.js` | 手機返回鍵/手勢在子畫面回上層而不是關 PWA |
 | `afk-battlehud.js` | 手機戰鬥狀態列(取代上游只有 HP/MP 的 #mobile-vitals;自己量橫幅) |
@@ -116,10 +117,10 @@ CI 版:GitHub Actions `sync-upstream.yml`(**只有 `workflow_dispatch`,無 GitHu
 
 ## 🗺️ 離線掛機——舊版 afk-offline 獨占
 
-**2026-07-24 起恢復舊版機制**:離線掛機只由 `afk-offline.js` 結算;上游 `js/27-offline-rewards.js` 不可同時取樣、蓋錨點或發獎。
+**2026-07-24 起恢復舊版機制**:離線掛機只由 PP `afk-offline.js` 結算;PP 新離線引擎不可同時取樣、蓋錨點或發獎。
 
-- 補丁 8 在 js/27 第一個全域掛鉤前設 `window.__afkLegacyOfflineOwnsSettlement=true` 並退出;js/13 同時隱藏新版殘留的選角離線狀態。這是嚴格互斥,不是讓兩套各自判斷。
-- `offline`、`history` 開關已解鎖;玩家關閉 `offline` 代表**完全不做離線結算**,不會回退啟用 js/27。smoke 第四輪固定驗這條。
+- `afk-offline-owner.js` 先宣告 `window.__afkLegacyOfflineOwnsSettlement=true`;PP 新離線引擎偵測後退出。這是嚴格互斥,不是讓兩套各自判斷。
+- `offline`、`history` 開關已解鎖;玩家關閉 `offline` 代表**完全不做離線結算**,不會回退啟用 PP 新引擎。smoke 第四輪固定驗這條。
 - 每個存檔位用 `afk_offline_legacy_migrated_v3_<slot>` 做一次性遷移。首次用舊引擎載入只蓋新錨點、不補算舊區間,避免新版→舊版交界重複結算;下一次離線才正常補跑。
 - `afk-slotinfo` 只在該存檔位完成遷移後顯示 `afk_map_`/`afk_ts_`,避免拿歷史殘值顯示假掛機時間。
 - 安塔瑞斯副本 `antharas_nest_1/2/3`、`antharas_lair` 禁止離線模擬;一般地圖維持舊版行為。
@@ -135,7 +136,7 @@ CI 版:GitHub Actions `sync-upstream.yml`(**只有 `workflow_dispatch`,無 GitHu
 - **ff 洩漏判準**:補跑(`state.ff`)期間,戰鬥路徑**直接**呼叫的 `render*`/重副作用(`saveGame`)要被 `!state.ff` 擋住或函式內早退;**自己跑的 timer(setInterval/rAF)也要問「補跑期間它還在跑嗎」**。守衛用 `state.ff && !state.ffSmall`(小補跑要放行)。上游是原文改不得→這類守衛由 afk-offline 以 wrapper 實作(如 sprite ticker、音效靜音)。
 - debug:`window.__afk.forceCatchup(分鐘, noFast)`。全模擬慢是戰鬥模擬本身,不是掃描/記憶體,別往那優化。
 - **🚨 背景分頁回前景由 afk-offline 包 `settleBackgroundMs` 接管,交回核心 `queueCatchupMs` 逐 tick 補跑**:背景是線上遊戲暫停後補 tick,不是關閉遊戲後的離線發獎。上游若再動 js/01 的 visibilitychange/pageshow 或 `settleBackgroundMs`,要重驗這條。
-- **上游 js/27 由補丁 8 整支提前退出**:同步後 `apply-core-patches --check` 與 smoke 會驗獨占標記、新版三個全域入口皆不存在;錨點改動就應讓同步失敗,不可靜默退回雙引擎。
+- **PP 新離線引擎由 owner 標記停用**:同步後 `apply-offline-safety-patches --check` 與 smoke 會驗獨占標記、新版入口未接管;錨點改動就應讓同步失敗,不可靜默退回雙引擎。
 - **測遷移**:移除 `afk_offline_legacy_migrated_v3_<slot>` 並把舊 `afk_ts_<slot>` 回撥,首次載入必須零發獎、零歷史且重蓋錨點。**測正常離線**:先完成遷移,再只回撥 `afk_ts_<slot>`/設定 `afk_map_<slot>`;新版 `lineage_idle_offline_v1_*` 與存檔內 `player.offlineHunt.awaySince` 不應參與。
 
 ## 📦 Service Worker / PWA(sw.js 我方檔)

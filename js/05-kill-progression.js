@@ -455,8 +455,7 @@ function killMob(idx) {
         if(trialDropBlocked(itemId)) return;   // 🔒 試煉兌換道具：僅本職擊殺才掉＋🔥 v3.0.78 須已接取對應試煉且未達需求數量
         if (typeof trialForced100 === 'function' && trialForced100(itemId)) { gainItem(itemId, 1); return; }   // 🔥 接取制試煉道具：通過閘門後 100% 掉落
         let _clMult = (mob.n === '卡瑞' && itemId === 'wpn_dragonslayer') ? 1 : trialItemDropMult(itemId);   // 🔧 v2.6.75 卡瑞·屠龍劍固定 100%（獎勵已綁「擊殺消耗四任務道具」的成本）；trialItemDropMult 現恆 1
-        let _relicX2 = 1;   // 🏺 v3.2.17 幸運暴走兔腳（遺物·需裝備）：遺物掉落機率 ×2
-        if (DB.items[itemId].relic) { try { for (let _k in player.eq) { let _e = player.eq[_k]; if (_e && DB.items[_e.id] && DB.items[_e.id].relicDropX2) { _relicX2 = 2; break; } } } catch (e) {} }
+        let _relicX2 = (DB.items[itemId].relic && typeof mainPlayerHasEquippedEffect === 'function' && mainPlayerHasEquippedEffect('relicDropX2')) ? 2 : 1;   // 幸運暴走兔腳只讀主操作玩家裝備
         if(Math.random() < partyDropRate((ratePct * _dropBase * _clMult * _relicX2) / 100)) gainItem(itemId, 1);
     });
 
@@ -794,7 +793,7 @@ function antharasSharedClearDay() {
     let shared = Math.max(0, Math.floor(Number(_lsGet(antharasModeClearKey())) || 0));
     if (shared === today) return shared;
     // 相容 v3.7.61：任一同模式舊角色今天已通關，就遷移成模式共用日鍵。
-    for (let n = 1; n <= 8; n++) {
+    for (let n = 1; n <= SAVE_SLOT_MAX; n++) {
         try {
             let u = _saveUnwrap(_lzGet('lineage_idle_save_' + n));
             if (!u || !u.ok || !u.payload) continue;

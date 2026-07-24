@@ -3,7 +3,7 @@
  *   - 簽章有效、JSON 可解析
  *   - 可載入並重新存成有效 SIG1
  *   - 角色身分、等級、背包、裝備、傭兵數不因載入／存檔往返而改變
- *   - 舊傭兵政策生效，且 v3.8.1 威脅／束縛／攻城／護衛模組仍存在
+ *   - 舊傭兵政策生效、妖精傭兵不限目前屬性，且 PP v3.8.5 戰鬥模組仍存在
  *
  * 可由 CLI 傳入多個絕對路徑，也可 import 後呼叫 testSaveFiles(paths)。
  */
@@ -130,6 +130,9 @@ export async function testSaveFiles(paths) {
           safeAreaBlocked: mercenaryRoleBattleBlocked('dragon_valley', false),
           rehireCosts: [mercRehireCost(1), mercRehireCost(50), mercRehireCost(100)],
           legacyPolicy: window.__legacyMercPolicy && window.__legacyMercPolicy.version,
+          mercElementRestriction: window.__legacyMercPolicy && window.__legacyMercPolicy.elementRestriction,
+          mismatchedElfSkillAllowed: typeof allySkillElementOk === 'function' &&
+            allySkillElementOk({ elfEle: 'water', grantedSkills: [] }, 'sk_elf_dancefire'),
           offlineVersion: window.__afk && window.__afk.version,
           offlineOwner: window.__afkLegacyOfflineOwnsSettlement,
           siegeStages: window.SiegeV2 && SiegeV2.stages ? SiegeV2.stages.length : 0,
@@ -145,16 +148,17 @@ export async function testSaveFiles(paths) {
       if (got.error) failures.push(got.error);
       else {
         if (JSON.stringify(got.identity) !== JSON.stringify(input.expected)) failures.push('角色核心資料往返後不一致');
-        if (got.version !== 'v3.8.1') failures.push('核心版本不是 v3.8.1');
+        if (got.version !== 'v3.8.5') failures.push('核心版本不是 PP v3.8.5');
         if (got.partyCount !== got.expectedPartyCount) failures.push('傭兵經驗均分人數錯誤');
         if (got.rewardMult !== 1 || Math.abs(got.dropRate - 0.125) > 1e-12) failures.push('金幣／掉落仍有隊伍人數加乘');
         if (got.employmentKeys.length) failures.push('仍寫入反向受僱登記');
         if (got.safeAreaBlocked !== false) failures.push('受僱角色仍被鎖在安全區');
         if (JSON.stringify(got.rehireCosts) !== JSON.stringify([1000, 100000, 500000])) failures.push('重新招募費率錯誤');
-        if (got.legacyPolicy !== '3.7.61-policy-on-3.8.1') failures.push('舊傭兵政策層未啟動');
-        if (got.offlineVersion !== '2.1.0' || got.offlineOwner !== true) failures.push('舊離線引擎未獨占啟動');
+        if (got.legacyPolicy !== '3.7.61-policy-on-pp-v3.8.5') failures.push('舊傭兵政策層未啟動');
+        if (got.mercElementRestriction !== false || got.mismatchedElfSkillAllowed !== true) failures.push('妖精傭兵仍受目前屬性限制');
+        if (got.offlineVersion !== '2.2.0-jesper-safety' || got.offlineOwner !== true) failures.push('舊離線安全引擎未獨占啟動');
         if (got.siegeStages !== 5 || !got.threatEnabled || got.mercThreatKey !== 'A:test' || !got.bindMercSupported || !got.guardLoaded) {
-          failures.push('v3.8.1 戰鬥模組未完整作用於傭兵');
+          failures.push('PP v3.8.5 戰鬥模組未完整作用於傭兵');
         }
         if (i === 0) {
           const offlineStart = await page.evaluate(() => {

@@ -1,18 +1,21 @@
 /*
  * afk-slotinfo.js — 選角/載入畫面的「額外掛機資訊」掛載外掛(桌機 + 手機共用)
  *
- * 職責:在原作者 openSlotSelect / renderLoadSelect 渲染的存檔位「下方附加」📍 掛機地圖、
- *   ⏱ 已掛機多久與席琳世界狀態。
+ * 職責:在原作者 openSlotSelect / renderLoadSelect 渲染的存檔位「下方附加」📍 目前掛在哪張地圖、
+ *   ⏱ 已掛機多久、席琳世界狀態。
  *   只「附加」、絕不清空 → 原作者的單行 label(含經典/傳統標籤與配色)、大頭貼都原封不動,
  *   桌機與手機共用同一份附加邏輯(手機差異純由 afk-mobile.js 的 CSS 處理,不另外重建內容)。
- *   對外仍暴露 window.AFK_SLOTINFO.read(slot) → { mapName, idleText }(純資料、無 DOM)供他人取用。
+ *   對外仍暴露 window.AFK_SLOTINFO.read(slot) → { mapName, idleText, sherine }(純資料、無 DOM)供他人取用。
  *
- * 資料來源:afk-offline 的 afk_map_/afk_ts_ 與存檔 blob 的 player.sherineWorld / sherineMad。
+ * 資料來源:afk-offline 寫的即時地圖記錄 afk_map_<slot>(較準)、最後活躍心跳 afk_ts_<slot>;
+ *   讀不到 afk_map_ 就退回存檔 blob 的 ms.current。地圖中文名與離線上限走 window.__afk。
+ *   席琳世界狀態讀存檔 blob 的 player.sherineWorld / sherineMad。
  *
  * 優雅降級:openSlotSelect / __afk 不存在就安靜停用,不弄壞畫面。
  */
 (function () {
   if (window.AFK_TOGGLES && !AFK_TOGGLES.enabled('slotinfo')) return;   // 🎚️ 外掛開關:關掉就透明放行原版行為
+  // 把離線毫秒數格式化成「X 天 Y 小時 / X 小時 Y 分 / X 分鐘 / 剛剛」
   function fmtIdle(ms) {
     if (ms < 0) ms = 0;
     var s = Math.floor(ms / 1000);
@@ -35,7 +38,8 @@
       if (_raw) save = JSON.parse(_raw);
     } catch (e) {}
 
-    // 尚未完成「新版→舊版」的一次性遷移時，不讀停用期間凍結的 afk_ts_/afk_map_，避免選角畫面先顯示假時間。
+    // 🔒 Jesper offline migration visibility guard
+    // 遷移完成前不讀凍結的 afk_ts_/afk_map_，避免選角頁先顯示假掛機時間。
     var legacyReady = !!(window.__afk && typeof window.__afk.migrationDoneFor === 'function' && window.__afk.migrationDoneFor(slot));
     var mapId = '';
     if (legacyReady) {
@@ -45,16 +49,14 @@
     var mapName = '';
     if (mapId) mapName = (window.__afk && typeof window.__afk.mapName === 'function') ? window.__afk.mapName(mapId) : mapId;
 
-    var idleText = '';
     var ts = 0;
-    if (legacyReady) {
-      try { ts = +localStorage.getItem('afk_ts_' + slot) || 0; } catch (e) {}
-    }
+    if (legacyReady) { try { ts = +localStorage.getItem('afk_ts_' + slot) || 0; } catch (e) {} }
+    var idleText = '';
     if (ts > 0) {
       var idleMs = Date.now() - ts;
-      var capH = (window.__afk && window.__afk.capHours) || 24;
+      var capH = (window.__afk && window.__afk.capHours) || 24;   // 離線收益上限(小時),讀核心離線模組
       idleText = '⏱ 已掛機 ' + fmtIdle(idleMs);
-      if (idleMs >= capH * 3600000) idleText += '（收益上限 ' + capH + ' 小時）';
+      if (idleMs >= capH * 3600000) idleText += '（收益上限 ' + capH + ' 小時）';   // 顯示真實時間,超過上限時提醒收益封頂
     }
 
     // 🔮 席琳世界狀態:存於 player.sherineWorld / player.sherineMad(兩者互斥),回 '' / 'world' / 'mad'
@@ -134,7 +136,7 @@
     for (var i = 0; i < cards.length; i++) {
       var card = cards[i];
       var old = card.querySelector('.afk-card-slotinfo'); if (old) old.remove();   // 每次重繪清舊的
-      var staleNative = card.querySelector('.load-offline-status'); if (staleNative) staleNative.remove();   // 快取混搭後援：新版 checkpoint 已停寫
+      var staleNative = card.querySelector('.load-offline-status'); if (staleNative) staleNative.remove();   // 快取混搭後援：另一套離線狀態不顯示
       var slot = parseInt(card.getAttribute('data-slot'), 10);
       if (!slot) continue;
       var info = read(slot);

@@ -1,6 +1,6 @@
-name: 發布已審核的上游同步
+name: 發布已審核的 PP 同步
 
-# 上游同步 PR 必須先人工合併；合併後才補發 Release。
+# PP 同步 PR 必須先人工合併；合併後才補發 Release。
 on:
   pull_request:
     types: [closed]
@@ -33,6 +33,6 @@ jobs:
           if gh release view "$TAG" > /dev/null 2>&1; then
             echo "已有同名 release $TAG，略過（避免重複）。"
           else
-            printf '《%s》加掛版 — 已同步原作者最新版（原版版本 %s），並經 PR 人工審核後合併。\n\n原始碼請由下方 Source code (zip / tar.gz) 下載。\n線上遊玩：%s\n' "$GAME" "$VER" "$SITE" > /tmp/relnotes.md
-            gh release create "$TAG" --target "$MERGE_SHA" --title "《${GAME}》加掛版 ${TAG}（原版 ${VER}）" --notes-file /tmp/relnotes.md
+            printf '《%s》加掛版 — 已同步 PP 最新版（遊戲版本 %s），保留本站政策，並經 PR 人工審核後合併。\n\n原始碼請由下方 Source code (zip / tar.gz) 下載。\n線上遊玩：%s\n' "$GAME" "$VER" "$SITE" > /tmp/relnotes.md
+            gh release create "$TAG" --target "$MERGE_SHA" --title "《${GAME}》加掛版 ${TAG}（PP ${VER}）" --notes-file /tmp/relnotes.md
           fi

@@ -1,7 +1,7 @@
 /* ============================================================================
  * smoke-hooks.mjs — 冒煙測試:用無頭瀏覽器載入 index.html,確認五支外掛都 hook 成功
  *
- * 用途:自動同步原作者 index.html 後,驗證原作者沒有改壞外掛掛點(改 id / DOM 結構)。
+ * 用途:自動同步 PP index.html 後,驗證 PP 更新沒有改壞外掛掛點(改 id / DOM 結構)。
  *   - 全部 hooks OK → exit 0(workflow 才會 commit/push)
  *   - 任一外掛沒掛上 → exit 1(workflow 改為開 issue 通知,不自動推壞掉的版本)
  * ========================================================================== */
@@ -145,11 +145,11 @@ const untranslatedMaps = await page.evaluate(() => {
   return out;
 });
 
-// 離線引擎互斥契約：v3.8.1 已不載入 js/27；獨立 owner 只在沒有官方鉤子時授權舊引擎。
+// 離線引擎互斥契約：PP v3.8.5 不載入 js/27；獨立 owner 只在沒有其他離線鉤子時授權舊引擎。
 const offlineEngineProblems = await page.evaluate(() => {
   const bad = [];
   if (window.__afkLegacyOfflineOwnsSettlement !== true) bad.push('afk-offline-owner 未授權舊版離線引擎獨占');
-  if (!window.__afk || window.__afk.version !== '2.1.0') bad.push('afk-offline 未成功啟動');
+  if (!window.__afk || window.__afk.version !== '2.2.0-jesper-safety') bad.push('afk-offline 安全版未成功啟動');
   for (const name of ['offlineCatchupSaveCommitted', 'offlineSettleCatchup', 'offlinePrepareCharacterSelect']) {
     if (typeof window[name] !== 'undefined') bad.push(`新版離線全域 ${name} 仍存在`);
   }
@@ -170,12 +170,12 @@ const offlineEngineProblems = await page.evaluate(() => {
   return bad;
 });
 
-// 舊傭兵政策 + v3.8.1 戰鬥模組並存契約。
+// 舊傭兵政策 + PP v3.8.5 戰鬥模組並存契約。
 const mercPolicyProblems = await page.evaluate(() => {
   const bad = [];
   const p = window.__legacyMercPolicy;
-  if (!p || p.version !== '3.7.61-policy-on-3.8.1') bad.push('舊傭兵政策層未啟動');
-  if (typeof GAME_VERSION === 'undefined' || GAME_VERSION !== 'v3.8.1') bad.push(`核心版本不是 v3.8.1（${typeof GAME_VERSION === 'undefined' ? 'missing' : GAME_VERSION}）`);
+  if (!p || p.version !== '3.7.61-policy-on-pp-v3.8.5') bad.push('舊傭兵政策層未啟動');
+  if (typeof GAME_VERSION === 'undefined' || GAME_VERSION !== 'v3.8.5') bad.push(`核心版本不是 v3.8.5（${typeof GAME_VERSION === 'undefined' ? 'missing' : GAME_VERSION}）`);
   if (typeof partyRewardMult !== 'function' || partyRewardMult() !== 1) bad.push('金幣／掉落仍按隊伍人數加乘');
   if (typeof partyDropRate !== 'function' || Math.abs(partyDropRate(0.125) - 0.125) > 1e-12) bad.push('掉落率仍按隊伍人數加乘');
   if (typeof mercRehireCost !== 'function' || mercRehireCost(1) !== 1000 || mercRehireCost(50) !== 100000 || mercRehireCost(100) !== 500000) bad.push('手動重新招募費率曲線不符舊規則');
@@ -185,9 +185,14 @@ const mercPolicyProblems = await page.evaluate(() => {
     // 實作是薄 wrapper，不要求函式參照相同；用政策旗標確認「不刷新」。
     if (!p || p.townRefresh !== false) bad.push('回村仍會免費刷新傭兵戰力');
   }
-  if (typeof THREAT_ENABLED === 'undefined' || THREAT_ENABLED !== true || typeof threatWrap !== 'function' || typeof victimThreatWeight !== 'function') bad.push('v3.8.1 威脅系統未載入');
-  if (!window.SiegeV2 || !Array.isArray(SiegeV2.stages) || SiegeV2.stages.length !== 5) bad.push('v3.8.1 攻城 V2 未載入');
-  if (typeof castleGuardTick !== 'function' || typeof castleGuardSync !== 'function') bad.push('v3.8.1 城堡護衛未載入');
+  if (!p || p.elementRestriction !== false || typeof allySkillElementOk !== 'function' ||
+      allySkillElementOk({ elfEle: 'water', grantedSkills: [] }, 'sk_elf_dancefire') !== true) {
+    bad.push('妖精傭兵仍受目前屬性限制');
+  }
+  if (typeof THREAT_ENABLED === 'undefined' || THREAT_ENABLED !== true || typeof threatWrap !== 'function' || typeof victimThreatWeight !== 'function') bad.push('PP 威脅系統未載入');
+  if (!window.SiegeV2 || !Array.isArray(SiegeV2.stages) || SiegeV2.stages.length !== 5) bad.push('PP 攻城 V2 未載入');
+  if (typeof castleGuardTick !== 'function' || typeof castleGuardSync !== 'function') bad.push('PP 城堡護衛未載入');
+  if (typeof TEAM_AURA_SKILLS === 'undefined' || !TEAM_AURA_SKILLS.includes('sk_elf_dancefire')) bad.push('PP v3.8.5 舞躍之火團隊光環未載入');
   return bad;
 });
 
@@ -218,7 +223,7 @@ const allOK = Object.values(okMap).every(Boolean);
 
 console.log('外掛掛點檢查:', JSON.stringify(okMap, null, 0));
 if (!allOK) {
-  console.error('冒煙測試失敗:有外掛沒有成功 hook(原作者可能改了 DOM / id)。');
+  console.error('冒煙測試失敗:有外掛沒有成功 hook(PP 更新可能改了 DOM / id)。');
   process.exit(1);
 }
 
@@ -248,9 +253,9 @@ if (offlineToggleOffProblems.length) {
 }
 
 if (mercPolicyProblems.length) {
-  console.error('冒煙測試失敗:舊傭兵政策與 v3.8.1 戰鬥模組並存契約不成立:');
+  console.error('冒煙測試失敗:舊傭兵政策與 v3.8.5 戰鬥模組並存契約不成立:');
   for (const p of mercPolicyProblems) console.error('  ' + p);
   process.exit(1);
 }
 
-console.log('冒煙測試通過:外掛 hooks、舊離線互斥、舊傭兵政策與 v3.8.1 戰鬥模組均成立，且地圖名已完整翻譯。');
+console.log('冒煙測試通過:外掛 hooks、舊離線互斥、舊傭兵政策與 v3.8.5 戰鬥模組均成立，且地圖名已完整翻譯。');
