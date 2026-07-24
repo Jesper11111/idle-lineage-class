@@ -9,7 +9,7 @@
  *   1. 用上游原版覆蓋核心 js/NN-*.js 與 css/*（保留我方 afk-*.js、scripts/、tools/）。
  *   1.5 check-save-io.mjs：上游動到存檔寫入/壓縮就 exit 1（afk-synccompress 直接覆寫 _lzSet，格式一變會寫壞存檔）。
  *   2. index.html = 上游 index.html + 注入外掛區塊（scripts/afk-plugin-block.html）到 </body> 之前。
- *   3. 跑 apply-core-patches.mjs 把加掛版必要的核心鉤子補回去（錨點式，插不進就 exit 1）。
+ *   3. 跑 apply-core-patches.mjs 補回加掛鉤子，再跑 apply-policy-patches.mjs 固定舊離線／傭兵政策。
  *   4. 重產 anim-manifest / 對帳 manifest，stamp 版本號與 SW。
  *
  * 用法：node scripts/sync-upstream.mjs <upstream-clone-dir>
@@ -54,6 +54,7 @@ console.log('[sync] index.html = 上游 + 外掛區塊');
 
 // ── 3) 套核心補丁（錨點式，插不進就 throw→exit1）──────────────────
 run('node scripts/apply-core-patches.mjs');
+run('node scripts/apply-policy-patches.mjs');
 
 // ── 4) 重產 manifest + stamp 版本 ──────────────────────────────
 run('node tools/gen-anim-manifest.js');

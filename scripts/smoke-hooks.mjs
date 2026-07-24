@@ -7,10 +7,14 @@
  * ========================================================================== */
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { extname, join, normalize } from 'node:path';
+import { existsSync } from 'node:fs';
+import { extname, join, normalize, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { platform } from 'node:os';
 import { chromium, devices } from 'playwright';
 
 const PORT = 8799;
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
@@ -22,7 +26,7 @@ const server = createServer(async (req, res) => {
   try {
     let p = decodeURIComponent(req.url.split('?')[0]);
     if (p === '/') p = '/index.html';
-    const file = join(process.cwd(), normalize(p).replace(/^(\.\.[/\\])+/, ''));
+    const file = join(ROOT, normalize(p).replace(/^(\.\.[/\\])+/, ''));
     const buf = await readFile(file);
     res.writeHead(200, { 'content-type': MIME[extname(file)] || 'application/octet-stream' });
     res.end(buf);
@@ -33,7 +37,13 @@ const server = createServer(async (req, res) => {
 });
 await new Promise((r) => server.listen(PORT, r));
 
-const browser = await chromium.launch();
+// 本機桌面附帶的 Playwright 版本可能比已快取 browser revision 新；Windows 優先使用系統 Chrome。
+// GitHub Actions（Linux）仍使用 `npx playwright install` 安裝的預設 Chromium。
+const systemChrome = platform() === 'win32'
+  ? ['C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+     'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'].find(existsSync)
+  : null;
+const browser = await chromium.launch(systemChrome ? { executablePath: systemChrome } : {});
 const logs = [];
 
 // 各外掛的開機 log:'[AFK] hooks OK' / '[AFK-mobile] hooks OK' / …(集中定義,goto 後輪詢等待 + 最後判定共用)
@@ -42,7 +52,7 @@ const logs = [];
 // afk-battlehud 桌機也會 init(只是 CSS 讓它不顯示)→ 放 need 即可;它取代的是核心手機版 #mobile-vitals。
 // afk-touchtip 只在觸控裝置 init(桌機有 hover,本來就不該掛)→ 桌機那輪永遠等不到,必須放手機輪。
 const needMobileOnly = ['[AFK-touchtip]'];
-const need = ['[AFK]', '[AFK-banner]', '[AFK-lzcache]', '[AFK-synccompress]', '[AFK-mobile]', '[AFK-backnav]', '[AFK-battlehud]', '[AFK-mapbar]', '[AFK-nozoom]', '[AFK-trackinfo]', '[AFK-relicguard]', '[AFK-enhtarget]', '[AFK-retrial]', '[AFK-battlebuffs]', '[AFK-slotinfo]', '[AFK-dex]', '[AFK-wiki]', '[AFK-syncinfo]', '[AFK-statpts]', '[AFK-statlist]', '[AFK-pwa]', '[AFK-storage]', '[AFK-history]', '[AFK-quotawarn]', '[AFK-notice]', '[AFK-reissueid]', '[AFK-diag]', '[AFK-mobname]', '[AFK-training]', '[AFK-itemsearch]', '[AFK-eqlist]', '[AFK-npclist]', '[AFK-skin]'];
+const need = ['[AFK]', '[AFK-merc-policy]', '[AFK-banner]', '[AFK-lzcache]', '[AFK-synccompress]', '[AFK-mobile]', '[AFK-backnav]', '[AFK-battlehud]', '[AFK-mapbar]', '[AFK-nozoom]', '[AFK-trackinfo]', '[AFK-relicguard]', '[AFK-enhtarget]', '[AFK-retrial]', '[AFK-battlebuffs]', '[AFK-slotinfo]', '[AFK-dex]', '[AFK-wiki]', '[AFK-syncinfo]', '[AFK-statpts]', '[AFK-statlist]', '[AFK-pwa]', '[AFK-storage]', '[AFK-history]', '[AFK-quotawarn]', '[AFK-notice]', '[AFK-reissueid]', '[AFK-diag]', '[AFK-mobname]', '[AFK-training]', '[AFK-itemsearch]', '[AFK-eqlist]', '[AFK-npclist]', '[AFK-skin]'];
 const seen = (list) => list.every((n) => logs.some((l) => l.includes(n) && l.includes('hooks OK')));
 
 // ⚠ 不用 waitUntil:'networkidle':作者新版(.49 起)加了背景音樂 assets/bgm/*.mp3，<audio> 媒體串流會讓網路
@@ -135,10 +145,10 @@ const untranslatedMaps = await page.evaluate(() => {
   return out;
 });
 
-// 離線引擎互斥契約：新版 js/27 必須在任何全域掛鉤前讓位，舊版才可啟動。
+// 離線引擎互斥契約：v3.8.1 已不載入 js/27；獨立 owner 只在沒有官方鉤子時授權舊引擎。
 const offlineEngineProblems = await page.evaluate(() => {
   const bad = [];
-  if (window.__afkLegacyOfflineOwnsSettlement !== true) bad.push('js/27 未宣告舊版離線引擎獨占');
+  if (window.__afkLegacyOfflineOwnsSettlement !== true) bad.push('afk-offline-owner 未授權舊版離線引擎獨占');
   if (!window.__afk || window.__afk.version !== '2.1.0') bad.push('afk-offline 未成功啟動');
   for (const name of ['offlineCatchupSaveCommitted', 'offlineSettleCatchup', 'offlinePrepareCharacterSelect']) {
     if (typeof window[name] !== 'undefined') bad.push(`新版離線全域 ${name} 仍存在`);
@@ -153,7 +163,31 @@ const offlineEngineProblems = await page.evaluate(() => {
   for (const id of ['antharas_nest_1', 'antharas_nest_2', 'antharas_nest_3', 'antharas_lair']) {
     if (typeof blocked !== 'function' || !blocked(id)) bad.push(`安塔瑞斯副本未禁止離線：${id}`);
   }
+  for (const id of ['siege_v2_kent_outer', 'siege_v2_kent_gate', 'siege_v2_kent_tower_guard', 'siege_v2_kent_tower', 'siege_v2_kent_lord']) {
+    if (typeof blocked !== 'function' || !blocked(id)) bad.push(`攻城 V2 暫態地圖未禁止離線：${id}`);
+  }
   if (typeof blocked === 'function' && blocked('dragon_valley')) bad.push('一般狩獵圖被誤判為禁止離線');
+  return bad;
+});
+
+// 舊傭兵政策 + v3.8.1 戰鬥模組並存契約。
+const mercPolicyProblems = await page.evaluate(() => {
+  const bad = [];
+  const p = window.__legacyMercPolicy;
+  if (!p || p.version !== '3.7.61-policy-on-3.8.1') bad.push('舊傭兵政策層未啟動');
+  if (typeof GAME_VERSION === 'undefined' || GAME_VERSION !== 'v3.8.1') bad.push(`核心版本不是 v3.8.1（${typeof GAME_VERSION === 'undefined' ? 'missing' : GAME_VERSION}）`);
+  if (typeof partyRewardMult !== 'function' || partyRewardMult() !== 1) bad.push('金幣／掉落仍按隊伍人數加乘');
+  if (typeof partyDropRate !== 'function' || Math.abs(partyDropRate(0.125) - 0.125) > 1e-12) bad.push('掉落率仍按隊伍人數加乘');
+  if (typeof mercRehireCost !== 'function' || mercRehireCost(1) !== 1000 || mercRehireCost(50) !== 100000 || mercRehireCost(100) !== 500000) bad.push('手動重新招募費率曲線不符舊規則');
+  if (typeof currentRoleMercenaryEmployer !== 'function' || currentRoleMercenaryEmployer() !== null) bad.push('反向受僱登記仍生效');
+  if (typeof mercenaryRoleBattleBlocked !== 'function' || mercenaryRoleBattleBlocked('dragon_valley', false) !== false) bad.push('受僱角色仍被鎖在安全區');
+  if (typeof refreshAllAllies !== 'function' || refreshAllAllies !== mercBankAlliesAtTown) {
+    // 實作是薄 wrapper，不要求函式參照相同；用政策旗標確認「不刷新」。
+    if (!p || p.townRefresh !== false) bad.push('回村仍會免費刷新傭兵戰力');
+  }
+  if (typeof THREAT_ENABLED === 'undefined' || THREAT_ENABLED !== true || typeof threatWrap !== 'function' || typeof victimThreatWeight !== 'function') bad.push('v3.8.1 威脅系統未載入');
+  if (!window.SiegeV2 || !Array.isArray(SiegeV2.stages) || SiegeV2.stages.length !== 5) bad.push('v3.8.1 攻城 V2 未載入');
+  if (typeof castleGuardTick !== 'function' || typeof castleGuardSync !== 'function') bad.push('v3.8.1 城堡護衛未載入');
   return bad;
 });
 
@@ -167,7 +201,7 @@ await fpage.reload({ waitUntil: 'domcontentloaded' });
 await fpage.waitForTimeout(500);
 const offlineToggleOffProblems = await fpage.evaluate(() => {
   const bad = [];
-  if (window.__afkLegacyOfflineOwnsSettlement !== true) bad.push('關閉舊引擎後，js/27 獨占標記消失');
+  if (window.__afkLegacyOfflineOwnsSettlement !== true) bad.push('關閉舊引擎後，owner 獨占標記消失');
   if (typeof window.__afk !== 'undefined') bad.push('關閉離線掛機後，舊引擎仍啟動');
   for (const name of ['offlineCatchupSaveCommitted', 'offlineSettleCatchup', 'offlinePrepareCharacterSelect']) {
     if (typeof window[name] !== 'undefined') bad.push(`關閉舊引擎後，新版離線全域 ${name} 回退啟動`);
@@ -213,4 +247,10 @@ if (offlineToggleOffProblems.length) {
   process.exit(1);
 }
 
-console.log('冒煙測試通過:外掛 hooks OK、離線引擎互斥成立，且掉落查詢地圖名全部已翻譯。');
+if (mercPolicyProblems.length) {
+  console.error('冒煙測試失敗:舊傭兵政策與 v3.8.1 戰鬥模組並存契約不成立:');
+  for (const p of mercPolicyProblems) console.error('  ' + p);
+  process.exit(1);
+}
+
+console.log('冒煙測試通過:外掛 hooks、舊離線互斥、舊傭兵政策與 v3.8.1 戰鬥模組均成立，且地圖名已完整翻譯。');

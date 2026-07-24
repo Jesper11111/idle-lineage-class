@@ -1,6 +1,26 @@
 function newMobStatus() {
     return { freeze:0, stun:0, stone:0, sleep:0, paralyze:0, poison:0, poisonTick:30, poisonDmg:0, poisonStacks:0, poisonUnit:0,
-             blind:0, blindVal:0, weaken:0, disease:0, vacuum:0, broken:0, slow:0, mrhalf:0, magicseal:0, armorbreak:0, confuse:0, panic:0, guardbreak:0, terror:0, doom:0, strawCurse:0, muddywater:0 };   // 🌊 污濁之水：頭目回血減半（js/03）；⚡ v3.7.52 paralyze 麻痺（審判落雷·硬控同暈眩）
+             blind:0, blindVal:0, weaken:0, disease:0, vacuum:0, broken:0, slow:0, mrhalf:0, magicseal:0, armorbreak:0, confuse:0, panic:0, guardbreak:0, terror:0, doom:0, strawCurse:0, muddywater:0, bind:0 };   // 🌊 污濁之水：頭目回血減半（js/03）；⚡ v3.7.52 paralyze 麻痺（審判落雷·硬控同暈眩）；🕸️ v3.7.75 bind 束縛
+}
+// 🕸️ v3.7.75 束縛：被束縛者「原地不動」——本身不是硬控（仍可施法／使用技能），只擋一般攻擊：
+//   ‧ 被束縛的玩家／傭兵：手上不是遠距離武器就打不出一般攻擊（裝弓/十字弓＝隔空射擊·不受影響）。
+//   ‧ 被束縛的怪物：搆不到「裝備遠距離武器」的玩家／傭兵，那一次一般攻擊落空（近戰目標照打）。
+//   對頭目無效（BOSS_IMMUNE 已含 bind）。
+function isRangedArmed(ent) {
+    let w = (ent && ent.eq && ent.eq.wpn) ? DB.items[ent.eq.wpn.id] : null;
+    return !!(w && (w.ranged || w.isBow));
+}
+function bindSelfBlocked(ent) {   // 玩家／傭兵：自己被束縛且非遠距離武器→無法一般攻擊
+    let st = (typeof player !== 'undefined' && ent === player) ? player.statuses : (ent && ent.statuses);
+    return !!(st && st.bind > 0) && !isRangedArmed(ent);
+}
+function bindMobBlockedVs(m, target) {   // 怪物：自己被束縛且目標為遠距離武器持有者→這次一般攻擊搆不到
+    if (!(m && m.st && m.st.bind > 0) || !isRangedArmed(target)) return false;
+    if (state.ticks - (m._bindLogAt == null ? -999 : m._bindLogAt) >= 30) {   // 每 3 秒最多一則（攻速快的怪每 1~2 秒一次會洗版）
+        m._bindLogAt = state.ticks;
+        logCombat(`<span class="${getMobColor(m.lv)}">${m.n}</span> 被束縛住，構不到遠距離攻擊的你們。`, 'miss');
+    }
+    return true;
 }
 function mobEffAC(m, actor) { let _weakOk = (m.weakExpose > 0) && ((actor && actor !== player) ? allyHasMastery(actor, 'k_weakness') : hasMastery('k_weakness')); return (m.ac || 0) + ((m.st && m.st.disease > 0) ? 8 : 0) + ((m.st && (m.st.confuse > 0 || m.st.panic > 0)) ? 5 : 0) + ((m.st && m.st.guardbreak > 0) ? 10 : 0) + (_weakOk ? 3 * Math.min(5, m.weakExpose) : 0) - ((m._acGuardEnd > state.ticks) ? (m._acGuardVal || 0) : 0); }   // 🔮 混亂/恐慌：AC+5；🐉 護衛毀滅：AC+10；🐉 弱點精通：每層弱點曝光 AC+3（更易被命中·讀「攻擊者」精通：傭兵傳 actor→吃傭兵自身精通、玩家/召喚無 actor→吃玩家精通）   // 🗼 鋼鐵防護：暫時降低 AC
 function mobActDisabled(m) {
@@ -15,11 +35,11 @@ function traumaPhysicalBonus(target) {
     return (target && target._trauma && target._trauma.until > state.ticks) ? (target._trauma.dmg || 5) * (target._trauma.s || 1) : 0;
 }
 const STATUS_NAME = { freeze:'冰凍', stun:'暈眩', stone:'石化', sleep:'沉睡', paralyze:'麻痺', poison:'中毒',
-    blind:'目盲', weaken:'弱化', disease:'疾病', vacuum:'真空', broken:'損壞', slow:'緩速', mrhalf:'魔抗減半', magicseal:'魔法封印', armorbreak:'破甲', fragile:'脆弱', confuse:'混亂', panic:'恐慌', guardbreak:'護衛毀滅', terror:'恐懼', doom:'死神', muddywater:'污濁' };   // 🔮 脆弱（白鳥5）：受所有傷害+20%；🐉 護衛毀滅/恐懼/死神；🌊 污濁（污濁之水·頭目回血減半）
+    blind:'目盲', weaken:'弱化', disease:'疾病', vacuum:'真空', broken:'損壞', slow:'緩速', mrhalf:'魔抗減半', magicseal:'魔法封印', armorbreak:'破甲', fragile:'脆弱', confuse:'混亂', panic:'恐慌', guardbreak:'護衛毀滅', terror:'恐懼', doom:'死神', muddywater:'污濁', bind:'束縛' };   // 🔮 脆弱（白鳥5）：受所有傷害+20%；🐉 護衛毀滅/恐懼/死神；🌊 污濁（污濁之水·頭目回血減半）；🕸️ v3.7.75 束縛
 // 特定狀態的專屬套用訊息（接於怪物名稱後）
 const STATUS_MSG = { magicseal:'的魔法遭到封印了。' };
 // 對 BOSS 無效的行動限制類狀態
-const BOSS_IMMUNE = ['freeze','stun','stone','sleep','paralyze'];   // ⚡ v3.7.52 麻痺＝行動限制類·頭目免疫
+const BOSS_IMMUNE = ['freeze','stun','stone','sleep','paralyze','bind'];   // ⚡ v3.7.52 麻痺＝行動限制類·頭目免疫；🕸️ v3.7.75 束縛（行動限制類）亦對頭目無效
 // 異常魔法命中判定（玩家對怪物，共用）：命中值 = 玩家等級 + 魔法命中 − (怪等級−10) − 怪MR/10，
 // clamp[0,20]，擲 1d20（與一般攻擊相同：擲20必中、擲1必失、其餘 命中值≥骰值 即命中），命中率 5%~95%。
 // 異常魔法命中（玩家對怪物）：d20 機制，命中值 hv 上限預設 20（最高 95%）。
@@ -158,7 +178,7 @@ function _teamDotCrit(base) {
 function processMobStatusTick(m, i) {
     if(!m.st) { m.st = newMobStatus(); return false; }
     let s = m.st;
-    ['freeze','stun','stone','sleep','paralyze','blind','weaken','disease','vacuum','broken','slow','mrhalf','magicseal','fragile','armorbreak','confuse','panic','guardbreak','terror','doom','muddywater'].forEach(k => {   // 🔮 含脆弱、🔧 含破壞盔甲、🔮 含混亂/恐慌、🐉 含護衛毀滅/恐懼/死神、🌊 含污濁、⚡ 含麻痺
+    ['freeze','stun','stone','sleep','paralyze','blind','weaken','disease','vacuum','broken','slow','mrhalf','magicseal','fragile','armorbreak','confuse','panic','guardbreak','terror','doom','muddywater','bind'].forEach(k => {   // 🔮 含脆弱、🔧 含破壞盔甲、🔮 含混亂/恐慌、🐉 含護衛毀滅/恐懼/死神、🌊 含污濁、⚡ 含麻痺、🕸️ 含束縛
         if(s[k] > 0) s[k]--;
     });
     if(s.blind <= 0) s.blindVal = 0;
@@ -365,6 +385,256 @@ function allyActiveCap() {
 // 保留此相容函式供既有各傷害路徑呼叫；固定回傳 1 可一次停用所有舊魅力能力倍率。
 function royalAllyMult() { return 1; }
 function isAllyActive(slotN) { return !!(player.allies && player.allies.some(a => a && a._slot === String(slotN))); }
+// 🤝 v3.7.62 反向受僱索引：讓「被招募的來源角色」知道自己目前是別人的傭兵。
+// 完整角色存檔只在首次相容遷移或驗證僱主時讀取；平時 heartbeat 僅讀這個小型索引，避免多開時反覆解壓 8 份大存檔。
+const MERC_EMPLOYMENT_KEY_BASE = 'fb5_mercenary_employment_v1_';
+let _mercEmploymentBootKey = '';
+let _mercEmploymentLeaderSig = '';
+let _mercEmploymentLeaderRole = '';
+let _mercEmployerCache = { key: '', at: 0, value: null };
+let _mercenarySafeReturnBusy = false;
+function _mercRoleIdentity(p) {
+    if (!p || !p.cls) return '';
+    if (p.enSeed) return 'seed:' + String(p.enSeed);
+    return 'legacy:' + String(p.cls) + '|' + String(p.name || '');
+}
+function _mercEmploymentKey(classicMode) { return MERC_EMPLOYMENT_KEY_BASE + (classicMode ? 'classic' : 'normal'); }
+function _mercEmployerBucketKey(classicMode, slotN) { return _mercEmploymentKey(classicMode) + '_leader_' + String(slotN); }
+function _mercEmployerBucketRead(classicMode, slotN) {
+    try {
+        let row = JSON.parse(_lsGet(_mercEmployerBucketKey(classicMode, slotN)) || 'null');
+        return row && row.employerId && Array.isArray(row.allies) ? row : null;
+    } catch (e) { return null; }
+}
+// 🧹 v3.7.95 僱主 bucket 失效清除：僱主存檔被刪、或該存檔位重建成別的角色/切到另一個模式時，
+//   舊 bucket 沒有任何人會再改寫它 → `mercEmployerOfSlot`（登入畫面「擔任傭兵」徽章·只讀 bucket 不驗證）
+//   會永遠把該角色標成別人的傭兵。⚠️ 安全區鎖走的是 currentRoleMercenaryEmployer 的完整驗證，不受影響——
+//   也就是說舊 bug 的症狀只有「徽章洗不掉」，不會真的鎖住角色，兩者別搞混。
+function _mercEmployerBucketRemove(classicMode, slotN) {
+    try { return _lsRemove(_mercEmployerBucketKey(classicMode, slotN)); } catch (e) { return false; }
+}
+function _mercEmployerBucketWrite(classicMode, slotN, leader) {
+    if (!leader || !leader.cls) return false;
+    let row = {
+        employerSlot: String(slotN), employerId: _mercRoleIdentity(leader), employerName: leader.name || '未命名',
+        allies: (leader.allies || []).filter(a => a && a._slot != null && _mercRoleIdentity(a)).map(a => ({ sourceSlot: String(a._slot), sourceId: _mercRoleIdentity(a) })),
+        updatedAt: Date.now()
+    };
+    return _lsSet(_mercEmployerBucketKey(classicMode, slotN), JSON.stringify(row));
+}
+function _mercEmploymentRead(classicMode) {
+    try {
+        let rows = JSON.parse(_lsGet(_mercEmploymentKey(classicMode)) || '[]');
+        return Array.isArray(rows) ? rows.filter(r => r && r.sourceSlot && r.sourceId && r.employerSlot && r.employerId) : [];
+    } catch (e) { return []; }
+}
+function _mercEmploymentWrite(classicMode, rows) {
+    let seen = Object.create(null), clean = [];
+    (Array.isArray(rows) ? rows : []).forEach(r => {
+        if (!r || !r.sourceSlot || !r.sourceId || !r.employerSlot || !r.employerId) return;
+        let k = [r.sourceSlot, r.sourceId, r.employerSlot, r.employerId].join('|');
+        if (seen[k]) return;
+        seen[k] = true; clean.push(r);
+    });
+    if (clean.length > 64) clean = clean.slice(clean.length - 64);
+    return _lsSet(_mercEmploymentKey(classicMode), JSON.stringify(clean));
+}
+function _mercSavedRole(slotN) {
+    try {
+        let u = _saveUnwrap(_lzGet('lineage_idle_save_' + String(slotN)));
+        if (!u || !u.ok || !u.payload) return null;
+        let d = JSON.parse(u.payload);
+        return d && d.p && d.p.cls ? d.p : null;
+    } catch (e) { return null; }
+}
+function syncMercenaryEmploymentRegistry(force) {
+    if (!player || !player.cls) return false;
+    let classicMode = !!player.classicMode;
+    let employerId = _mercRoleIdentity(player);
+    let allies = (player.allies || []).filter(a => a && a._slot != null && _mercRoleIdentity(a));
+    let roleSig = (classicMode ? '1' : '0') + '|' + String(currentSlot) + '|' + employerId;
+    let sig = [classicMode ? 1 : 0, currentSlot, employerId].concat(allies.map(a => String(a._slot) + ':' + _mercRoleIdentity(a)).sort()).join('|');
+    if (!force && _mercEmploymentLeaderRole === roleSig) return true;   // 同角色 heartbeat 只同步一次；決鬥暫時把 allies 搬到場邊時不可誤判成解散
+    _mercEmployerBucketWrite(classicMode, currentSlot, player);   // 每位僱主獨立 key，避免多分頁同時寫共用陣列互相覆蓋
+    let rows = _mercEmploymentRead(classicMode).filter(r => !(String(r.employerSlot) === String(currentSlot) && r.employerId === employerId));
+    allies.forEach(a => rows.push({
+        sourceSlot: String(a._slot), sourceId: _mercRoleIdentity(a),
+        employerSlot: String(currentSlot), employerId: employerId,
+        employerName: player.name || '未命名', updatedAt: Date.now()
+    }));
+    let ok = _mercEmploymentWrite(classicMode, rows);
+    if (ok) { _mercEmploymentLeaderSig = sig; _mercEmploymentLeaderRole = roleSig; _mercEmployerCache.at = 0; }
+    return ok;
+}
+function _mercEmploymentBootstrapCurrentRole(classicMode, currentId) {
+    let bootKey = (classicMode ? '1' : '0') + '|' + String(currentSlot) + '|' + currentId;
+    if (_mercEmploymentBootKey === bootKey) return;
+    _mercEmploymentBootKey = bootKey;
+    let rows = _mercEmploymentRead(classicMode);
+    for (let n = 1; n <= 8; n++) {
+        if (String(n) === String(currentSlot)) continue;
+        let leader = _mercSavedRole(n);
+        if (!leader || !!leader.classicMode !== classicMode) { _mercEmployerBucketRemove(classicMode, n); continue; }   // 🧹 v3.7.95 僱主已不存在/換模式→連同 bucket 清掉，否則徽章永遠洗不掉
+        _mercEmployerBucketWrite(classicMode, n, leader);   // 首次遷移同時刷新舊 bucket，與磁碟上的最新僱傭名單一致
+        let employerId = _mercRoleIdentity(leader);
+        (leader.allies || []).forEach(a => {
+            if (!a || String(a._slot) !== String(currentSlot) || _mercRoleIdentity(a) !== currentId) return;
+            rows.push({ sourceSlot: String(currentSlot), sourceId: currentId, employerSlot: String(n), employerId: employerId,
+                employerName: leader.name || '未命名', updatedAt: Date.now() });
+        });
+    }
+    _mercEmploymentWrite(classicMode, rows);
+}
+function _mercEmploymentRecordValid(rec, classicMode, currentId) {
+    let leader = _mercSavedRole(rec.employerSlot);
+    if (!leader || !!leader.classicMode !== classicMode || _mercRoleIdentity(leader) !== rec.employerId) return false;
+    return (leader.allies || []).some(a => a && String(a._slot) === String(currentSlot) && _mercRoleIdentity(a) === currentId);
+}
+function currentRoleMercenaryEmployer() {
+    if (!player || !player.cls) return null;
+    let classicMode = !!player.classicMode, currentId = _mercRoleIdentity(player);
+    _mercEmploymentBootstrapCurrentRole(classicMode, currentId);
+    let rows = _mercEmploymentRead(classicMode);
+    let matches = [];
+    for (let n = 1; n <= 8; n++) {
+        if (String(n) === String(currentSlot)) continue;
+        let bucket = _mercEmployerBucketRead(classicMode, n);
+        if (!bucket) continue;
+        let hired = bucket.allies.find(a => a && String(a.sourceSlot) === String(currentSlot) && a.sourceId === currentId);
+        if (hired) matches.push({ sourceSlot: String(currentSlot), sourceId: currentId, employerSlot: String(n),
+            employerId: bucket.employerId, employerName: bucket.employerName || '未命名', updatedAt: bucket.updatedAt || 0 });
+    }
+    // 舊版相容索引僅作遷移備援；新資料以每位僱主的獨立 bucket 為準。
+    rows.filter(r => String(r.sourceSlot) === String(currentSlot) && r.sourceId === currentId).forEach(r => {
+        if (!matches.some(x => x.employerSlot === r.employerSlot && x.employerId === r.employerId)) matches.push(r);
+    });
+    if (!matches.length) { _mercEmployerCache = { key: '', at: Date.now(), value: null }; return null; }
+    let cacheKey = matches.map(r => r.employerSlot + ':' + r.employerId).sort().join('|');
+    if (_mercEmployerCache.key === cacheKey && Date.now() - _mercEmployerCache.at < 10000) return _mercEmployerCache.value;
+    let valid = null, invalid = [];
+    matches.forEach(r => {
+        if (_mercEmploymentRecordValid(r, classicMode, currentId)) { if (!valid) valid = r; }
+        else invalid.push(r);
+    });
+    if (invalid.length) {
+        // 🧹 v3.7.95 失效紀錄不只要從舊索引移除，還要把來源 bucket 一起修好——
+        //   bucket 才是 mercEmployerOfSlot（登入畫面徽章）唯一的資料源，只清 rows 等於沒清。
+        //   僱主存檔還在＝依磁碟最新 allies 重寫；僱主已消失/換模式＝整個 bucket 刪掉。
+        invalid.forEach(r => {
+            let leader = _mercSavedRole(r.employerSlot);
+            if (leader && !!leader.classicMode === classicMode) _mercEmployerBucketWrite(classicMode, r.employerSlot, leader);
+            else _mercEmployerBucketRemove(classicMode, r.employerSlot);
+        });
+        rows = rows.filter(r => !invalid.includes(r));
+        _mercEmploymentWrite(classicMode, rows);
+    }
+    _mercEmployerCache = { key: cacheKey, at: Date.now(), value: valid };
+    return valid;
+}
+function currentRoleIsMercenary() { return !!currentRoleMercenaryEmployer(); }
+// 🧑‍🤝‍🧑 v3.7.84 UI 高頻查詢用的記憶體記憶：地圖下拉每個選項、每輪 updateUI 都要問一次「現在是不是隊員」，
+//    而 currentRoleMercenaryEmployer() 每次都要掃 8 個存檔位的 localStorage bucket → 直接呼叫太貴。
+//    2 秒快取＝受僱/解散最多延遲 2 秒才反映在「灰階＋提示」上（下一次重繪自動修正）；
+//    ⚠️ 實際進入閘門（changeMap／enforceMercenarySafeArea）一律走未快取的 mercenaryRoleBattleBlocked，不受此快取影響。
+let _mercRoleLockMemo = { at: 0, v: false };
+function mercRoleSafeAreaOnly() {
+    if (Date.now() - _mercRoleLockMemo.at < 2000) return _mercRoleLockMemo.v;
+    let v = currentRoleIsMercenary();
+    _mercRoleLockMemo = { at: Date.now(), v: v };
+    return v;
+}
+// 🧑‍🤝‍🧑 v3.7.85 登入畫面用：不必載入角色也能問「這個存檔位的角色現在是不是別人的傭兵」。
+//    who 可以是完整存檔 p 物件，也可以是 slotSummary 摘要（{rawCls,name,enSeed,classic}）→ 一律轉成 _mercRoleIdentity 的身分字串再掃僱主 bucket。
+//    ⚠️ 只讀 bucket、不做 _mercEmploymentRecordValid 的完整驗證（那要把僱主整包存檔解壓＋parse，登入畫面每 2 秒刷一次會太重）。
+//    bucket 由僱主每次心跳/解散時重寫，已足夠即時；萬一僱主存檔被刪造成殘留，該角色一旦載入就會由 currentRoleMercenaryEmployer() 完整驗證並清掉。
+function mercEmployerOfSlot(slotN, who) {
+    if (!who) return null;
+    let cls = who.cls || who.rawCls;
+    if (!cls) return null;
+    let id = _mercRoleIdentity({ cls: cls, name: who.name, enSeed: who.enSeed });
+    if (!id) return null;
+    let classicMode = !!(who.classicMode != null ? who.classicMode : who.classic);
+    for (let n = 1; n <= 8; n++) {
+        if (String(n) === String(slotN)) continue;
+        let bucket = _mercEmployerBucketRead(classicMode, n);
+        if (!bucket) continue;
+        if (bucket.allies.some(a => a && String(a.sourceSlot) === String(slotN) && a.sourceId === id))
+            return { employerSlot: String(n), employerId: bucket.employerId, employerName: bucket.employerName || '未命名' };
+    }
+    return null;
+}
+// 🧑‍🤝‍🧑 v3.7.93 傭兵獨佔：同一個角色同時只能受僱於一位僱主，不可被兩位以上的隊長重複招募。
+//   ⚠️ 判定來源刻意是「其他存檔位的 player.allies 陣列」，不是 v3.7.62 的 bucket 索引——
+//      bucket 只有在「該僱主載入過並同步過」之後才存在，拿它當閘門會漏放（僱主從沒上線過→查無登記→誤放行）。
+//      存檔裡的 allies 才是僱傭關係的唯一真相（isAllyActive／alliesTick／refreshAllAllies 全讀它）。
+//   回傳 { 來源存檔位 → { employerSlot, employerId, employerName, hiredAt } }。同一名候選被多人宣告時保留「最強宣告」
+//      ＝ hiredAt 較早者勝、同刻則存檔位小者勝；雙方跑同一套規則→結論一致，可直接用來解多開競態。
+//   成本：解壓 7 份存檔。只在「開傭兵面板／按招募／進安全區刷新」這種一次性動作跑，不在任何 tick 迴圈裡。
+function mercEmploymentMap() {
+    let map = Object.create(null);
+    if (!player || !player.cls) return map;
+    let classicMode = !!player.classicMode;
+    for (let n = 1; n <= 8; n++) {
+        if (String(n) === String(currentSlot)) continue;                 // 自己不算「別的僱主」
+        let leader = _mercSavedRole(n);
+        if (!leader || !!leader.classicMode !== classicMode) continue;   // 跨模式本來就不能互相招募
+        let empSlot = String(n), empId = _mercRoleIdentity(leader), empName = leader.name || '未命名';
+        (leader.allies || []).forEach(a => {
+            if (!a || a._slot == null) return;
+            let s = String(a._slot);
+            let rec = { employerSlot: empSlot, employerId: empId, employerName: empName, hiredAt: Number(a._hiredAt) || 0 };
+            let prev = map[s];
+            if (!prev || rec.hiredAt < prev.hiredAt ||
+                (rec.hiredAt === prev.hiredAt && Number(rec.employerSlot) < Number(prev.employerSlot))) map[s] = rec;
+        });
+    }
+    return map;
+}
+// 「這名候選角色現在是不是別人的傭兵」單一真相；回傳現任僱主紀錄或 null。已有現成的 map 就傳進來，省一輪解壓。
+function mercSlotHiredByOther(slotN, hiredMap) { return (hiredMap || mercEmploymentMap())[String(slotN)] || null; }
+// 我對這名傭兵的宣告是否輸給對手：先招募者勝、同刻則存檔位小者勝。
+//   ⚠️ 舊存檔（閘門上線前招募的傭兵）沒有 _hiredAt → 視為 0 ＝最早，既有隊伍不會被新規則誤解散。
+function mercClaimLosesTo(ally, rival) {
+    if (!ally || !rival) return false;
+    let mine = Number(ally._hiredAt) || 0, theirs = Number(rival.hiredAt) || 0;
+    if (theirs !== mine) return theirs < mine;
+    return Number(rival.employerSlot) < Number(currentSlot);
+}
+// 🧑‍🤝‍🧑 「目前擔任隊員中」提示的單一真相（下拉閘門與地區切換共用同一句話）
+function mercenaryRoleNotifySafeAreaOnly() {
+    let employer = currentRoleMercenaryEmployer();
+    if (!employer) return false;
+    logSys(`<span class="text-amber-300 font-bold">目前擔任 ${employer.employerName || '其他角色'} 的隊員中，只能停留在安全區；請先由僱主解散傭兵。</span>`);
+    return true;
+}
+function mercenaryRoleBattleBlocked(targetMap, notify) {
+    targetMap = String(targetMap || '');
+    if (!targetMap || targetMap.startsWith('town_')) return false;
+    let employer = currentRoleMercenaryEmployer();
+    if (!employer) return false;
+    if (notify !== false) mercenaryRoleNotifySafeAreaOnly();
+    return true;
+}
+function enforceMercenarySafeArea() {
+    if (_mercenarySafeReturnBusy || !player || !player.cls || !mapState || String(mapState.current || '').startsWith('town_')) return false;
+    let employer = currentRoleMercenaryEmployer();
+    if (!employer) return false;
+    _mercenarySafeReturnBusy = true;
+    try {
+        if (player.siege && player.siege.active && typeof endSiege === 'function') endSiege('lose');
+        state.prideClimb = false; state.prideRanked = false; state.prideFloor = 0; state.prideStartMs = 0;
+        state.oblivion = null; state._oblivionAdvance = false;
+        state.antharas = 0; state._antAdvance = false;
+        state.riftRun = false; state.riftStartMs = 0; state.riftBossDue = 0;
+        if (!String(mapState.current || '').startsWith('town_')) {
+            setMapSelectors(typeof getLastTown === 'function' ? getLastTown() : getHomeTown());
+            if (typeof window.changeMap === 'function') window.changeMap(true);
+        }
+        logSys(`<span class="text-amber-300 font-bold">你目前受僱於 ${employer.employerName || '其他角色'}，已返回安全區；解散傭兵後才能再次出發。</span>`);
+        try { saveGame(); } catch (e) {}
+        return true;
+    } finally { _mercenarySafeReturnBusy = false; }
+}
 // 由存檔位建立協力角色：載入該存檔 player → 暫時切換全域 player 跑 calcStats 取得真實衍生戰力 → 還原
 // 協力顯示名稱：有取名→角色名；否則用職業中文（騎士/法師/妖精）
 function allyName(a) {
@@ -458,6 +728,7 @@ function purgeReplacedAllies() {
         if (removed.length) {
             logSys(`<span class="text-amber-300">協力傭兵 ${removed.join('、')} 的來源存檔已建立新角色，已自動解散（累積經驗記入待領帳本）。</span>`);
             try { saveGame(); } catch (e) {}
+            syncMercenaryEmploymentRegistry(true);
         }
     } catch (e) {}
 }
@@ -563,6 +834,7 @@ function allyQiguAttack(ally, t, wpn) {
 }
 function allyAttackOnce(ally, _arrowDelay) {   // 🏹 v3.2.14 _arrowDelay(選用·ms)：三重矢連發時逐箭錯開（未傳＝0 立即發射）
     if (!ally || !ally.d) return;
+    if (bindSelfBlocked(ally)) return;   // 🕸️ v3.7.75 束縛：非遠距離武器的傭兵原地不動，打不出一般攻擊（技能仍可施放）
     let t = getTarget(); if (!t || t.curHp <= 0) return;
     ally._faceTgtUid = t.uid;   // 🧭 只記錄可序列化 UID，避免傭兵與怪物互相引用造成存檔循環
     delete ally._faceTgt;
@@ -638,7 +910,7 @@ function allyAttackOnce(ally, _arrowDelay) {   // 🏹 v3.2.14 _arrowDelay(選�
         let heavy = (r === 20) || _crushA;   // 🥊 v2.6.20 粉碎：骰19重擊
         if (!heavy && !_grazeA && !ally.classicMode && ally.eq && ally.eq.wpn && getWeaponTags(ally.eq.wpn.id).includes('鋼爪') && Math.random() < 0.05) heavy = true;   // ⚔️ 鋼爪內建特性（傭兵·鏡像玩家 getPhysicalDmg）：一般攻擊命中(非擦傷)額外 5% 重擊·經典停用
         let isCrit = !_grazeA && (_evCrit || (Math.random()*100 < critR));   // 🆕 v2.6.13 #5b 迴避精通：迴避後下一擊必爆；🥊 v2.6.20 擦傷不爆
-        if (isCrit && wpn && wpn.critFuryHaste) ally._fangFuryTicks = (wpn.critFuryHaste.sec || 5) * 10;   // 🏺 v3.7.52 邪惡利牙（傭兵）：爆擊觸發攻速+30%（攻擊間隔消費·逐 tick 遞減）
+        if (isCrit && wpn && wpn.critFuryHaste) ally._fangFuryTicks = critFuryDurationTicks(wpn.critFuryHaste.sec);   // 🏺 v3.7.52 邪惡利牙（傭兵）：爆擊觸發攻速+30%（攻擊間隔消費·逐 tick 遞減）
         let critMult = isCrit ? (1 + critD/100) : 1;
         let wpnRoll = (heavy || (!isRanged && ally.buffs && ally.buffs.sk_elf_flamesoul > 0)) ? dice : roll(1, dice);   // 🔥 v3.1.77 烈焰之魂（傭兵）：近距離一般攻擊武器擲骰必定最大值（鏡像玩家 js/03:861·原傭兵維持此 buff 白扣 MP）
         let _hsT = mobHardSkin(t);   // 🔧 穿透精通用：被硬皮扣減前的量
@@ -781,7 +1053,7 @@ function allyComboAttack(ally, t, fullDmg) {
     let wi = (ally.eq && ally.eq.wpn) || null, wo = wi ? DB.items[wi.id] : null;
     let r = allyStrikeRoll(ally, t, { forceCrit: !!(fullDmg && wo && wo.comboForceCrit) });   // 獨立命中判定；🏺 v3.7.52 邪惡利牙：雙擊追加攻擊必定爆擊（爆擊精通 legacy(!fullDmg) 不套·鏡像玩家）
     if (!r.hit) { if (typeof vfxMiss === 'function') vfxMiss(t); logCombat(`<span class="font-bold" style="color:#c4b5fd;">【協力·${ally._allyName}·雙擊】</span>追擊 <span class="${getMobColor(t.lv)}">${t.n}</span> 未命中。`, 'miss'); return; }
-    if (r.crit && wo && wo.critFuryHaste) ally._fangFuryTicks = (wo.critFuryHaste.sec || 5) * 10;   // 🏺 v3.7.52 邪惡利牙（傭兵）：爆擊觸發攻速+30%（js/06 攻擊間隔消費·逐 tick 遞減）
+    if (r.crit && wo && wo.critFuryHaste) ally._fangFuryTicks = critFuryDurationTicks(wo.critFuryHaste.sec);   // 🏺 v3.7.52 邪惡利牙（傭兵）：爆擊觸發攻速+30%（js/06 攻擊間隔消費·逐 tick 遞減）
     let dmg = Math.max(1, Math.floor(r.dmg * (fullDmg ? (ally._setShadow5 ? 2.0 : 1.0) : (ally._setShadow5 ? 1.0 : 0.5))));   // 🔧 雙擊(fullDmg)：完整一般攻擊·暗影5/5傷害加倍(×2)；爆擊精通(legacy)×0.5
     dmg = Math.max(1, Math.floor(dmg * elementCounterMult(getWpnEle(wi, wo, ally), t.e)));   // ⚔️ 武器屬性剋制倍率（雙擊）
     if (t.curHp > 0) wearHardSkin(t, wi ? wi.id : null, r.heavy, false, true, ally.classicMode);
@@ -861,9 +1133,9 @@ function allyCastMagic(ally, sk) {
     if (sk && sk.type === 'atk' && ally && ally.eq && ally.eq.wpn) {
         let _sbw = DB.items[ally.eq.wpn.id];
         if (_sbw && _sbw.spellbladeBuff) {
-            let _sbEle = (sk.ele && sk.ele !== 'none') ? sk.ele : null;
+            let _sbEle = spellbladeSkillElement(sk.ele) || null;
             let _sbwWas = (ally._spellbladeUntil || 0) > state.ticks && ally._spellbladeTier === (sk.tier || 1) && ally._spellbladeEle === _sbEle;
-            ally._spellbladeUntil = state.ticks + 100; ally._spellbladeTier = sk.tier || 1; ally._spellbladeEle = _sbEle;
+            ally._spellbladeUntil = state.ticks + spellbladeDurationTicks(); ally._spellbladeTier = sk.tier || 1; ally._spellbladeEle = _sbEle;
             if (!_sbwWas && typeof _allyLevelRecompute === 'function') _allyLevelRecompute(ally);
         }
     }
@@ -1348,6 +1620,18 @@ function allyProcFreeMagicSkill(ally, t, skId, en, areaHit, sourceItem, illusion
         });
         return;
     }
+    // 💀 v3.7.74 即死型技能的免費觸發（傭兵鏡像玩家 js/04 procFreeMagicSkill）：以傭兵自身魔法命中判定
+    //    （tryInstakill 內部讀 player → 換身；deferKill=true，還原 player 之後才 killMob，讓經驗/金幣/掉落歸真實玩家）。
+    if (sk.instakill && typeof tryInstakill === 'function') {
+        let _ik = sk.instakill;
+        let _ikOk = !t.boss && (!_ik.tag || (typeof mobHasTag === 'function' && mobHasTag(t, _ik.tag)));
+        if (_ikOk && typeof playSpellFx === 'function') { try { playSpellFx(sk.n, t); } catch (e) {} }
+        let _ikIdx = mapState.mobs.findIndex(m => m && m.uid === t.uid);
+        let _ikDone = false;
+        if (_ikIdx !== -1) { let _sv = player; player = ally; try { _ikDone = tryInstakill(t, _ik, sk.n, _ikIdx, true); } finally { player = _sv; } }
+        if (_ikDone) { let _ri = mapState.mobs.findIndex(m => m && m.uid === t.uid); if (_ri !== -1) killMob(_ri); return; }
+        if (!sk.multiDmg && !sk.dmgDice) return;   // 無傷害骰的純即死技：失敗就結束
+    }
     let d = ally.d || {};
     let effMr = (t.st && t.st.mrhalf > 0) ? (t.mr / 2) : t.mr;
     let mrFactor = mrMult(effMr);
@@ -1463,6 +1747,7 @@ function allyWeaponProcs(ally, target, hitInfo, instOverride) {
     if (wpn.procPoison) applyWeaponProcPoison(target, wpn.procPoison, wpnEnFinalMult(wpnInst), _dpsAllySrc(ally));   // 🔧 死亡之指：傭兵攻擊時毒咒（與玩家一致·吃武器強化最終倍率）；🎯 DPS 歸該傭兵
     if (wpn.procBurstPoison) applyWeaponBurstPoison(target, wpn.procBurstPoison, capWpnEn(wpnInst.en), wpnEnFinalMult(wpnInst), _dpsAllySrc(ally));   // 💥 破壞雙刀/鋼爪：傭兵攻擊時猛爆劇毒（與玩家一致·吃武器強化最終倍率）；🎯 DPS 歸該傭兵
     if (wpn.procStatusSkill) { let _sv = player; player = ally; try { applyWeaponProcStatusSkill(target, wpn.procStatusSkill); } finally { player = _sv; } }   // 🌑 惡魔王武器：傭兵攻擊時施放疾病術（以傭兵自身魔法命中判定）
+    if (wpn.procStatus) { let _sv = player; player = ally; try { applyWeaponProcStatus(target, wpn.procStatus, wpn.n); } finally { player = _sv; } }   // 🕸️ v3.7.75 深紅之弩：傭兵攻擊時 rate% 附加異常狀態（同樣以傭兵自身魔法命中判定）
     // 🏺 鋼鐵僧侶的錫杖（傭兵）：命中後觸發體力回復術，使用傭兵能力治癒全隊。
     if (wpn.procHealSkill && hitInfo && hitInfo.hit && Math.random() * 100 < (wpn.procHealSkill.rate || 5)) {
         let _hs = DB.skills[wpn.procHealSkill.skId];
@@ -2735,7 +3020,8 @@ function alliesTick() {
             }
         }
         } finally { if (_iAura && _iBase && (ally._recompN || 0) === _iRn) { ally.d.extraDmg = _iBase.ed; ally.d.extraHit = _iBase.eh; ally.d.magicDmg = _iBase.md; }   // 🔮 還原幻覺光環（若本回合發生升級重算→ally.d 已就地重建·跳過還原·避免把光環當基底扣掉）
-                   _dpsAllyTurn = false; let _ad = _dpsDealt(_dpsASnap); if (_ad > 0) _dpsAddAlly(ally, _ad); }   // 🎯 DPS：結算該傭兵本回合輸出
+                   _dpsAllyTurn = false; let _ad = _dpsDealt(_dpsASnap); if (_ad > 0) _dpsAddAlly(ally, _ad);
+                   if (typeof threatCommitDiff === 'function') threatCommitDiff(_dpsASnap, ally); }   // 🎯 DPS＋v3.7.97 仇恨：逐傭兵回合掉血→記給該傭兵（threatMult＝職業×武器）
     });
 }
 // 🤝 Phase 3：傭兵自動治癒——若已設定治癒魔法且任一受益者低於門檻，施放舊版骰數治癒；團補逐人獨立擲骰，生命之泉補滿最低者。
@@ -2795,6 +3081,7 @@ function allyTryHeal(ally) {
     }
     // 🎬 v3.0.95 傭兵治癒視覺回饋（用戶反映「沒動作也沒效果」·數值其實有補但零視覺）：①施放者播施法動作（原本傭兵治癒完全無動畫）②治癒特效疊在被治癒者 sprite 身上（無 sprite→戰鬥區預設錨點；未註冊技能名靜默略過）
     if (typeof _allySpriteTrigger === 'function') _allySpriteTrigger(ally, 'skill', sk.n);
+    if (typeof threatHeal === 'function') threatHeal(ally, _actual);   // 🎯 v3.7.97 仇恨制：傭兵治癒＝實際回復量×0.5 記給該傭兵（overheal 不算·_actual 已排除）
     if (typeof playSelfFx === 'function') { try { playSelfFx(sk.n, (typeof _partyMemberRect === 'function') ? _partyMemberRect(lowest) : null); } catch (e) {} }
     if (sk.groupHeal) logCombat(`<span class="text-emerald-300 font-bold">協力·${ally._allyName}</span> 施放 ${sk.n}，立即治癒全隊 ${_hit} 名成員，共恢復 ${_actual} 點 HP。`, 'heal', 'mercenary');
     else { let _who = (typeof _supName === 'function') ? _supName(lowest) : ((lowest === player) ? (player.name || '你') : ('協力·' + lowest._allyName)); logCombat(`<span class="text-emerald-300 font-bold">協力·${ally._allyName}</span> 施放 ${sk.n}，為 ${_who} 恢復 ${_actual} 點 HP。`, 'heal', 'mercenary'); }
@@ -2947,52 +3234,64 @@ function _allyLevelRecompute(ally) {
     if (ok && ally.summon && typeof refreshSummonBalance === 'function') { try { refreshSummonBalance(ally.summon, ally); } catch (e) {} }
 }
 // 城鎮 NPC：召喚/解除協力角色
-function allyCost(slotN) { let sum = slotSummary(slotN); return sum ? (sum.lv || 1) * 10000 : 0; }   // 招募費用 = 角色等級 × 10000
-// 🤝 v2.6.72 重新招募費率曲線（用戶指定錨點）：Lv1＝原價 1/10、Lv50＝1/5、Lv100＝1/2，中間等級分段幾何級數插值
-//    1~50：0.1 × 2^((lv−1)/49)（0.1→0.2）；50~100：0.2 × 2.5^((lv−50)/50)（0.2→0.5）——三錨點精確、中間平滑遞增
-function mercRehireMult(lv) {
-    lv = Math.max(1, Math.min(100, Math.floor(lv || 1)));
-    return (lv <= 50) ? 0.1 * Math.pow(2, (lv - 1) / 49) : 0.2 * Math.pow(2.5, (lv - 50) / 50);
-}
-function mercRehireCost(lv) { return Math.floor((lv || 1) * 10000 * mercRehireMult(lv)); }   // 重新招募費用 = 原價(lv×10000) × 曲線費率
-// 🤝 v2.6.72 重新招募：一鍵「結算累積經驗（記入待領帳本）＋以來源存檔最新狀態重建戰力快照」。個別解散另由 dismissAlly 處理。
-function rehireAlly(slotN) {
+// 🔄 v3.7.87 用戶指定：**取消傭兵雇用費用**（招募與更新一律 0 金）、**取消「重新招募」按鈕**，改成隊長進入安全區時自動刷新一次。
+//    單名刷新＝舊「重新招募」的完整動作：結算累積經驗（記入待領帳本）＋以來源存檔最新狀態重建戰力快照，差別只在不收費、不用手動點。
+//    回傳 `{kind:'refresh'|'dismiss'|'skip', msg}` 交由上層彙整成一則訊息（每名各噴一長串日誌會洗版）。
+function refreshAllyOnce(slotN) {
     slotN = String(slotN);
     let cur = (player.allies || []).find(a => a && a._slot === slotN);
-    if (!cur) return;
-    snapshotMercPrefs(cur);   // 🤝 v3.4.23 重新招募前記住現有喝水＋技能設定（同一角色重建後由 buildAlly 還原）
-    // 🤝 v3.4.23 來源存檔位已換成新角色（enSeed 不同）→ 不重建、直接解散（不收費·設定已記憶·結算待領經驗）
-    { let _curSeed = _slotCharEnSeed(slotN);
-      if (cur.enSeed && _curSeed && _curSeed !== cur.enSeed) {
+    if (!cur) return { kind: 'skip', msg: '' };
+    snapshotMercPrefs(cur);   // 🤝 v3.4.23 重建前記住現有喝水＋技能設定（buildAlly 尾的 applyMercPrefs 會還原）
+    // 🤝 v3.4.23 來源存檔位已換成新角色（enSeed 不同）→ 不重建、直接解散（設定已記憶·累積經驗照樣結算）
+    let _curSeed = _slotCharEnSeed(slotN);
+    if (cur.enSeed && _curSeed && _curSeed !== cur.enSeed) {
         let m0 = _settleAllyExp(cur, 'dismiss');
         player.allies = player.allies.filter(a => a && a._slot !== slotN);
-        logSys(`<span class="text-amber-300">存檔 ${slotN} 已建立新角色，原傭兵 ${cur._allyName} 已解散（未收費）。</span>${m0 ? ' ' + m0 : ''}`);
-        saveGame(); updateUI();
-        let _c0 = document.getElementById('interaction-content'); if (_c0) renderAllyNPC(_c0);
-        return;
-      } }
-    let sum = slotSummary(slotN);
-    if (!sum) {   // 來源存檔已不存在 → 無法重建，結算後解散（不收費）
-        let m0 = _settleAllyExp(cur, 'dismiss');
-        player.allies = player.allies.filter(a => a && a._slot !== slotN);
-        logSys(`<span class="text-amber-300">存檔 ${slotN} 已無可用角色，傭兵已解散。</span>${m0 ? ' ' + m0 : ''}`);
-    } else {
-        let cost = mercRehireCost(sum.lv || 1);
-        if ((player.gold || 0) < cost) { logSys(`<span class="text-red-400">重新招募 ${sum.name || ''}（Lv.${sum.lv}）需要 ${cost.toLocaleString()} 金幣，你的金幣不足。</span>`); return; }
-        let m = _settleAllyExp(cur, 'rehire');   // 🤝 結算：累積經驗記入待領帳本（該角色下次載入/回村領取）
-        let fresh = buildAlly(slotN);
-        if (!fresh) {   // 重建失敗（角色不可用）→ 已結算，直接解散、不收費
-            player.allies = player.allies.filter(a => a && a._slot !== slotN);
-            logSys(`<span class="text-amber-300">存檔 ${slotN} 無法重新招募（角色不可用），傭兵已解散（未收費）。</span>${m ? ' ' + m : ''}`);
-        } else {
-            player.gold -= cost;
-            let idx = player.allies.findIndex(a => a && a._slot === slotN);
-            if (idx !== -1) player.allies[idx] = fresh; else player.allies.push(fresh);
-            logSys(`<span class="text-emerald-300 font-bold">花費 ${cost.toLocaleString()} 金幣重新招募 ${fresh._allyName}（存檔 ${slotN}，Lv.${sum.lv}），戰力快照已更新。</span>${m ? ' ' + m : ''}`);
-        }
+        return { kind: 'dismiss', msg: `<span class="text-amber-300">存檔 ${slotN} 已建立新角色，原隊員 ${cur._allyName} 已解散。</span>${m0 ? ' ' + m0 : ''}` };
     }
-    saveGame(); updateUI();
-    let _c = document.getElementById('interaction-content'); if (_c) renderAllyNPC(_c);
+    let m = _settleAllyExp(cur, 'refresh');   // 結算：累積經驗記入待領帳本（該角色下次載入/回村領取）
+    let fresh = buildAlly(slotN);             // 來源存檔不存在／角色不可用時回 null
+    if (!fresh) {
+        player.allies = player.allies.filter(a => a && a._slot !== slotN);
+        return { kind: 'dismiss', msg: `<span class="text-amber-300">存檔 ${slotN} 已無可用角色，隊員已解散。</span>${m ? ' ' + m : ''}` };
+    }
+    fresh._hiredAt = Number(cur._hiredAt) || 0;   // 🧑‍🤝‍🧑 v3.7.93 重建快照不能重設招募時刻，否則每次進安全區都會把自己的獨佔順位往後推
+    let idx = player.allies.findIndex(a => a && a._slot === slotN);
+    if (idx !== -1) player.allies[idx] = fresh; else player.allies.push(fresh);
+    return { kind: 'refresh', msg: m };
+}
+// 🔄 v3.7.87 全隊刷新。**唯一掛點＝js/11 changeMap 的安全區分支**——載入存檔時 loadGame 也一律 setMapSelectors(getHomeTown())＋changeMap(true)
+//    走同一條分支，所以「進安全區」與「隊長登入」共用這一個呼叫點，不必也不該掛兩次。
+//    ⚠️ 取代舊的 mercBankAlliesAtTown（只結算不重建）：刷新本身已含結算，且**結算後必須立刻 saveGame**——
+//    否則「進村→關分頁→重載」會把同一筆 _expGained 重複記帳＝無限刷經驗（v2.6.69 審計#2 踩過的坑）。
+function refreshAllAllies() {
+    try {
+        let slots = ((player && player.allies) || []).map(a => a && a._slot).filter(s => s != null);
+        if (!slots.length) return 0;
+        let n = 0;
+        slots.forEach(s => {
+            let r = refreshAllyOnce(s);
+            if (r.msg) logSys(r.msg);
+            if (r.kind === 'refresh') n++;
+        });
+        // 🧑‍🤝‍🧑 v3.7.93 傭兵獨佔收尾：清掉「同一名傭兵同時掛在兩位僱主底下」的殘留——
+        //   閘門上線前招募的舊存檔，以及多開時雙方都還沒看見彼此就各自招募成功的情形。
+        //   先招募者勝（mercClaimLosesTo）；輸的一方在自己進安全區時自動解散，兩邊各跑一次即收斂。
+        let _hiredMap = mercEmploymentMap();
+        (player.allies || []).slice().forEach(a => {
+            if (!a || a._slot == null) return;
+            let rival = _hiredMap[String(a._slot)];
+            if (!rival || !mercClaimLosesTo(a, rival)) return;
+            snapshotMercPrefs(a);
+            let m2 = _settleAllyExp(a, 'dismiss');
+            player.allies = player.allies.filter(x => x !== a);
+            logSys(`<span class="text-amber-300">${a._allyName || ('存檔 ' + a._slot)} 已受僱於 ${rival.employerName}，同一個角色不能同時受僱於兩位僱主，已自動解散。</span>${m2 ? ' ' + m2 : ''}`);
+        });
+        try { saveGame(); } catch (e) {}
+        try { syncMercenaryEmploymentRegistry(true); } catch (e) {}
+        if (n > 0) logSys(`<span class="text-sky-300">已依最新存檔更新 ${n} 名隊員的資料。</span>`);
+        return n;
+    } catch (e) { return 0; }
 }
 // ===== 🤝 v2.6.68 傭兵經驗「待領帳本」（取代 解雇直接改寫來源存檔＋v2.6.42 storage 訊號廣播）=====
 // 設計：解散傭兵或「隊長回村」時，只把累積經驗寫成一筆獨立待領紀錄（唯一編號/來源隊伍/傭兵存檔身分/經驗/時間），
@@ -3081,14 +3380,8 @@ function _settleAllyExp(ally, reason) {
         return `<span class="text-emerald-300">${ally._allyName} 累積的 ${banked.toLocaleString()} 經驗已記入待領帳本（該角色下次載入或回村時領取）。</span>`;
     } catch (e) { return ''; }
 }
-// 🤝 隊長回村：所有上場傭兵各記一筆待領經驗（不解散·不改來源存檔·戰力快照不動）
-function mercBankAlliesAtTown() {
-    try {
-        let _n = 0;
-        ((player && player.allies) || []).forEach(a => { let m = _settleAllyExp(a, 'town'); if (m) { logSys(m); _n++; } });
-        if (_n > 0) { try { saveGame(); } catch (e) {} }   // 🛡️ v2.6.69 修（審計#2）：立即固化 _expGained=0；否則「進村→關分頁→重載」會把同一筆經驗重複記帳＝無限刷
-    } catch (e) {}
-}
+// 🗑️ v3.7.87 移除 mercBankAlliesAtTown（v2.6.68「隊長回村只結算不重建」）：唯一呼叫點 js/11 村莊分支已改呼叫
+//    refreshAllAllies()，而刷新本身就含 _settleAllyExp＋saveGame＝完全涵蓋原功能，留著只會變成第二條結算路徑。
 // 🤝 領取：本分頁目前角色（currentSlot＋同職業＋同名三重守衛）的所有未領紀錄→鎖內標記已結算→套用升級曲線→存檔。
 //    掛點：回村/回城（changeMap 村莊分支·loadGame 一律回家鄉村莊故載入亦觸發）。鎖被占→隨機退避重試（最多 5 次）。
 function mercExpClaimPending(_retry) {
@@ -3133,7 +3426,7 @@ function toggleAlly(slotN) {
         if (_dis) snapshotMercPrefs(_dis);   // 🤝 v3.4.23 解散前記住喝水＋技能設定，供同一角色再次招募時還原
         let _expMsg = _dis ? _settleAllyExp(_dis, 'dismiss') : '';   // 🤝 v2.6.68 解雇＝記一筆待領經驗（帳本制·不直接改寫來源存檔）
         player.allies = player.allies.filter(a => a && a._slot !== slotN);
-        logSys(`協力傭兵（存檔 ${slotN}）已解散（招募費用不退還）。${_expMsg}`);
+        logSys(`協力傭兵（存檔 ${slotN}）已解散。${_expMsg}`);
     } else {
         let _allyCap = allyActiveCap();
         if ((player.allies.length || 0) >= _allyCap) {   // 非王族固定 3；王族為 3＋floor(魅力/15)，封頂 7。
@@ -3143,6 +3436,7 @@ function toggleAlly(slotN) {
             return;
         }
         let sum = slotSummary(slotN);
+        let _hired = sum ? mercSlotHiredByOther(slotN) : null;   // 🧑‍🤝‍🧑 v3.7.93 現任僱主（有＝已被別的角色招募走）
         if (!sum) { logSys(`<span class="text-red-400">存檔 ${slotN} 沒有可用的角色。</span>`); }
         else if (!!sum.classic !== !!player.classicMode) {   // 🎮 一般／經典 不可跨模式招募（🏛️v3.0.83 傳統已取消·舊傳統存檔依 classicMode 歸類）
             logSys(`<span class="text-red-400">只能招募與本角色「相同模式（一般／經典）」的存檔傭兵。</span>`);
@@ -3150,20 +3444,31 @@ function toggleAlly(slotN) {
         else if (typeof antharasHelperSlots === 'function' && antharasHelperSlots().includes(String(slotN))) {   // 🐉 v3.7.57 助戰者互斥：擔任副本助戰者的角色不可受僱
             logSys(`<span class="text-red-400">${sum.name} 目前擔任侵蝕的安塔瑞斯巢穴助戰者，無法招募；請先到威頓村找多魯嘉貝爾解除助戰。</span>`);
         }
-        else {
-            let cost = allyCost(slotN);   // 💰 v3.5.87 招募費用唯一真相＝allyCost（內部重讀 slotSummary·與原 inline (sum.lv||1)*10000 等價）
-            if ((player.gold || 0) < cost) { logSys(`<span class="text-red-400">招募 ${sum.name}（Lv.${sum.lv}）需要 ${cost.toLocaleString()} 金幣，你的金幣不足。</span>`); }
+        else if (_hired) {   // 🧑‍🤝‍🧑 v3.7.93 傭兵獨佔：已受僱於別的角色→不可重複招募
+            logSys(`<span class="text-red-400">${sum.name || ('存檔 ' + slotN)} 目前已是 ${_hired.employerName} 的傭兵；同一個角色不能同時受僱於兩位僱主，請先由該僱主解散。</span>`);
+        }
+        else {   // 💰 v3.7.87 用戶指定取消雇用費用：allyCost／金幣檢查／扣款全數移除（招募一律免費）
+            let a = buildAlly(slotN);
+            if (!a) { logSys(`<span class="text-red-400">存檔 ${slotN} 沒有可用的角色。</span>`); }
             else {
-                let a = buildAlly(slotN);
-                if (!a) { logSys(`<span class="text-red-400">存檔 ${slotN} 沒有可用的角色。</span>`); }
-                else { player.gold -= cost; player.allies.push(a); logSys(`<span class="text-emerald-300 font-bold">花費 ${cost.toLocaleString()} 金幣招募 ${a._allyName}（存檔 ${slotN}，Lv.${sum.lv}）加入作戰！</span>`); }
+                a._hiredAt = Date.now();   // 🧑‍🤝‍🧑 v3.7.93 招募時刻＝獨佔權排序依據（先招募者勝）；refreshAllyOnce 重建快照時必須沿用同一個值
+                player.allies.push(a);
+                logSys(`<span class="text-emerald-300 font-bold">${a._allyName}（存檔 ${slotN}，Lv.${sum.lv}）加入作戰！</span>`);
+                // 🧑‍🤝‍🧑 v3.7.93 多開競態收尾：先寫回存檔讓對手看得見我的宣告，再重讀一次僱傭表；若有人比我更早招募同一角色→我退出。
+                //   ⚠️ 只能解「對手存檔已落地」的排序；兩邊都還沒看見彼此時，由下一次進安全區的 refreshAllAllies 收尾。
+                try { saveGame(); } catch (e) {}
+                let _rival = mercSlotHiredByOther(slotN);
+                if (_rival && mercClaimLosesTo(a, _rival)) {
+                    player.allies = player.allies.filter(x => x !== a);
+                    logSys(`<span class="text-red-400">${a._allyName} 在同一時間已被 ${_rival.employerName} 招募，本次招募取消。</span>`);
+                }
             }
         }
     }
-    saveGame(); updateUI();
+    saveGame(); syncMercenaryEmploymentRegistry(true); updateUI();
     let _c = document.getElementById('interaction-content'); if(_c) renderAllyNPC(_c);
 }
-// 🤝 個別解散：保留重新招募按鈕，僅解除指定傭兵；實際經驗結算、存檔與畫面更新沿用 toggleAlly 的既有流程。
+// 🤝 個別解散：只解除指定傭兵；實際經驗結算、存檔與畫面更新沿用 toggleAlly 的既有流程。
 function dismissAlly(slotN) {
     slotN = String(slotN);
     let ally = (player.allies || []).find(a => a && String(a._slot) === slotN);
@@ -3173,7 +3478,7 @@ function dismissAlly(slotN) {
         return;
     }
     let name = ally._allyName || `存檔 ${slotN}`;
-    if (!confirm(`確定要解散協力傭兵「${name}」嗎？\n（招募費用不退還，累積經驗會記入待領帳本，該角色下次載入或回村時領取）`)) return;
+    if (!confirm(`確定要解散協力傭兵「${name}」嗎？\n（累積經驗會記入待領帳本，該角色下次載入或回村時領取）`)) return;
     toggleAlly(slotN);
 }
 function renderAllyNPC(div) {
@@ -3182,6 +3487,7 @@ function renderAllyNPC(div) {
     const _capHint = player.cls === 'royal'
         ? `<br><span class="text-amber-300">王族魅力不影響傭兵能力；每滿 15 點魅力可多帶 1 名。目前魅力 ${_royalCha}，可同時帶 ${_activeCap}/7 名。</span>`
         : `<br><span class="text-slate-400">目前可同時帶 ${_activeCap} 名傭兵。</span>`;
+    const _hiredMap = mercEmploymentMap();   // 🧑‍🤝‍🧑 v3.7.93 一次掃完全部存檔位；逐列各查一次會變成 7×7 次解壓
     let rows = allySlotList().map(n => {
         let sum = slotSummary(n);
         let active = isAllyActive(n);
@@ -3190,14 +3496,17 @@ function renderAllyNPC(div) {
         let _modeMatch = (_classic === !!player.classicMode);          // 🎮 只能招募與自己同模式（一般/經典）的存檔（🏛️v3.0.83 傳統已取消）
         let _tag = _classic ? '<span style="color:#fbbf24;font-weight:bold;">⚔經典</span> ' : '';
         let _nameStyle = _classic ? 'style="color:#fbbf24;"' : 'class="text-amber-300"';
+        let _hired = active ? null : (_hiredMap[n] || null);   // 🧑‍🤝‍🧑 v3.7.93 已受僱於別的角色→本列不給招募
+        // 🔄 v3.7.87 用戶指定移除「重新招募」按鈕（改為進安全區自動刷新）；召喚不再顯示費用（已取消收費）
         let _btn = active
             ? `<div class="flex flex-wrap justify-end gap-1.5 shrink-0">
-                    <button onclick="rehireAlly('${n}')" class="btn py-1 px-3 text-sm font-bold bg-sky-900 border-sky-700 text-sky-200" title="結算累積經驗（記入待領帳本，該角色下次載入或回村時領取）並以最新存檔重建戰力快照">重新招募　${mercRehireCost(sum.lv || 1).toLocaleString()}金</button>
-                    <button onclick="dismissAlly('${n}')" class="btn py-1 px-3 text-sm font-bold bg-red-950 border-red-700 text-red-200" title="只解散這名協力傭兵（招募費用不退還，累積經驗會記入待領帳本）">解散</button>
+                    <button onclick="dismissAlly('${n}')" class="btn py-1 px-3 text-sm font-bold bg-red-950 border-red-700 text-red-200" title="只解散這名協力傭兵（累積經驗會記入待領帳本）">解散</button>
                </div>`
-            : (_modeMatch
-                ? `<button onclick="toggleAlly('${n}')" class="btn py-1 px-4 text-sm font-bold bg-emerald-900 border-emerald-700 text-emerald-200">召喚　${allyCost(n).toLocaleString()}金</button>`
-                : `<span class="text-xs text-slate-500 px-2 text-right">非同模式存檔<br>不可招募</span>`);
+            : (!_modeMatch
+                ? `<span class="text-xs text-slate-500 px-2 text-right">非同模式存檔<br>不可招募</span>`
+                : _hired
+                    ? `<span class="text-xs px-2 text-right" style="color:#fbbf24;" title="同一個角色同時只能受僱於一位僱主；請先由現任僱主解散。">已受僱於 ${_hired.employerName}<br>不可重複招募</span>`
+                    : `<button onclick="toggleAlly('${n}')" class="btn py-1 px-4 text-sm font-bold bg-emerald-900 border-emerald-700 text-emerald-200">召喚</button>`);
         // 🔋 出戰中傭兵剩餘資源：騎士/戰士(純物理)不顯示；龍騎士以 HP 為資源(技能吃HP)；其餘職業顯示 MP
         let _res = '';
         if (active) {
@@ -3213,11 +3522,10 @@ function renderAllyNPC(div) {
         </div>`;
     }).join('');
     div.innerHTML = `<div class="flex flex-col gap-3 p-1">
-        <div class="text-slate-300 text-sm leading-relaxed">招募其他存檔位的角色一起作戰，<b class="text-amber-300">費用＝該角色等級 × 10000 金幣</b>。協力傭兵戰鬥中不會陣亡，<b class="text-emerald-300">你死亡並回城／原地復活後仍會留在身邊，可使用各傭兵旁的「解散」或「⚠ 全員退出」（費用不退還）</b>；存讀檔不會使其消失。法師以魔法、妖精以弓/三重矢、騎士以物理（含看破/殺戮）出手。${_capHint}<br><span class="text-slate-400">提示：點「重新招募」可隨時結算傭兵累積經驗（記入待領帳本）並以最新存檔更新戰力快照；點「解散」只會解除該名傭兵並結算其累積經驗。重新招募費用依等級為原價的 1/10（Lv1）~ 1/5（Lv50）~ 1/2（Lv100）曲線遞增。</span></div>
-        <div class="flex items-center justify-between gap-2">
-            <div class="text-sm">你的金幣：<span class="text-yellow-400 font-bold">${(player.gold||0).toLocaleString()}</span></div>
-            ${(player.allies||[]).length ? `<button onclick="dismissAllAllies()" class="btn py-1 px-3 text-xs font-bold bg-red-950 border-red-700 text-red-200" title="解除目前全部協力傭兵（含異常卡住、找不到對應存檔的傭兵）">⚠ 全員退出（${(player.allies||[]).length}）</button>` : ''}
-        </div>
+        <div class="text-slate-300 text-sm leading-relaxed">招募其他存檔位的角色一起作戰，<b class="text-emerald-300">完全免費</b>。協力傭兵戰鬥中不會陣亡，<b class="text-emerald-300">你死亡並回城／原地復活後仍會留在身邊，可使用各傭兵旁的「解散」或「⚠ 全員退出」</b>；存讀檔不會使其消失。法師以魔法、妖精以弓/三重矢、騎士以物理（含看破/殺戮）出手。<br><span class="text-amber-300">同一個角色同時只能受僱於一位僱主——已被其他角色招募走的存檔不會出現「召喚」按鈕，須由現任僱主先解散。</span>${_capHint}<br><span class="text-slate-400">提示：<b class="text-sky-300">每次進入安全區（含載入存檔回到村莊）都會自動刷新一次隊員資料</b>——結算各隊員累積的經驗（記入待領帳本，該角色下次載入或回村時領取）並依來源存檔的最新狀態重建戰力快照，不需要也不再有「重新招募」按鈕。點「解散」只會解除該名傭兵並結算其累積經驗。</span></div>
+        ${(player.allies||[]).length ? `<div class="flex items-center justify-end gap-2">
+            <button onclick="dismissAllAllies()" class="btn py-1 px-3 text-xs font-bold bg-red-950 border-red-700 text-red-200" title="解除目前全部協力傭兵（含異常卡住、找不到對應存檔的傭兵）">⚠ 全員退出（${(player.allies||[]).length}）</button>
+        </div>` : ''}
         ${rows}
     </div>`;
 }
@@ -3225,11 +3533,11 @@ function renderAllyNPC(div) {
 function dismissAllAllies() {
     let n = (player.allies || []).length;
     if (!n) { logSys('<span class="text-slate-400">目前沒有上場的協力傭兵。</span>'); return; }
-    if (!confirm(`確定要解除全部 ${n} 名協力傭兵嗎？\n（招募費用不退還，累積經驗會記入待領帳本，各角色下次載入或回村時領取）`)) return;
+    if (!confirm(`確定要解除全部 ${n} 名協力傭兵嗎？\n（累積經驗會記入待領帳本，各角色下次載入或回村時領取）`)) return;
     (player.allies || []).forEach(a => { snapshotMercPrefs(a); let m = _settleAllyExp(a, 'dismiss'); if (m) logSys(m); });   // 🤝 v3.4.23 先記住各傭兵設定 + v2.6.68 各自記一筆待領經驗（帳本制·不直接改寫來源存檔）
     player.allies = [];
     logSys(`<span class="text-amber-300">已解除全部協力傭兵（共 ${n} 名）。</span>`);
-    saveGame(); updateUI();
+    saveGame(); syncMercenaryEmploymentRegistry(true); updateUI();
     let _c = document.getElementById('interaction-content'); if (_c) renderAllyNPC(_c);
 }
 // 🔧 召喚控制戒指（acc_summon_ctrl）：裝備於任一戒指欄即生效——v3.2.19 起改為開啟召喚術選怪選單＋部分階級數量上限提高（骰19命中加成已移除·v3.2.42 修正過期註解）

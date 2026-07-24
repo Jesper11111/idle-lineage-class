@@ -11,6 +11,10 @@
     <!-- 共用基礎：自製彈窗/確認、dex/wiki 共用資料表（其他外掛依賴，排前面） -->
     <script src="afk-ui.js"></script>
     <script src="afk-extradata.js"></script>
+    <!-- 離線結算獨占握手：官方若重新安裝新版離線鉤子，舊引擎 fail closed，不做雙重結算 -->
+    <script src="afk-offline-owner.js"></script>
+    <!-- 固定舊版傭兵經濟／受僱政策；戰鬥本體仍使用官方 v3.8.1 -->
+    <script src="afk-merc-policy.js"></script>
     <!-- 離線快速結算（自己 monkey-patch 包核心 saveGame/loadGame/changeMap/killMob/gainItem；搭配 maybeSpawnMobs 補丁） -->
     <script src="afk-offline.js"></script>
     <!-- 手機版面 / 返回鍵 -->
