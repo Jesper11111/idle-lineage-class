@@ -22,8 +22,16 @@
 (function () {
   'use strict';
   if (window.AFK_TOGGLES && !AFK_TOGGLES.enabled('offline')) return;   // 🎚️ 外掛開關:關掉→不掛任何鉤子,遊戲回原版(無離線結算)
+  // 嚴格互斥：只有 js/27 的核心補丁已先宣告讓位，舊引擎才可安裝掛鉤。
+  // PWA／瀏覽器若混到「新版 js/27 + 新版 afk-offline」，這裡 fail closed，寧可本次沒有離線收益也不雙重發獎。
+  if (window.__afkLegacyOfflineOwnsSettlement !== true) {
+    console.warn('[AFK] 未取得離線引擎獨占標記，為避免與新版重複結算，本次停用舊版離線掛機。');
+    return;
+  }
 
   // ----- 可調參數 ---------------------------------------------------------
+  var ENGINE_REV       = 3;                       // 引擎／遷移版本：調高會讓各存檔位重新建立安全起點
+  var MIGRATION_PREFIX = 'afk_offline_legacy_migrated_v' + ENGINE_REV + '_';
   var CAP_HOURS        = 24;                      // 離線收益上限(小時)
   var CAP_MS           = CAP_HOURS * 3600 * 1000;
   var HEARTBEAT_MS     = 5 * 1000;              // 活著時多久蓋一次時間戳
@@ -90,6 +98,10 @@
   function mapKey()     { return 'afk_map_' + currentSlot; }
   function prideKey()   { return 'afk_pride_' + currentSlot; }
   function oblKey()     { return 'afk_obl_' + currentSlot; }
+  function migrationKey(slot) { return MIGRATION_PREFIX + (slot == null ? currentSlot : slot); }
+  function migrationDone(slot) { try { return localStorage.getItem(migrationKey(slot)) === '1'; } catch (e) { return false; } }
+  function markMigrationDone(slot) { try { localStorage.setItem(migrationKey(slot), '1'); return true; } catch (e) { return false; } }
+  function blockedInstanceMap(map) { return /^antharas_(?:nest_[123]|lair)$/.test(String(map || '')); }
   function readTs()     { try { return +localStorage.getItem(tsKey()) || 0; } catch (e) { return 0; } }
   function readMap()    { try { return localStorage.getItem(mapKey()) || ''; } catch (e) { return ''; } }
   // 攀登狀態:原作 saveGame 不存 state.prideClimb/...(且 loadGame 一律回村),所以由外掛自己記一份,
@@ -603,8 +615,8 @@
       var eq = [];
       try { for (var k in player.eq) { var e = player.eq[k]; if (e && e.id) eq.push(k + ':' + e.id + ':' + (e.en || 0)); } } catch (e) {}
       eq.sort();
-      return ['v2', mapState.current, player.lv, player.sherineWorld ? 1 : 0, player.sherineMad ? 1 : 0,
-        player.classicMode ? 1 : 0, player.traditionalMode ? 1 : 0, eq.join(',')].join('|');   // v2:2026-07-11 上游大移植(遺物效果/傭兵攻速/能力上限100/藥水隨機)殺速普遍改變,讓全體舊統計失效重取樣
+      return ['v3', mapState.current, player.lv, player.sherineWorld ? 1 : 0, player.sherineMad ? 1 : 0,
+        player.classicMode ? 1 : 0, player.traditionalMode ? 1 : 0, eq.join(',')].join('|');   // v3:恢復舊版引擎時強制淘汰停用前統計,用目前核心重新取樣
     }
     function saveOffStats() {   // 量到新統計就更新快取(隨檢查點/結算尾的 saveGame 固化進存檔)
       try {
@@ -1212,6 +1224,12 @@
       skipNote('上次在木人場（測 DPS）：木人無獎勵，離線期間無收益。');
       return;
     }
+    if (blockedInstanceMap(savedMap)) {
+      // 🐉 安塔瑞斯副本進度只存在暫態 state.antharas，重載即視為挑戰失敗；不得把 DB.maps 裡的怪池當一般地圖續算。
+      console.info('[AFK] 上次位於侵蝕的安塔瑞斯巢穴：副本不支援離線結算。');
+      skipNote('上次位於「侵蝕的安塔瑞斯巢穴」副本：離線視同離場，期間不結算戰鬥收益。');
+      return;
+    }
     // 🌑 黑暗妖精聖地兩間純 BOSS 房（吉爾塔斯／冥皇丹特斯）：比照「離線＝線上照跑」，照常結算——
     //   離線每次 BOSS 復活照線上規則扣 1 入場道具（死亡騎士之書／吉爾塔斯的封印，見 js/03 sanctBossRespawnCharge），
     //   扣光後被踢回長老會議廳、後續時間自然空轉停止。等於「你人在裡面掛機」的相同結果，不再特別排除。
@@ -1254,6 +1272,9 @@
   window.offlineStamp = stamp;
   // js/13 loadGame 開頭呼叫:必須在「回村甦醒(內部 changeMap → offlineStamp 覆寫 afk_map/afk_ts/afk_pride)」之前擷取上次離線狀態
   window.offlinePreLoad = function () {
+    // 新版 js/27 與舊版 afk-offline 使用不同的時間錨點。恢復舊引擎後，每個存檔位第一次載入
+    // 一律捨棄停用期間凍結的 afk_ts_/afk_map_，否則會立即誤補最多 24 小時。
+    if (!migrationDone()) return { map: '', ts: 0, pride: null, obl: null, migration: true };
     var map = readMap();
     // 後援:舊資料沒有 afk_map → 現在(loadGame 一開頭)就從存檔 blob 補讀所在地圖。
     //   ⚠ 一定要在這裡讀、不能等到 maybeCatchup:載入流程的「回村甦醒」會觸發存檔
@@ -1271,6 +1292,14 @@
   // js/13 loadGame 成功載入(state.running=true 之後)呼叫:決定要不要結算離線
   window.offlineAfterLoad = function (pre) {
     if (!pre) return;
+    if (pre.migration) {
+      if (!validSlot() || !state || !state.running || !player || !player.cls) return;
+      markMigrationDone();
+      stamp();
+      console.info('[AFK] 已完成存檔位 ' + currentSlot + ' 的離線引擎切換；從本次登入重新計時。');
+      try { if (typeof logSys === 'function') logSys('<span class="text-cyan-300">離線掛機已切換為實戰模擬機制，從本次登入重新計時。</span>'); } catch (e) {}
+      return;
+    }
     try { maybeCatchup(pre.map, pre.ts, pre.pride, pre.obl); } catch (e) { console.warn('[AFK] offlineAfterLoad error:', e); }
   };
 
@@ -1290,10 +1319,15 @@
 
   // ----- 除錯介面 ----------------------------------------------------------
   window.__afk = {
-    version: '2.0.0',   // 2.x=核心版(js/offline.js);1.x=外掛版(afk-offline.js,已退役)
+    version: '2.1.0',
+    engineRev: ENGINE_REV,
     capHours: CAP_HOURS,
     stamp: stamp,
     readTs: readTs,
+    isCatchingUp: function () { return catchingUp; },
+    migrationKeyFor: migrationKey,
+    migrationDoneFor: migrationDone,
+    blockedInstanceMap: blockedInstanceMap,
     mapName: mapName,   // 對外:地圖 id→中文名(供 afk-mobile 在匯入頁顯示「掛在哪張地圖」)
     histKey: histKey,   // 對外:目前角色的離線紀錄 key(供 afk-history)
     setCkptMs: function (ms) { CKPT_MS = Math.max(200, +ms || 5000); },   // 🧪 測試用:縮短檢查點間隔(驗「結算中斷只丟尾段」)

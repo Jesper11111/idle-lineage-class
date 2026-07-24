@@ -42,8 +42,7 @@ const logs = [];
 // afk-battlehud 桌機也會 init(只是 CSS 讓它不顯示)→ 放 need 即可;它取代的是核心手機版 #mobile-vitals。
 // afk-touchtip 只在觸控裝置 init(桌機有 hover,本來就不該掛)→ 桌機那輪永遠等不到,必須放手機輪。
 const needMobileOnly = ['[AFK-touchtip]'];
-// ⚠ '[AFK]'(afk-offline)與 '[AFK-history]'(離線掛機紀錄)已暫停使用、不印掛點訊息 → 不列入;恢復時要一併加回來
-const need = ['[AFK-banner]', '[AFK-lzcache]', '[AFK-synccompress]', '[AFK-mobile]', '[AFK-backnav]', '[AFK-battlehud]', '[AFK-mapbar]', '[AFK-nozoom]', '[AFK-trackinfo]', '[AFK-relicguard]', '[AFK-enhtarget]', '[AFK-retrial]', '[AFK-battlebuffs]', '[AFK-slotinfo]', '[AFK-dex]', '[AFK-wiki]', '[AFK-syncinfo]', '[AFK-statpts]', '[AFK-statlist]', '[AFK-pwa]', '[AFK-storage]', '[AFK-quotawarn]', '[AFK-notice]', '[AFK-reissueid]', '[AFK-diag]', '[AFK-mobname]', '[AFK-training]', '[AFK-itemsearch]', '[AFK-eqlist]', '[AFK-npclist]', '[AFK-skin]'];
+const need = ['[AFK]', '[AFK-banner]', '[AFK-lzcache]', '[AFK-synccompress]', '[AFK-mobile]', '[AFK-backnav]', '[AFK-battlehud]', '[AFK-mapbar]', '[AFK-nozoom]', '[AFK-trackinfo]', '[AFK-relicguard]', '[AFK-enhtarget]', '[AFK-retrial]', '[AFK-battlebuffs]', '[AFK-slotinfo]', '[AFK-dex]', '[AFK-wiki]', '[AFK-syncinfo]', '[AFK-statpts]', '[AFK-statlist]', '[AFK-pwa]', '[AFK-storage]', '[AFK-history]', '[AFK-quotawarn]', '[AFK-notice]', '[AFK-reissueid]', '[AFK-diag]', '[AFK-mobname]', '[AFK-training]', '[AFK-itemsearch]', '[AFK-eqlist]', '[AFK-npclist]', '[AFK-skin]'];
 const seen = (list) => list.every((n) => logs.some((l) => l.includes(n) && l.includes('hooks OK')));
 
 // ⚠ 不用 waitUntil:'networkidle':作者新版(.49 起)加了背景音樂 assets/bgm/*.mp3，<audio> 媒體串流會讓網路
@@ -136,6 +135,46 @@ const untranslatedMaps = await page.evaluate(() => {
   return out;
 });
 
+// 離線引擎互斥契約：新版 js/27 必須在任何全域掛鉤前讓位，舊版才可啟動。
+const offlineEngineProblems = await page.evaluate(() => {
+  const bad = [];
+  if (window.__afkLegacyOfflineOwnsSettlement !== true) bad.push('js/27 未宣告舊版離線引擎獨占');
+  if (!window.__afk || window.__afk.version !== '2.1.0') bad.push('afk-offline 未成功啟動');
+  for (const name of ['offlineCatchupSaveCommitted', 'offlineSettleCatchup', 'offlinePrepareCharacterSelect']) {
+    if (typeof window[name] !== 'undefined') bad.push(`新版離線全域 ${name} 仍存在`);
+  }
+  const rows = window.AFK_TOGGLES && AFK_TOGGLES.list ? AFK_TOGGLES.list() : [];
+  for (const id of ['offline', 'history']) {
+    const row = rows.find((r) => r.id === id);
+    if (!row) bad.push(`外掛開關缺少 ${id}`);
+    else if (row.locked) bad.push(`${id} 仍被 locked`);
+  }
+  const blocked = window.__afk && window.__afk.blockedInstanceMap;
+  for (const id of ['antharas_nest_1', 'antharas_nest_2', 'antharas_nest_3', 'antharas_lair']) {
+    if (typeof blocked !== 'function' || !blocked(id)) bad.push(`安塔瑞斯副本未禁止離線：${id}`);
+  }
+  if (typeof blocked === 'function' && blocked('dragon_valley')) bad.push('一般狩獵圖被誤判為禁止離線');
+  return bad;
+});
+
+// --- 第四輪:離線掛機外掛關閉 ---
+// 關閉代表完全不做離線結算，不能因舊引擎未啟動而讓 js/27 新引擎回退接管。
+const fctx = await browser.newContext();
+const fpage = await fctx.newPage();
+await fpage.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'domcontentloaded' });
+await fpage.evaluate(() => localStorage.setItem('afk_toggle_offline', '0'));
+await fpage.reload({ waitUntil: 'domcontentloaded' });
+await fpage.waitForTimeout(500);
+const offlineToggleOffProblems = await fpage.evaluate(() => {
+  const bad = [];
+  if (window.__afkLegacyOfflineOwnsSettlement !== true) bad.push('關閉舊引擎後，js/27 獨占標記消失');
+  if (typeof window.__afk !== 'undefined') bad.push('關閉離線掛機後，舊引擎仍啟動');
+  for (const name of ['offlineCatchupSaveCommitted', 'offlineSettleCatchup', 'offlinePrepareCharacterSelect']) {
+    if (typeof window[name] !== 'undefined') bad.push(`關閉舊引擎後，新版離線全域 ${name} 回退啟動`);
+  }
+  return bad;
+});
+
 await browser.close();
 server.close();
 
@@ -162,4 +201,16 @@ if (untranslatedMaps.length) {
   process.exit(1);
 }
 
-console.log('冒煙測試通過:外掛 hooks OK,且掉落查詢地圖名全部已翻譯。');
+if (offlineEngineProblems.length) {
+  console.error('冒煙測試失敗:離線引擎互斥／恢復契約不成立:');
+  for (const p of offlineEngineProblems) console.error('  ' + p);
+  process.exit(1);
+}
+
+if (offlineToggleOffProblems.length) {
+  console.error('冒煙測試失敗:關閉離線掛機後，新版離線引擎回退接管:');
+  for (const p of offlineToggleOffProblems) console.error('  ' + p);
+  process.exit(1);
+}
+
+console.log('冒煙測試通過:外掛 hooks OK、離線引擎互斥成立，且掉落查詢地圖名全部已翻譯。');

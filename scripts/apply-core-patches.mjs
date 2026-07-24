@@ -11,6 +11,8 @@
  *      能用「與線上同一份」的出怪排程（出怪延遲/BOSS 節流/後排格/席琳日光加速全照原作）。
  *      其餘離線鉤子（saveGame/loadGame/changeMap/killMob/gainItem 包裝、結算期間靜音渲染）
  *      一律由 afk-offline.js 外掛自己 monkey-patch，不動核心。
+ *   8. 舊版離線引擎獨占 — js/27 在第一個全域掛鉤前退出；js/13 不顯示依賴新版 checkpoint 的掛機徽章。
+ *      afk-offline 只有看到獨占標記才啟動，避免同步／快取混搭時兩套引擎同時結算。
  *
  * 用法：node scripts/apply-core-patches.mjs        （--check 只驗證是否已全部補上、不寫檔）
  */
@@ -217,8 +219,55 @@ function patchSellNowNoForce() {
   console.log(`[patch] 立即賣出不強制套規則（${FILE}）`);
 }
 
+// ── 補丁 8：舊版 afk-offline 獨占離線結算 ───────────────────────
+//   js/27 比外掛層早載入，不能等 afk-toggles 再解除它的事件監聽；必須在第一個全域掛鉤前直接退出。
+//   同時停掉 js/13 依賴 js/27 checkpoint/player.offlineHunt 的原生掛機徽章，避免顯示凍結舊資料。
+//   玩家關掉 afk-offline 時＝不提供離線收益，不在兩套不同時鐘／資料格式的引擎間動態切換。
+function patchLegacyOfflineOwnership() {
+  const OFFLINE_FILE = 'js/27-offline-rewards.js';
+  const OFFLINE_MARKER = 'window.__afkLegacyOfflineOwnsSettlement = true;';
+  let offline = readFileSync(OFFLINE_FILE, 'utf8');
+  if (offline.includes(OFFLINE_MARKER)) {
+    already++;
+  } else {
+    const ANCHOR = '    window.offlineCatchupSaveCommitted = _offlineCommitRestoredCatchup;';
+    if (offline.indexOf(ANCHOR) < 0) {
+      throw new Error(`[${OFFLINE_FILE}] 找不到第一個全域離線掛鉤錨點（offlineCatchupSaveCommitted）——上游可能改寫了 js/27，請人工確認新版沒有在更早處安裝事件／計時器後再更新補丁。`);
+    }
+    const NL = offline.includes('\r\n') ? '\r\n' : '\n';
+    const GUARD = [
+      '    // 🔌 加掛版補丁：離線收益由 afk-offline 實戰模擬引擎獨占；以下新版 checkpoint／結算／事件鉤子全部不安裝。',
+      '    //    此標記也是 afk-offline 的 fail-closed 握手：看不到標記就拒絕啟動，避免快取混搭造成雙重發獎。',
+      `    ${OFFLINE_MARKER}`,
+      '    return;',
+      '',
+      ANCHOR
+    ].join(NL);
+    offline = offline.replace(ANCHOR, GUARD);
+    if (!CHECK) writeFileSync(OFFLINE_FILE, offline);
+    changed++;
+    console.log(`[patch] 上游新版離線引擎讓位（${OFFLINE_FILE}）`);
+  }
 
-const PATCHES = [patchMaybeSpawnMobs, patchTradEnHook, patch16Slots, patchPetAnimTicker, patchBossHuntEscape, patchUseItemKeepModal, patchSellNowNoForce];
+  const SAVE_FILE = 'js/13-shop-save.js';
+  const UI_MARKER = 'if (window.__afkLegacyOfflineOwnsSettlement === true) return null;';
+  let save = readFileSync(SAVE_FILE, 'utf8');
+  if (save.includes(UI_MARKER)) {
+    already++;
+  } else {
+    const ANCHOR = 'function _slotOfflineStatusNow(meta, activeRoleFps){';
+    if (save.indexOf(ANCHOR) < 0) {
+      throw new Error(`[${SAVE_FILE}] 找不到 _slotOfflineStatusNow 錨點——上游可能改寫了選角離線徽章，請人工確認並更新補丁。`);
+    }
+    save = save.replace(ANCHOR,
+      ANCHOR + '\n    if (window.__afkLegacyOfflineOwnsSettlement === true) return null;   // 🔌 舊版離線引擎接手：新版 checkpoint 已停寫，不顯示凍結徽章');
+    if (!CHECK) writeFileSync(SAVE_FILE, save);
+    changed++;
+    console.log(`[patch] 隱藏新版離線 checkpoint 徽章（${SAVE_FILE}）`);
+  }
+}
+
+const PATCHES = [patchMaybeSpawnMobs, patchTradEnHook, patch16Slots, patchPetAnimTicker, patchBossHuntEscape, patchUseItemKeepModal, patchSellNowNoForce, patchLegacyOfflineOwnership];
 
 try {
   for (const p of PATCHES) p();
