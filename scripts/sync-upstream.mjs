@@ -3,7 +3,7 @@
  *
  * <upstream-dir> 必須是 pp771007/idle-lineage-class 的 checkout。
  * assets/public 由呼叫端先用 rsync --delete（或本機等價方式）鏡像；本腳本處理：
- *   1. 鏡像 PP 的 js/css、全部 afk-*.js（保留兩支 Jesper 專用政策檔）、sw.js 與 wiki checkpoint。
+ *   1. 鏡像 PP 的 js/css、全部 afk-*.js（保留三支 Jesper 專用政策檔）、sw.js 與 wiki checkpoint。
  *   2. 直接採用 PP index.html，只在 PP afk-offline.js 前注入本地政策層。
  *   3. 驗存檔 I/O，補回既有核心鉤子、舊傭兵獎勵政策與離線安全政策。
  *   4. 重產 manifest、版本戳與 upstream checkpoint，再跑 smoke。
@@ -44,7 +44,7 @@ function mirrorFlatDir(name, accept = () => true) {
 mirrorFlatDir('js', f => f.endsWith('.js'));
 mirrorFlatDir('css');
 
-const localAfkFiles = new Set(['afk-offline-owner.js', 'afk-merc-policy.js']);
+const localAfkFiles = new Set(['afk-mobile-banner.js', 'afk-offline-owner.js', 'afk-merc-policy.js']);
 const ppAfkFiles = readdirSync(UP).filter(f => /^afk-.+\.js$/.test(f) && !localAfkFiles.has(f));
 for (const f of ppAfkFiles) copyFileSync(join(UP, f), f);
 for (const f of readdirSync('.').filter(f => /^afk-.+\.js$/.test(f))) {
@@ -59,10 +59,10 @@ for (const f of ['sw.js', 'wiki-checkpoint.json']) {
 // 存檔 I/O 契約要在本地政策改寫前檢查。
 run('node scripts/check-save-io.mjs');
 
-// PP index 已含完整加掛載入順序；只注入兩支 Jesper 政策檔，禁止重複。
+// PP index 已含完整加掛載入順序；只注入 Jesper 政策檔，禁止重複。
 let idx = readFileSync(join(UP, 'index.html'), 'utf8').replace(/\r\n/g, '\n');
 const block = readFileSync('scripts/local-policy-block.html', 'utf8').replace(/\r\n/g, '\n').trimEnd();
-if (idx.includes('afk-offline-owner.js') || idx.includes('afk-merc-policy.js')) {
+if ([...localAfkFiles].some(f => idx.includes(f))) {
   throw new Error('PP index.html 已出現 Jesper 政策檔，拒絕重複注入。');
 }
 const offlineTag = idx.match(/^[ \t]*<script src="afk-offline\.js(?:\?v=[^"]*)?"><\/script>[ \t]*$/m);
@@ -89,7 +89,7 @@ try {
   const t = new Date(Date.now() + 8 * 3600 * 1000);
   ck.syncedAt = t.toISOString().slice(0, 16).replace('T', ' ') + ' (UTC+8)';
   ck.note = '由 sync-upstream.mjs 自動更新；新版基準=pp771007/main，PP 內含原版 ' + upVer +
-    '。同步後固定套用 Jesper 舊傭兵政策、離線安全政策與妖精傭兵不受目前屬性限制。';
+    '。同步後固定套用 Jesper 舊傭兵政策、離線安全政策、妖精傭兵不受目前屬性限制與手機隱藏來源橫幅。';
   writeFileSync('upstream-checkpoint.json', JSON.stringify(ck, null, 2) + '\n');
   console.log('[sync] upstream-checkpoint.json → pp771007 ' + upSha.slice(0, 10) + '（原版 ' + upVer + '）');
 } catch (e) {

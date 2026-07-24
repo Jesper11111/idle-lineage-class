@@ -52,7 +52,7 @@ const logs = [];
 // afk-battlehud 桌機也會 init(只是 CSS 讓它不顯示)→ 放 need 即可;它取代的是核心手機版 #mobile-vitals。
 // afk-touchtip 只在觸控裝置 init(桌機有 hover,本來就不該掛)→ 桌機那輪永遠等不到,必須放手機輪。
 const needMobileOnly = ['[AFK-touchtip]'];
-const need = ['[AFK]', '[AFK-merc-policy]', '[AFK-banner]', '[AFK-lzcache]', '[AFK-synccompress]', '[AFK-mobile]', '[AFK-backnav]', '[AFK-battlehud]', '[AFK-mapbar]', '[AFK-nozoom]', '[AFK-trackinfo]', '[AFK-relicguard]', '[AFK-enhtarget]', '[AFK-retrial]', '[AFK-battlebuffs]', '[AFK-slotinfo]', '[AFK-dex]', '[AFK-wiki]', '[AFK-syncinfo]', '[AFK-statpts]', '[AFK-statlist]', '[AFK-pwa]', '[AFK-storage]', '[AFK-history]', '[AFK-quotawarn]', '[AFK-notice]', '[AFK-reissueid]', '[AFK-diag]', '[AFK-mobname]', '[AFK-training]', '[AFK-itemsearch]', '[AFK-eqlist]', '[AFK-npclist]', '[AFK-skin]'];
+const need = ['[AFK]', '[AFK-merc-policy]', '[AFK-banner]', '[AFK-mobile-banner]', '[AFK-lzcache]', '[AFK-synccompress]', '[AFK-mobile]', '[AFK-backnav]', '[AFK-battlehud]', '[AFK-mapbar]', '[AFK-nozoom]', '[AFK-trackinfo]', '[AFK-relicguard]', '[AFK-enhtarget]', '[AFK-retrial]', '[AFK-battlebuffs]', '[AFK-slotinfo]', '[AFK-dex]', '[AFK-wiki]', '[AFK-syncinfo]', '[AFK-statpts]', '[AFK-statlist]', '[AFK-pwa]', '[AFK-storage]', '[AFK-history]', '[AFK-quotawarn]', '[AFK-notice]', '[AFK-reissueid]', '[AFK-diag]', '[AFK-mobname]', '[AFK-training]', '[AFK-itemsearch]', '[AFK-eqlist]', '[AFK-npclist]', '[AFK-skin]'];
 const seen = (list) => list.every((n) => logs.some((l) => l.includes(n) && l.includes('hooks OK')));
 
 // ⚠ 不用 waitUntil:'networkidle':作者新版(.49 起)加了背景音樂 assets/bgm/*.mp3，<audio> 媒體串流會讓網路
@@ -66,6 +66,33 @@ await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'domcontentl
 const _deadline = Date.now() + 20000;   // 最多等 20 秒讓全部外掛初始化(CI 較慢)
 while (Date.now() < _deadline && !seen(need)) await page.waitForTimeout(200);
 await page.waitForTimeout(300);   // 緩衝:讓 hooks 之後的索引(dex/wiki)與 AFK_EXTRA 建好,再做地圖翻譯檢查
+
+// 桌機仍保留 PP 的來源橫幅，並由 afk-banner 正常讓位。
+await page.evaluate(() => {
+  const d = document.createElement('div');
+  d.id = '_orig_pbar';
+  d.style.cssText = 'position:fixed;left:0;right:0;top:0;height:52px;background:#123;z-index:2147483647;';
+  d.textContent = '這是非官方轉載版本，前往官方最新版：shines871.github.io/idle-lineage-class';
+  document.body.appendChild(d);
+  if (window.AFK_BANNER) AFK_BANNER.remeasure();
+});
+await page.waitForTimeout(150);
+const desktopBannerProblems = await page.evaluate(() => {
+  const bad = [];
+  const bar = document.getElementById('_orig_pbar');
+  const barH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--orig-bar-h')) || 0;
+  if (!bar || getComputedStyle(bar).display === 'none' || bar.getBoundingClientRect().height <= 0) {
+    bad.push('桌機橫幅被誤隱藏');
+  } else if (barH < bar.getBoundingClientRect().bottom) {
+    bad.push(`桌機 --orig-bar-h(${barH}px) 沒讓開橫幅`);
+  }
+  return bad;
+});
+await page.evaluate(() => {
+  const bar = document.getElementById('_orig_pbar');
+  if (bar) bar.remove();
+  if (window.AFK_BANNER) AFK_BANNER.remeasure();
+});
 
 // --- 第二輪:手機模擬(iPhone 13),專驗 afk-mobile 的三欄掛點在作者最新 DOM 上仍成立 ---
 //   afk-mobile 只在手機時 init,桌機那輪印不出 hooks OK;用真手機模擬(pointer:coarse/UA)讓它跑起來才驗得到。
@@ -87,7 +114,7 @@ await opage.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'domcontent
 await opage.evaluate(() => localStorage.setItem('afk_toggle_mobile', '0'));
 await opage.reload({ waitUntil: 'domcontentloaded' });
 await opage.waitForTimeout(3000);
-// 模擬線上的非官方橫幅(本機沒有;逃生門必須避開它)
+// 模擬線上的非官方橫幅：手機政策必須把它隱藏，即使「手機版面」外掛已關閉。
 await opage.evaluate(() => {
   if (document.getElementById('_orig_pbar')) return;
   const d = document.createElement('div');
@@ -101,16 +128,13 @@ await opage.evaluate(() => {
 await opage.waitForTimeout(1500);
 const toggleOffProblems = await opage.evaluate(() => {
   const bad = [];
-  // 橫幅讓位:必須由 afk-banner(不可停用)提供 → 關掉「手機版面」後依然要生效。
-  //   歷史成因:讓位整組寫在 afk-mobile 裡,平板玩家為了換回三欄把它關掉 → 頂端(冒險地圖標題/黑市/瞬移/右欄分頁)
-  //   全被橫幅蓋住(2026-07-23 回報)。
+  // 手機隱藏政策不可依賴可停用的 afk-mobile；關掉手機版面後仍須維持。
+  const bar = document.getElementById('_orig_pbar');
   const barH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--orig-bar-h')) || 0;
-  const barBottom = document.getElementById('_orig_pbar').getBoundingClientRect().bottom;
-  if (barH < barBottom) bad.push(`--orig-bar-h(${barH}px) 沒讓開橫幅(底端 ${barBottom}px)`);
-  for (const id of ['app-stage', 'creation-screen']) {
-    const el = document.getElementById(id);
-    if (el && el.getBoundingClientRect().top < barBottom) bad.push(`#${id} 頂端(${Math.round(el.getBoundingClientRect().top)}px)還在橫幅底下,會被蓋住`);
+  if (!bar || getComputedStyle(bar).display !== 'none' || bar.getBoundingClientRect().height !== 0) {
+    bad.push('手機上的非官方轉載橫幅仍可見');
   }
+  if (barH !== 0) bad.push(`手機隱藏橫幅後 --orig-bar-h 仍是 ${barH}px`);
   const btn = document.getElementById('afk-toggles-entry');
   if (!btn) bad.push('左上角「外掛開關」逃生門按鈕不存在');
   else {
@@ -227,8 +251,14 @@ if (!allOK) {
   process.exit(1);
 }
 
+if (desktopBannerProblems.length) {
+  console.error('冒煙測試失敗:手機橫幅政策誤傷桌機:');
+  for (const p of desktopBannerProblems) console.error('  ' + p);
+  process.exit(1);
+}
+
 if (toggleOffProblems.length) {
-  console.error('冒煙測試失敗:關掉「手機版面」外掛後,手機上的逃生門/入口不見了(玩家會無法把外掛開回來):');
+  console.error('冒煙測試失敗:手機橫幅隱藏或關閉「手機版面」後的逃生門/入口不正確:');
   for (const p of toggleOffProblems) console.error('  ' + p);
   console.error('  判準:不可停用的基礎設施不能依賴可被關掉的外掛提供的 CSS 變數 / body class。');
   process.exit(1);

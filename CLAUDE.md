@@ -3,7 +3,7 @@
 ## 專案性質與架構（2026-07-24 起・PP 鏡像＋本地政策層）
 
 - 網頁放置遊戲。遊戲本體由原作者(巴哈姆特 秋玥)製作,原版:**https://shines871.github.io/idle-lineage-class/**;直接上游:**https://github.com/pp771007/idle-lineage-class**;本站:https://jesper11111.github.io/idle-lineage-class/。
-- **架構=「PP 完整成品鏡像＋本地政策層」**:PP 的核心、外掛、`index.html`、`sw.js`、`assets/`、`public/` 都整包同步;本站只以冪等補丁保留舊傭兵政策、離線安全與妖精傭兵技能例外。
+- **架構=「PP 完整成品鏡像＋本地政策層」**:PP 的核心、外掛、`index.html`、`sw.js`、`assets/`、`public/` 都整包同步;本站只以冪等補丁保留舊傭兵政策、離線安全、妖精傭兵技能例外與手機隱藏來源橫幅。
 - PP 已負責跟進 shines871;本站不再直接從 shines 組裝。日常同步來源固定為 `pp771007/main`。
 - 本 repo 的 `upstream` remote 指向 PP。**引用上游做任何判斷前先 `git fetch upstream --tags --prune`**。
 - 同步狀態記在 `upstream-checkpoint.json`(`syncedUpstreamCommit`=目前鏡像的 PP commit)。
@@ -23,7 +23,7 @@
    | 5 | js/07 | 迴避頭目 × 自動找BOSS 互斥(`AFK_BOSSRING.huntActive`) |
    | 6 | js/08 | `useItem` 加 `keepModal` 參數(自動瞬移不關玩家視窗) |
    | 7 | js/10 | 「立即賣出」總開關關閉時不強制套規則(免誤賣沒標記的裝備) |
-3. **index.html 不手改**:它=PP index,僅在 PP 的 `afk-offline.js` 前注入 `scripts/local-policy-block.html` 兩支本站政策外掛。PP 自帶外掛及順序全部照 PP;本站外掛順序固定為 owner → merc-policy → PP offline。
+3. **index.html 不手改**:它=PP index,僅在 PP 的 `afk-offline.js` 前注入 `scripts/local-policy-block.html` 三支本站政策外掛。PP 自帶外掛及順序全部照 PP;本站外掛順序固定為 mobile-banner → owner → merc-policy → PP offline。
 4. **CSS 覆寫**寫在外掛注入的 `<style>` 裡(如 afk-mobile),不改 `css/*.css`。
 
 **外掛開關(afk-toggles.js,載入順序第一)**:每支外掛可被玩家單獨關掉——某支壞掉時玩家關掉它就能用原版繼續玩(逃生門)。契約:
@@ -32,9 +32,9 @@
 
 **🚨 不可停用的基礎設施,不能依賴「可被關掉的外掛」提供的東西**:afk-toggles 是逃生門(設計上不可停用),但它的左上角按鈕位置讀 `--orig-bar-h`,而那變數當時**全專案只有 afk-mobile 在設**(現已搬到不可停用的 `afk-banner.js`);afk-skin 判斷手機也只看 afk-mobile 掛的 `body.m-mobile`。玩家一關「手機版面」→ 逃生門縮到橫幅底下點不到(遊戲橫幅 z-index 是 int 上限 2147483647,壓得過任何外掛)、入口全被收進手機上失準的 fixed Modal ——**壞掉後連「把外掛開回來」的入口都沒了,是死結**(2026-07-20 玩家回報)。判準:**寫 `var(--某變數)` 或讀 `body.某class` 前,先問「這誰設的?那支能不能被關?」** 能被關就要自己有保底(自己量一次/用同一組規則自己判)。⚠️ 這類「A 外掛量測、B 外掛使用」的跨外掛耦合在全開狀態下永遠測得過 → smoke 已加**第三輪**(手機+關掉 afk-mobile)驗逃生門可點與入口可見,新增這類耦合時順手擴充該輪。
 
-**同一個雷第二次(2026-07-23 平板玩家回報)**:「讓開橫幅」整組規則(量橫幅→`--orig-bar-h`→位移 `#app-stage`/`#creation-screen`/`#game-screen`)當時也寫在 afk-mobile 裡 → 平板玩家為了換回三欄版面把「手機版面」關掉,頂端(冒險地圖標題、黑市/瞬移/出發、右欄分頁)整排被橫幅蓋住。**橫幅是所有裝置、所有外掛狀態下都存在的東西,讓位就必須跟它同級** → 已抽成 `afk-banner.js`(基礎設施、無開關、載入序僅次 afk-toggles);彈窗清單 `MODAL_HOSTS`/`MODAL_BOXES` 也由它單一維護,afk-mobile 只留手機幾何專屬規則。smoke 第三輪已加「關掉手機版面後 `--orig-bar-h` 與 `#app-stage`/`#creation-screen` 仍讓開假橫幅」的檢查。判準:**要寫進 afk-mobile 的規則,先問「桌機/平板關掉手機版面時還需不需要它?」需要就不屬於那支。**
+**同一個雷第二次(2026-07-23 平板玩家回報)**:「讓開橫幅」整組規則(量橫幅→`--orig-bar-h`→位移 `#app-stage`/`#creation-screen`/`#game-screen`)當時也寫在 afk-mobile 裡 → 平板玩家為了換回三欄版面把「手機版面」關掉,頂端整排被橫幅蓋住。讓位已抽成 `afk-banner.js`(基礎設施、無開關);2026-07-25 起另由不可停用的 `afk-mobile-banner.js` 在手機／觸控裝置隱藏橫幅，因此手機的 `--orig-bar-h` 應為 0，桌機仍由 afk-banner 讓位。smoke 固定驗「手機版面關閉仍隱藏」與「桌機仍顯示並讓位」兩條。
 
-**新增「釘在畫面上」(fixed/sticky)的手機元素 → 自己量橫幅,並用「帶文字」的假橫幅驗遮蔽**:橫幅 z-index 是 int 上限、壓得過任何外掛,而各外掛認橫幅是**比對文字**(`/shines871|官方|非官方|轉載/`,見 findBanner)——**沒文字的假橫幅在偵測邏輯眼中不存在**,只測得到「z-index 硬蓋」,驗不到「量測→讓位」那條路徑(smoke 第三輪的假橫幅原本就漏了文字,已補)。判準:元素釘死在頂端 → ①讓位讀 `--orig-bar-h` / `AFK_BANNER`(afk-banner 提供、不可停用);真的要自己量就照 findBanner 那組特徵②測試裡的假橫幅要有文字。
+**新增「釘在畫面上」(fixed/sticky)的元素仍要分裝置驗證**:手機政策會把來源橫幅隱藏並令 `--orig-bar-h=0`;桌機仍顯示橫幅並由 `AFK_BANNER` 讓位。smoke 的假橫幅必須帶 `/shines871|官方|非官方|轉載/` 文字，否則 findBanner 不會辨識。新增固定元素時要同時驗手機零橫幅與桌機有橫幅兩條路徑。
 
 **外掛通用守則**(沿用、仍然有效):
 - 優雅降級:需要的全域函式/元素不存在就 `console.warn` 後安靜停用,不可弄壞遊戲。
@@ -62,7 +62,8 @@ CI 版:GitHub Actions `sync-upstream.yml`(**只有 `workflow_dispatch`,無 GitHu
 | 檔案 | 功能 |
 |---|---|
 | `afk-toggles.js` | 外掛開關中樞(最先載;逃生門,自己不可關) |
-| `afk-banner.js` | 非官方轉載橫幅讓位(量橫幅→`--orig-bar-h`/`body.afk-bar`→位移全螢幕容器+桌機/平板彈窗讓位;基礎設施,無開關) |
+| `afk-banner.js` | 非官方轉載橫幅讓位(桌機顯示時量橫幅→`--orig-bar-h`;基礎設施,無開關) |
+| `afk-mobile-banner.js` | 手機／觸控裝置隱藏非官方轉載橫幅；不依賴可停用的手機版面外掛，桌機仍保留 |
 | `afk-synccompress.js` | 存檔即時壓縮(預設關;把 `_lzSet` 換回同步壓縮,根治登出/多開後存檔未壓縮爆滿;代價=存檔當下多花 0.02~0.4 秒) |
 | `afk-lzcache.js` | 存檔解壓快取(同一份壓縮字串只解一次;核心每殺一隻怪都重讀整包血盟狀態,離線結算 4×) |
 | `afk-ui.js` | 共用彈窗:接管 alert、`AFK_UI.confirm`、openLayer/closeLayer(返回鍵/ESC 關最上層) |
