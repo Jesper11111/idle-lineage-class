@@ -71,11 +71,13 @@ const missing = mustHave.filter(x => !src.includes(x));
 if (missing.length) throw new Error(`[${FILE}] 舊傭兵政策驗證失敗：${missing.join(' | ')}`);
 
 const indexHtml = readFileSync('index.html', 'utf8');
+const mobileBannerAt = indexHtml.indexOf('<script src="afk-mobile-banner.js');
 const ownerAt = indexHtml.indexOf('<script src="afk-offline-owner.js');
 const mercAt = indexHtml.indexOf('<script src="afk-merc-policy.js');
 const offlineAt = indexHtml.indexOf('<script src="afk-offline.js');
-if (ownerAt < 0 || mercAt < 0 || offlineAt < 0 || ownerAt > mercAt || mercAt > offlineAt) {
-  throw new Error('[index.html] 載入順序必須是 afk-offline-owner → afk-merc-policy → afk-offline。');
+if (mobileBannerAt < 0 || ownerAt < 0 || mercAt < 0 || offlineAt < 0 ||
+    mobileBannerAt > ownerAt || ownerAt > mercAt || mercAt > offlineAt) {
+  throw new Error('[index.html] 載入順序必須是 afk-mobile-banner → afk-offline-owner → afk-merc-policy → afk-offline。');
 }
 
 if (CHECK) {
