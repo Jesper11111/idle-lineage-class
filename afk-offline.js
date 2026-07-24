@@ -22,15 +22,16 @@
 (function () {
   'use strict';
   if (window.AFK_TOGGLES && !AFK_TOGGLES.enabled('offline')) return;   // 🎚️ 外掛開關:關掉→不掛任何鉤子,遊戲回原版(無離線結算)
-  // 嚴格互斥：只有 js/27 的核心補丁已先宣告讓位，舊引擎才可安裝掛鉤。
-  // PWA／瀏覽器若混到「新版 js/27 + 新版 afk-offline」，這裡 fail closed，寧可本次沒有離線收益也不雙重發獎。
+  // 🔒 Jesper offline safety policy v4
+  // 嚴格互斥：afk-offline-owner 必須先確認 PP／原版沒有另一套離線鉤子，舊引擎才可啟動。
+  // 快取混搭或未來 PP 重啟另一套結算時 fail closed，寧可本次不發獎也不重複結算。
   if (window.__afkLegacyOfflineOwnsSettlement !== true) {
-    console.warn('[AFK] 未取得離線引擎獨占標記，為避免與新版重複結算，本次停用舊版離線掛機。');
+    console.warn('[AFK] 未取得離線引擎獨占標記，為避免重複結算，本次停用離線掛機。');
     return;
   }
 
   // ----- 可調參數 ---------------------------------------------------------
-  var ENGINE_REV       = 3;                       // 引擎／遷移版本：調高會讓各存檔位重新建立安全起點
+  var ENGINE_REV       = 3;                       // 遷移版本：沿用既有站台標記，不因本次 PP 升版重跑首次遷移
   var MIGRATION_PREFIX = 'afk_offline_legacy_migrated_v' + ENGINE_REV + '_';
   var CAP_HOURS        = 24;                      // 離線收益上限(小時)
   var CAP_MS           = CAP_HOURS * 3600 * 1000;
@@ -618,8 +619,8 @@
       var eq = [];
       try { for (var k in player.eq) { var e = player.eq[k]; if (e && e.id) eq.push(k + ':' + e.id + ':' + (e.en || 0)); } } catch (e) {}
       eq.sort();
-      return ['v3', mapState.current, player.lv, player.sherineWorld ? 1 : 0, player.sherineMad ? 1 : 0,
-        player.classicMode ? 1 : 0, player.traditionalMode ? 1 : 0, eq.join(',')].join('|');   // v3:恢復舊版引擎時強制淘汰停用前統計,用目前核心重新取樣
+      return ['v4', mapState.current, player.lv, player.sherineWorld ? 1 : 0, player.sherineMad ? 1 : 0,
+        player.classicMode ? 1 : 0, player.traditionalMode ? 1 : 0, eq.join(',')].join('|');   // v2:2026-07-11 上游大移植(遺物效果/傭兵攻速/能力上限100/藥水隨機)殺速普遍改變,讓全體舊統計失效重取樣
     }
     function saveOffStats() {   // 量到新統計就更新快取(隨檢查點/結算尾的 saveGame 固化進存檔)
       try {
@@ -936,7 +937,12 @@
         items: invDeltaList(before, a2),
         kills: hKills,
         died: !!(died || player.dead),
-        keysUsed: isKing ? Math.max(0, kingKeysBefore - countKingKeys()) : 0
+        keysUsed: isKing ? Math.max(0, kingKeysBefore - countKingKeys()) : 0,
+        // ⏱ 本次結算的真實牆鐘耗時＋組成（診斷用·只顯示在離線掛機紀錄，不進遊戲日誌）：
+        //   settleMs＝結算花的實際秒數；simTicks＝逐格真模擬的格數；fastEvents＝快速結算的事件數。
+        settleMs: Math.max(0, Math.round(performance.now() - _perfT0)),
+        simTicks: _realSimTicks,
+        fastEvents: _fastEvents
       };
     }
     // 切到背景 / 關掉 App 前主動存一次:iOS 在背景更容易被系統直接丟掉整個分頁,
@@ -1138,12 +1144,7 @@
     try { if (typeof autoSortInventory === 'function') autoSortInventory(); } catch (e) {}   // 結算期間跳過的背包排序,在此統一補一次(內含玩家開關與節流判斷)
     if (climbSegs && climbSegs.length) summarizeClimb(climbSegs, done, died);   // 攀登:逐層摘要
     else summarize(before, after, done, died, (isObl && oblEndMap) ? oblEndMap : huntMap, kingInfo);   // 遺忘之島:用實際結束地圖顯示地圖名;軍王之室:附帶擊敗輪數/鑰匙消耗摘要
-    // ⏱ 耗時診斷(只在有感結算時印):玩家回報「結算慢」時,這行直接指出時間花在真模擬還是快速段
-    if (done > 0 && (performance.now() - _perfT0) > 1000) {
-      var _perfSec = ((performance.now() - _perfT0) / 1000).toFixed(1);
-      try { logSys('<span class="text-slate-400">⏱ 結算耗時 ' + _perfSec + ' 秒（真模擬 ' + fmt(_realSimTicks) + ' 拍、快速事件 ' + fmt(_fastEvents) + ' 次）</span>'); } catch (e) {}
-      console.info('[AFK] ⏱ 結算耗時 ' + _perfSec + 's（真模擬 ' + _realSimTicks + ' 拍、快速事件 ' + _fastEvents + ' 次）');
-    }
+    // ⏱ 結算耗時（＋真模擬/快速事件組成）不再印進遊戲日誌／console，改存進離線掛機紀錄（見 buildHistRec 的 settleMs/simTicks/fastEvents），平常不顯示。
     if (_runErr) {   // 結算中途拋例外 → 把死因印出來(見上方 catch);沒這行的話玩家只看得到「離線掛機 0 分鐘」,完全不知道發生什麼事
       var _eEsc = function (s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
       var _eMsg = _eEsc((_runErr && _runErr.message) ? _runErr.message : _runErr);
@@ -1228,8 +1229,7 @@
       return;
     }
     if (blockedInstanceMap(savedMap)) {
-      // 🐉 安塔瑞斯與 🏰 攻城 V2 的關卡進度只存在暫態 state；重載即視為離場，
-      // 不得把 DB.maps 裡可能存在的怪池當一般狩獵圖續算，否則可繞過副本流程刷收益。
+      // 安塔瑞斯／攻城 V2 的關卡狀態不是一般狩獵圖持久資料；離線視同離場，避免繞過副本流程刷收益。
       var blockedName = /^siege_v2_/.test(savedMap) ? '攻城戰 V2' : '侵蝕的安塔瑞斯巢穴';
       console.info('[AFK] 上次位於' + blockedName + '：特殊副本不支援離線結算。');
       skipNote('上次位於「' + blockedName + '」特殊副本：離線視同離場，期間不結算戰鬥收益。');
@@ -1247,6 +1247,16 @@
     // 不設「近期活躍就略過」的鎖:重新整理也照常結算那一小段 → 配合存活回原狩獵圖,刷新不會被丟回村莊。
     // 攀登/遺忘之島不受「村莊/攻城」這兩道略過閘:它本來就不是村莊/攻城圖,且即使 gap≈0(立即重整)也要把人放回原地續掛。
     if (!isClimb && !isObl) {
+      // 🧑‍🤝‍🧑 受僱傭兵：上游把傭兵鎖在安全區、不能自行掛機（線上也一樣）→ 一進來就跳過，不進 runCatchup。
+      //   放在村莊閘之前＝就算離線錨點還凍在上一張狩獵圖，也不會白跑 24h、更不會誤發掛機收益（經驗改由待領帳本領）。
+      //   用不走 2 秒記憶的 currentRoleIsMercenary（memo 可能殘留剛切換前的角色值），try 包底＝偵測失敗就照常往下走。
+      var _asMerc = false;
+      try { _asMerc = (typeof currentRoleIsMercenary === 'function') && currentRoleIsMercenary(); } catch (e) {}
+      if (_asMerc) {
+        console.info('[AFK] 受僱傭兵：被鎖在安全區、不自行掛機，略過離線結算。');
+        skipNote('這隻角色目前受僱為其他角色的傭兵，無法自行掛機，想恢復離線掛機請先解散傭兵身分。');
+        return;
+      }
       if (!savedMap || savedMap.indexOf('town_') === 0) {
         console.info('[AFK] 關閉時位於村莊/無有效地圖，無離線戰鬥收益。');
         skipNote('上次關閉時人在村莊/安全區（' + (savedMap ? mapName(savedMap) : '無地圖') + '），離線期間沒有戰鬥收益。要離線掛機請先前往狩獵地圖再關閉遊戲。');
@@ -1277,8 +1287,7 @@
   window.offlineStamp = stamp;
   // js/13 loadGame 開頭呼叫:必須在「回村甦醒(內部 changeMap → offlineStamp 覆寫 afk_map/afk_ts/afk_pride)」之前擷取上次離線狀態
   window.offlinePreLoad = function () {
-    // 新版 js/27 與舊版 afk-offline 使用不同的時間錨點。恢復舊引擎後，每個存檔位第一次載入
-    // 一律捨棄停用期間凍結的 afk_ts_/afk_map_，否則會立即誤補最多 24 小時。
+    // 從其他離線機制切回本引擎時，舊 afk_ts_/afk_map_ 可能已凍結很久；首次載入只建立安全起點。
     if (!migrationDone()) return { map: '', ts: 0, pride: null, obl: null, migration: true };
     var map = readMap();
     // 後援:舊資料沒有 afk_map → 現在(loadGame 一開頭)就從存檔 blob 補讀所在地圖。
@@ -1301,8 +1310,8 @@
       if (!validSlot() || !state || !state.running || !player || !player.cls) return;
       markMigrationDone();
       stamp();
-      console.info('[AFK] 已完成存檔位 ' + currentSlot + ' 的離線引擎切換；從本次登入重新計時。');
-      try { if (typeof logSys === 'function') logSys('<span class="text-cyan-300">離線掛機已切換為實戰模擬機制，從本次登入重新計時。</span>'); } catch (e) {}
+      console.info('[AFK] 已完成存檔位 ' + currentSlot + ' 的離線引擎安全遷移；從本次登入重新計時。');
+      try { if (typeof logSys === 'function') logSys('<span class="text-cyan-300">離線掛機已建立新的安全起點，從本次登入重新計時。</span>'); } catch (e) {}
       return;
     }
     try { maybeCatchup(pre.map, pre.ts, pre.pride, pre.obl); } catch (e) { console.warn('[AFK] offlineAfterLoad error:', e); }
@@ -1324,7 +1333,7 @@
 
   // ----- 除錯介面 ----------------------------------------------------------
   window.__afk = {
-    version: '2.1.0',
+    version: '2.2.0-jesper-safety',
     engineRev: ENGINE_REV,
     capHours: CAP_HOURS,
     stamp: stamp,

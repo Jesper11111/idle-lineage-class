@@ -1,9 +1,9 @@
 {
-  "upstreamRepo": "https://github.com/shines871/idle-lineage-class.git",
+  "upstreamRepo": "https://github.com/pp771007/idle-lineage-class.git",
   "localClone": "D:/otherPersonRepos/idle-lineage-class",
-  "syncedUpstreamCommit": "0ebf824f2e339a74e5b6be7505fe830263d038f5",
-  "syncedAt": "2026-07-24 14:40 (UTC+8)",
-  "note": "由 sync-upstream.mjs 自動更新；上游 GAME_VERSION v3.8.1。架構=純上游鏡像+外掛層，syncedUpstreamCommit=目前核心/資產鏡像的上游 commit。",
+  "syncedUpstreamCommit": "3e5caab5f271bcca4f87a1af6e6fba6b2a763c9e",
+  "syncedAt": "2026-07-24 17:54 (UTC+8)",
+  "note": "由 sync-upstream.mjs 自動更新；新版基準=pp771007/main，PP 內含原版 v3.8.5。同步後固定套用 Jesper 舊傭兵政策、離線安全政策與妖精傭兵不受目前屬性限制。",
   "saveIo": {
     "note": "存檔寫入/壓縮相關核心函式的 sha(見 scripts/check-save-io.mjs)。變動代表 afk-synccompress 的假設要重新確認,人工複核後才用 --accept 更新。",
     "reviewedAt": "2026-07-23 18:43 (UTC+8)",

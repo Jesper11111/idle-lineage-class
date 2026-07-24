@@ -1,7 +1,7 @@
 /*
- * afk-merc-policy.js — 保留 v3.7.61 的傭兵經濟／受僱政策。
+ * afk-merc-policy.js — 在 PP 最新版上保留 v3.7.61 的傭兵經濟／受僱政策。
  *
- * 戰鬥本體仍完全使用官方 v3.8.1（威脅值、綁定、城堡護衛等照常作用）。
+ * 戰鬥本體仍使用 PP 最新核心（威脅值、綁定、城堡護衛等照常作用）。
  * 這裡只覆寫政策層：
  *   - 招募收費、手動付費重新招募
  *   - 回村只結算累積經驗，不自動刷新戰力快照
@@ -15,6 +15,7 @@
   function noEmployer() { return null; }
   function noBattleBlock() { return false; }
   function noRegistryWrite() { return true; }
+  function allowAllMercElementSkills() { return true; }
 
   function allyCostLegacy(slotN) {
     var sum = slotSummary(slotN);
@@ -238,6 +239,8 @@
   window.mercenaryRoleNotifySafeAreaOnly = noBattleBlock;
   window.mercenaryRoleBattleBlocked = noBattleBlock;
   window.enforceMercenarySafeArea = noBattleBlock;
+  // 使用者指定不跟進 v3.8.5 妖精傭兵屬性閘：已學技能不因目前 elfEle 不符而隱藏或停用。
+  window.allySkillElementOk = allowAllMercElementSkills;
 
   window.allyCost = allyCostLegacy;
   window.mercRehireMult = mercRehireMultLegacy;
@@ -250,13 +253,14 @@
   window.renderAllyNPC = renderAllyNPCLegacy;
 
   window.__legacyMercPolicy = Object.freeze({
-    version: '3.7.61-policy-on-3.8.1',
+    version: '3.7.61-policy-on-pp-v3.8.5',
     rewardShare: true,
     paidRecruit: true,
     paidManualRehire: true,
     townRefresh: false,
     exclusiveEmployment: false,
-    safeAreaLock: false
+    safeAreaLock: false,
+    elementRestriction: false
   });
-  console.log('[AFK-merc-policy] hooks OK — 保留舊版傭兵經濟／受僱規則，戰鬥核心維持 v3.8.1。');
+  console.log('[AFK-merc-policy] hooks OK — 保留舊版傭兵經濟／受僱規則，妖精傭兵技能不受目前屬性限制。');
 })();
