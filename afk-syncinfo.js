@@ -67,14 +67,15 @@
     var updRow = foot.querySelector('.afk-si-updrow'), updEl = foot.querySelector('.afk-si-upd');
     verRow.style.display = 'none'; updRow.style.display = 'none';   // 讀到才顯示,讀不到整列不佔位
     // 🔄 2026-07 外掛化架構:核心永遠跟進原版 → 首頁只顯示「最後同步原版時間」,不寫「已跟進原版 vX」那行(使用者要求)。
-    //   最後同步時間讀 version.json 的 buildAt(=最近一次同步/建置)。verRow 保留 DOM 但不再填內容。
-    // file:// 無法 fetch(CORS,origin null)→ 不顯示同步時間;http(s) 才去抓 buildAt
+    //   時間讀 version.json 的 upstreamAt(=upstream-checkpoint.json 的 syncedAt,只有真的同步上游才變);
+    //   舊版 version.json 沒這欄才退回 buildAt(那是我方建置時間,改外掛也會動)。verRow 保留 DOM 但不再填內容。
+    // file:// 無法 fetch(CORS,origin null)→ 不顯示同步時間;http(s) 才去抓
     if (!/^https?:$/.test(location.protocol)) return;
     fetch('version.json', { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) {
         if (!j) return;
-        var t = fmtUpdTime(j.buildAt, j.build);
+        var t = fmtUpdTime(j.upstreamAt || j.buildAt, j.build);
         if (t) { updEl.innerHTML = '最後同步原版 ' + t; updRow.style.display = ''; }
       })
       .catch(function () { /* 讀不到就只顯示版本 */ });

@@ -76,7 +76,13 @@ export function stampSwVersion() {
   try { const _ov = JSON.parse(readFileSync('version.json', 'utf8')); app = _ov.app || ''; oldBuildAt = _ov.buildAt || ''; } catch { /* 首次沒有就留空 */ }
   // buildAt=完整台灣時間戳（YYYY-MM-DD HH:MM），供首頁「最後更新時間」顯示。與 build 同步：程式真的變了才更新成現在時間，沒變沿用舊值（首次沒有就補生成）。
   const buildAt = codeChanged ? nowTaipeiFull() : (oldBuildAt || nowTaipeiFull());
-  const vjson = JSON.stringify({ code: version, build: buildNow, buildAt, ...(app ? { app } : {}) }) + '\n';
+  // upstreamAt =「最後一次真的同步上游」,不能用每次重蓋檔都會變的 buildAt 冒充。
+  let upstreamAt = '';
+  try {
+    const _cp = JSON.parse(readFileSync('upstream-checkpoint.json', 'utf8'));
+    upstreamAt = String(_cp.syncedAt || '').replace(/\s*\(UTC\+8\)\s*$/, '').trim();
+  } catch { /* 沒有 checkpoint 就留空，頁面端自己退回 buildAt */ }
+  const vjson = JSON.stringify({ code: version, build: buildNow, buildAt, ...(upstreamAt ? { upstreamAt } : {}), ...(app ? { app } : {}) }) + '\n';
   if (!existsSync('version.json') || readFileSync('version.json', 'utf8') !== vjson) {
     writeFileSync('version.json', vjson);
     console.log('[stamp] version.json →', version, buildNow);

@@ -586,7 +586,7 @@
     <!-- ═══════════ 加掛版外掛層（核心永遠是原作者原版；我們的功能全部是外掛疊上去） ═══════════ -->
     <!-- 此區塊由 scripts/sync-upstream.mjs 於「拉上游 index.html 後」自動注入到 </body> 之前。?v= 由 stamp-code-versions 補。 -->
     <!-- afk-toggles 必須最先載入：外掛開關中樞（逃生門，自己不可被關；某支外掛壞掉時玩家關掉它就能用原版繼續玩） -->
-    <script src="afk-toggles.js?v=7300187318"></script>
+    <script src="afk-toggles.js?v=dfc7dcfec8"></script>
     <!-- afk-banner：非官方轉載橫幅讓位（基礎設施、無開關；不可掛在 afk-mobile 裡，玩家關掉手機版面就會整個頂端被蓋住） -->
     <script src="afk-banner.js?v=29fa2d5746"></script>
     <!-- 存檔解壓快取：必須排在所有會讀 localStorage 的外掛之前（核心每殺一隻怪都重解壓一次血盟狀態） -->
@@ -601,9 +601,9 @@
     <script src="afk-mobile-banner.js?v=6a4debbfd5"></script>
     <script src="afk-offline-owner.js?v=d90b67cc85"></script>
     <script src="afk-merc-policy.js?v=fbd3c9f2f7"></script>
-    <script src="afk-offline.js?v=86efb0d0cd"></script>
+    <script src="afk-offline.js?v=16805f37fd"></script>
     <!-- 手機版面 / 返回鍵 -->
-    <script src="afk-mobile.js?v=739f787779"></script>
+    <script src="afk-mobile.js?v=ff7ce7f3b0"></script>
     <script src="afk-backnav.js?v=a02389afc7"></script>
     <script src="afk-battlehud.js?v=fb7e1703ae"></script>
     <script src="afk-mapbar.js?v=048a44152b"></script>
@@ -611,8 +611,8 @@
     <!-- 資訊頁 / 查詢頁 -->
     <script src="afk-slotinfo.js?v=7c70639588"></script>
     <script src="afk-loadslots.js?v=a43834b125"></script>
-    <script src="afk-dex.js?v=68a5eab422"></script>
-    <script src="afk-wiki.js?v=4b0bdee2ca"></script>
+    <script src="afk-dex.js?v=3579200061"></script>
+    <script src="afk-wiki.js?v=b9926a3007"></script>
     <!-- 設定選單 / 存檔 / 診斷 / 離線紀錄 -->
     <script src="afk-storage.js?v=302890a0df"></script>
     <!-- 存檔空間警告：localStorage 用量 >80% 時首頁紅色警告(唯讀;與 afk-storage 同一套估算) -->
@@ -620,17 +620,20 @@
     <!-- 首頁公告卡（通用框架：檔頭 NOTICE 設成 null 就不顯示，要發公告時填一組設定即可） -->
     <script src="afk-notice.js?v=2ae062cf13"></script>
     <script src="afk-history.js?v=a562ed31c4"></script>
-    <script src="afk-reissueid.js?v=2cd0b584ff"></script>
+    <script src="afk-reissueid.js?v=1fbdc00067"></script>
     <script src="afk-diag.js?v=731c2dc5b6"></script>
-    <script src="afk-powersave.js?v=872c9d6e24"></script>
+    <script src="afk-powersave.js?v=7bce060db9"></script>
     <!-- 遊戲內小工具 -->
     <script src="afk-statpts.js?v=4e96609d8d"></script>
     <!-- 能力分頁條列式：拿掉背景圖改大字卡片(純 CSS,DOM/updateUI 不動) -->
     <script src="afk-statlist.js?v=6fd13eddb6"></script>
     <script src="afk-autobuy.js?v=c5ef3debdd"></script>
     <script src="afk-training.js?v=7b5c7e666a"></script>
+    <!-- 廢品標記管理：入口排在木人場鈕下方（自己 insertAdjacentElement，不靠載入順序） -->
+    <script src="afk-junkmgr.js?v=b943ff4f8a"></script>
+    <script src="afk-mercguard.js?v=ecf4d9a46d"></script>
     <script src="afk-bossring.js?v=8ed81976f5"></script>
-    <script src="afk-itemsearch.js?v=f7f70c6259"></script>
+    <script src="afk-itemsearch.js?v=82c78d7bda"></script>
     <script src="afk-invlist.js?v=574b44d6d3"></script>
     <script src="afk-eqlist.js?v=7a7533b7ce"></script>
     <script src="afk-npclist.js?v=f46b6af71a"></script>
@@ -656,7 +659,7 @@
     <!-- PWA / SW / 統計 / 品牌（skin 固定排最後） -->
     <script src="afk-pwa.js?v=ea69bd3a19"></script>
     <script src="afk-sw.js?v=0c1440decf"></script>
-    <script src="afk-syncinfo.js?v=05f72e99de"></script>
+    <script src="afk-syncinfo.js?v=9a0c3de601"></script>
     <script src="afk-analytics.js?v=25e209371f"></script>
     <script src="afk-skin.js?v=a86ce97ad1"></script>
     <!-- ═══════════ 加掛版外掛層 END ═══════════ -->

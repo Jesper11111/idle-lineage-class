@@ -78,7 +78,6 @@ run('node scripts/apply-offline-safety-patches.mjs');
 run('node tools/gen-anim-manifest.js');
 run('node scripts/gen-manifests.mjs');
 run('node scripts/stamp-code-versions.mjs');
-run('node scripts/stamp-sw-version.mjs');
 
 try {
   const upSha = execSync('git -C "' + UP + '" rev-parse HEAD', { encoding: 'utf8' }).trim();
@@ -95,6 +94,9 @@ try {
 } catch (e) {
   console.warn('[sync] ⚠ upstream-checkpoint.json 未更新：' + e.message);
 }
+
+// checkpoint 必須排在 stamp-sw-version 前，version.json 的 upstreamAt 才會反映本次同步。
+run('node scripts/stamp-sw-version.mjs');
 
 if (process.env.AFK_SKIP_SMOKE === '1') {
   console.log('[sync] AFK_SKIP_SMOKE=1 → 跳過 smoke（呼叫端自行執行）');

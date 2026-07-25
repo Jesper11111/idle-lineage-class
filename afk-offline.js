@@ -291,6 +291,22 @@
     return { gold: player.gold || 0, exp: player.exp || 0, lv: player.lv || 0, inv: inv };
   }
   function fmt(n) { try { return (n || 0).toLocaleString(); } catch (e) { return '' + n; } }
+  // 道具名顏色 class:直接借原作 getItemColor(遺物海藍/傳說琥珀金/席琳套裝/祝福金/詛咒紅/基底色),
+  //   與作者補跑摘要(js/03 _ffFinishCatchup)同一套判斷——不自己重刻品階規則,上游改配色就跟著變。
+  //   摘要以 id 彙總(不分強化值/詞綴),故與作者一樣傳 en:0;查不到物品就退回無色。
+  function itemColorClass(id) {
+    try { if (typeof getItemColor === 'function' && typeof DB !== 'undefined' && DB.items && DB.items[id]) return getItemColor({ id: id, en: 0 }) || ''; } catch (e) {}
+    return '';
+  }
+  function itemHTML(it) {
+    var cls = itemColorClass(it.id);
+    return cls ? ('<span class="' + cls + ' font-bold">' + it.n + '×' + it.d + '</span>') : (it.n + '×' + it.d);
+  }
+  // 道具串外層要包 sys-item-gain:css/style.css 對 `#sys-log .sys-item-gain *` 把一般道具壓成米色、
+  //   只讓傳說(橘)與遺物(藍)發光。少了這層就變成每件各自的基底色,與作者補跑摘要看起來是兩套。
+  function itemsHTML(items) {
+    return '<span class="sys-item-gain">' + items.map(itemHTML).join('、') + '</span>';
+  }
   // 軍王之室:背包現有「軍王的鑰匙」總數(供離線摘要算消耗了幾把)
   function countKingKeys() {
     try { return (player.inv || []).reduce(function (s, i) { return s + ((i && i.id === 'item_king_key') ? (i.cnt || 1) : 0); }, 0); }
@@ -301,7 +317,7 @@
   var HIST_PREFIX = 'afk_hist_';
   var HIST_MAX    = 5;                          // 每個角色最多保留最近幾筆(同一個 key 一個陣列)
   function histKey() { return HIST_PREFIX + currentSlot; }
-  // 背包前後差 → [{n,cnt,c}](c=品階顏色 class,取 DB.items[id].c 基底色);依數量多→少排序(顯示用)
+  // 背包前後差 → [{n,cnt,c}](c=品階顏色 class,同摘要走 itemColorClass);依數量多→少排序(顯示用)
   function invDeltaList(before, after) {
     var ids = {}, out = [];
     for (var k in before.inv) ids[k] = 1;
@@ -310,7 +326,7 @@
       var d = (after.inv[id] || 0) - (before.inv[id] || 0);
       if (d > 0) {
         var dd = (typeof DB !== 'undefined' && DB.items && DB.items[id]) ? DB.items[id] : null;
-        out.push({ n: dd ? dd.n : id, cnt: d, c: dd ? (dd.c || '') : '' });
+        out.push({ n: dd ? dd.n : id, cnt: d, c: itemColorClass(id) });
       }
     }
     out.sort(function (a, b) { return b.cnt - a.cnt; });
@@ -354,7 +370,7 @@
     var exp = expTotal(a.lv, a.exp) - expTotal(b.lv, b.exp); if (exp < 0) exp = 0;
     var items = [], ids = {};
     for (var k in b.inv) ids[k] = 1; for (var k2 in a.inv) ids[k2] = 1;
-    for (var id in ids) { var d = (a.inv[id] || 0) - (b.inv[id] || 0); if (d > 0) items.push({ n: (typeof DB !== 'undefined' && DB.items && DB.items[id]) ? DB.items[id].n : id, d: d }); }
+    for (var id in ids) { var d = (a.inv[id] || 0) - (b.inv[id] || 0); if (d > 0) items.push({ id: id, n: (typeof DB !== 'undefined' && DB.items && DB.items[id]) ? DB.items[id].n : id, d: d }); }
     items.sort(function (x, y) { return y.d - x.d; });
     return { floor: floor, exp: exp, gold: (a.gold || 0) - (b.gold || 0), lv: (a.lv || 0) - (b.lv || 0), items: items };
   }
@@ -372,7 +388,7 @@
       if (s.gold > 0) parts.push(`<span class="text-yellow-400 font-bold">${fmt(s.gold)} 金幣</span>`);
       if (s.lv   > 0) parts.push(`<span class="text-green-400 font-bold">升 ${s.lv} 級</span>`);
       if (s.exp  > 0) parts.push(`<span class="text-purple-400 font-bold">${fmt(s.exp)} 經驗</span>`);
-      if (s.items.length) parts.push(s.items.map(function (it) { return it.n + '×' + it.d; }).join('、'));
+      if (s.items.length) parts.push(itemsHTML(s.items));
       if (!parts.length) return;   // 該樓沒收益就省略
       shown++;
       var ln = `<span class="text-rose-200">傲慢之塔 ${s.floor} 樓</span>：` + parts.join('、') + '。';
@@ -395,11 +411,11 @@
       var delta = (after.inv[id] || 0) - (before.inv[id] || 0);
       if (delta > 0) {
         var nm = (typeof DB !== 'undefined' && DB.items && DB.items[id]) ? DB.items[id].n : id;
-        items.push({ n: nm, d: delta });
+        items.push({ id: id, n: nm, d: delta });
       }
     }
     items.sort(function (a, b) { return b.d - a.d; });
-    var itemStr = items.map(function (it) { return it.n + '×' + it.d; }).join('、');
+    var itemStr = items.length ? itemsHTML(items) : '';
 
     window.__afk.last = { mins: mins, gold: dGold, exp: dExp, lv: dLv, died: !!died, ticks: doneTicks, items: items.length };
 

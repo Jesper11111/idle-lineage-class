@@ -57,7 +57,7 @@
 
 CI 版:GitHub Actions `sync-upstream.yml`(**只有 `workflow_dispatch`,無 GitHub schedule**)監看 `pp771007/main`:ls-remote 比 checkpoint 早退 → 鏡像資產(`rsync --delete`)→ sync 腳本(AFK_SKIP_SMOKE=1)→ smoke → **全綠只推 `sync/upstream-*` 分支並建立 PR,絕不直推 main**;錨點失效/smoke 紅 → 開 issue、不建立 PR。人工 review/merge 後,`deploy-pages.yml` 才部署正式站,`release-synced-upstream.yml` 才發 Release。
 
-## 目前的外掛(PP 自帶外掛＋本站 2 支政策外掛;順序以 PP index 為準)
+## 目前的外掛(PP 自帶外掛＋本站 3 支政策外掛;順序以 PP index 為準)
 
 | 檔案 | 功能 |
 |---|---|
@@ -103,6 +103,7 @@ CI 版:GitHub Actions `sync-upstream.yml`(**只有 `workflow_dispatch`,無 GitHu
 | `afk-trackinfo.js` | 狀態欄顯示魔物追蹤剩餘時間(包 renderStatusEffects,補一格) |
 | `afk-battlebuffs.js` | 手機戰鬥框下方鏡射整條狀態欄(必須排在 afk-trackinfo 之後才含追蹤格) |
 | `afk-relicguard.js` | 快速廢品的「全選」跳過遺物(包 quickJunkSelectAll/buildQuickHeader) |
+| `afk-junkmgr.js` | 快速廢品標記管理(可檢視並移除已標記的武器／防具，不改核心存檔格式) |
 | `afk-enhtarget.js` | 快速強化目標上限 +12→+15(包 buildQuickEnhanceHeader 補下拉;執行端本就鉗各裝備 enhanceCap) |
 | `afk-retrial.js` | 試煉批次兌換(試煉道具持續掉落·已完成也照掉;面板自訂數量重複兌換;試煉狀態只讀不寫;包 trialItemActive/trialQHTML/build50TrialHTML) |
 | `afk-traditional.js` | 傳統模式(偽)/自動衝裝(掉落自帶強化值;靠補丁2 的 `__afkTradRollEn` 鉤子) |
@@ -110,7 +111,8 @@ CI 版:GitHub Actions `sync-upstream.yml`(**只有 `workflow_dispatch`,無 GitHu
 | `afk-dograce.js` | 賽狗場迷你遊戲(奇岩城鎮限定;自製) |
 | `afk-pwa.js` | PWA 安裝 UI+圖桶/程式桶對帳(reconcile 送 SW) |
 | `afk-sw.js` | Service Worker 註冊(sw.js 是我方檔,上游無 PWA) |
-| `afk-syncinfo.js` | 首頁顯示原作者連結+原版同步時間(讀 version.json 的 buildAt) |
+| `afk-syncinfo.js` | 首頁顯示原作者連結+真正的原版同步時間(讀 version.json 的 upstreamAt；舊版才退回 buildAt) |
+| `afk-mercguard.js` | 招募被規則擋下時顯示原因(含安塔瑞斯輔助互斥與容量不足；只包裝提示，不改招募規則) |
 | `afk-analytics.js` | Cloudflare Web Analytics(只在正式站注入) |
 | `afk-skin.js` | 首頁外掛入口收納(桌機🔌鈕/手機依原版按鈕樣式;固定最後載,MutationObserver 等入口到齊) |
 
