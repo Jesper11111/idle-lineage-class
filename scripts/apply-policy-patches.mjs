@@ -1,14 +1,15 @@
 /**
- * apply-policy-patches.mjs — PP 核心同步後，固定使用者指定的舊傭兵獎勵政策。
+ * apply-policy-patches.mjs — PP 核心同步後，固定使用者指定的傭兵混合獎勵政策。
  *
- * 只修改 js/05 的獎勵公式；招募費用、回城免費自動刷新與受僱限制由
- * afk-merc-policy.js 覆寫。其他戰鬥函式仍來自 PP 最新版。
+ * 修改 js/05 的獎勵公式與 afk-wiki 的政策說明；招募費用、回城免費自動刷新與
+ * 受僱限制由 afk-merc-policy.js 覆寫。其他戰鬥函式仍來自 PP 最新版。
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const CHECK = process.argv.includes('--check');
 const FILE = 'js/05-kill-progression.js';
-const MARKER = '// 🔒 legacy-merc-policy: v3.7.61 均分經驗、金幣與掉落不按隊伍人數加乘。';
+const OLD_MARKER = '// 🔒 legacy-merc-policy: v3.7.61 均分經驗、金幣與掉落不按隊伍人數加乘。';
+const MARKER = '// 🔒 legacy-merc-policy: v3.7.61 經驗均分、金幣不加乘；掉寶每名未倒地傭兵 +60%。';
 // 官方 Windows checkout 可能是 CRLF；錨點一律用 LF 比對，stamp-code-versions 也採相同正規化。
 let src = readFileSync(FILE, 'utf8').replace(/\r\n/g, '\n');
 
@@ -19,8 +20,25 @@ function replaceOne(from, to, label) {
   src = src.slice(0, at) + to + src.slice(at + from.length);
 }
 
+const upstreamRewardBlock =
+  "function partyExpShareCount() { return partyActiveMemberCount(); }   // 相容 native-preview／舊外部呼叫；不再作為除數\n" +
+  "function partyRewardMult() { return partyActiveMemberCount(); }\n" +
+  "function partyDropRate(rate) { return Math.min(1, Math.max(0, Number(rate) || 0) * partyRewardMult()); }";
+const oldRewardBlock =
+  "function partyExpShareCount() { return partyActiveMemberCount(); }   // 🔒 舊傭兵政策：主玩家＋未倒地傭兵均分\n" +
+  "function partyRewardMult() { return 1; }   // 🔒 舊傭兵政策：金幣／掉落不按隊伍人數加乘\n" +
+  "function partyDropRate(rate) { return Math.min(1, Math.max(0, Number(rate) || 0)); }";
+const localRewardBlock =
+  "function partyExpShareCount() { return partyActiveMemberCount(); }   // 🔒 舊傭兵政策：主玩家＋未倒地傭兵均分\n" +
+  "function partyRewardMult() { return 1; }   // 🔒 本地政策：金幣不按隊伍人數加乘\n" +
+  "function partyDropMult() { return 1 + Math.max(0, partyActiveMemberCount() - 1) * 0.6; }   // 🔒 本地政策：每名未倒地傭兵使掉寶率 +60%，王族 7 名時 ×5.2\n" +
+  "function partyDropRate(rate) { return Math.min(1, Math.max(0, Number(rate) || 0) * partyDropMult()); }";
+
 if (src.includes(MARKER)) {
-  console.log('[check] 舊傭兵獎勵政策已套用。');
+  console.log('[check] 傭兵經驗均分／掉寶 +60% 政策已套用。');
+} else if (src.includes(OLD_MARKER)) {
+  replaceOne(OLD_MARKER, MARKER, '舊政策標記升級');
+  replaceOne(oldRewardBlock, localRewardBlock, '舊隊伍獎勵倍率升級');
 } else {
   replaceOne(
     'function classicDropMult() { return 1; }',
@@ -33,8 +51,8 @@ if (src.includes(MARKER)) {
     '效率統計經驗'
   );
   replaceOne(
-    "function partyExpShareCount() { return partyActiveMemberCount(); }   // 相容 native-preview／舊外部呼叫；不再作為除數\nfunction partyRewardMult() { return partyActiveMemberCount(); }\nfunction partyDropRate(rate) { return Math.min(1, Math.max(0, Number(rate) || 0) * partyRewardMult()); }",
-    "function partyExpShareCount() { return partyActiveMemberCount(); }   // 🔒 舊傭兵政策：主玩家＋未倒地傭兵均分\nfunction partyRewardMult() { return 1; }   // 🔒 舊傭兵政策：金幣／掉落不按隊伍人數加乘\nfunction partyDropRate(rate) { return Math.min(1, Math.max(0, Number(rate) || 0)); }",
+    upstreamRewardBlock,
+    localRewardBlock,
     '隊伍獎勵倍率'
   );
   replaceOne(
@@ -59,23 +77,64 @@ if (src.includes(MARKER)) {
   );
 }
 
+if (!src.includes('let _dropMult = _dropBase * classicDropMult() * partyDropMult();')) {
+  replaceOne(
+    'let _dropMult = _dropBase * classicDropMult() * partyRewardMult();   // 席琳／恩賜／模式倍率後再乘有效隊伍人數（最高 ×8）',
+    'let _dropMult = _dropBase * classicDropMult() * partyDropMult();   // 席琳／恩賜／模式倍率後再乘傭兵掉寶倍率（王族 7 名最高 ×5.2）',
+    '一般掉落表倍率'
+  );
+}
+if (!src.includes('e[1] * _dropBase * partyDropMult() * trialItemDropMult(e[0])')) {
+  replaceOne(
+    'e[1] * _dropBase * partyRewardMult() * trialItemDropMult(e[0])',
+    'e[1] * _dropBase * partyDropMult() * trialItemDropMult(e[0])',
+    '龍騎士試煉掉落倍率'
+  );
+}
+if (!src.includes("partyRewardMult());   // 🪆 娃娃金幣加成後維持本地政策 ×1")) {
+  replaceOne(
+    "partyRewardMult());   // 🪆 娃娃加成後再乘有效隊伍人數（最高 ×8）",
+    "partyRewardMult());   // 🪆 娃娃金幣加成後維持本地政策 ×1",
+    '金幣倍率註解'
+  );
+}
+
 const mustHave = [
   MARKER,
   '/ partyExpShareCount()',
   'function partyRewardMult() { return 1; }',
-  'function partyDropRate(rate) { return Math.min(1, Math.max(0, Number(rate) || 0)); }',
+  'function partyDropMult() { return 1 + Math.max(0, partyActiveMemberCount() - 1) * 0.6; }',
+  'function partyDropRate(rate) { return Math.min(1, Math.max(0, Number(rate) || 0) * partyDropMult()); }',
+  'let _dropMult = _dropBase * classicDropMult() * partyDropMult();',
+  'e[1] * _dropBase * partyDropMult() * trialItemDropMult(e[0])',
+  'partyRewardMult());   // 🪆 娃娃金幣加成後維持本地政策 ×1',
   'let _expShare = mob.exp * (1 + partyExpBonusPct() / 100) / partyExpShareCount();',
   'let _gain = Math.floor(_expShare * getExpGainMult(a.lv || 1));'
 ];
 const missing = mustHave.filter(x => !src.includes(x));
-if (missing.length) throw new Error(`[${FILE}] 舊傭兵政策驗證失敗：${missing.join(' | ')}`);
+if (missing.length) throw new Error(`[${FILE}] 傭兵混合獎勵政策驗證失敗：${missing.join(' | ')}`);
 
 const indexHtml = readFileSync('index.html', 'utf8');
 const mercPolicySrc = readFileSync('afk-merc-policy.js', 'utf8');
 const powersaveInventorySrc = readFileSync('afk-powersave-inventory.js', 'utf8');
 const worldMapSrc = readFileSync('js/11-world-map.js', 'utf8');
+const WIKI_FILE = 'afk-wiki.js';
+let wikiSrc = readFileSync(WIKI_FILE, 'utf8');
+const upstreamWikiRewardLine =
+  '💰 <b>組隊還讓掉落與金幣翻倍</b>：<b>金幣與每件掉落機率都會乘上「有效隊伍人數」＝主玩家＋未倒地傭兵（最多 8 人）</b>——帶滿 3 名傭兵＝<b>×4</b>、王族帶滿 7 名＝<b>×8</b>（單件機率最高補到 100%）。金幣與掉落全歸你主角。';
+const localWikiRewardLine =
+  '💰 <b>傭兵提高掉寶率</b>：每名未倒地傭兵讓每件物品的掉落機率增加 <b>60%</b>——帶滿 3 名＝<b>×2.8</b>、王族帶滿 7 名＝<b>×5.2</b>（單件機率最高補到 100%）。<b>金幣不加乘</b>，金幣與掉落仍全歸你主角。';
+if (!wikiSrc.includes(localWikiRewardLine)) {
+  const firstAt = wikiSrc.indexOf(upstreamWikiRewardLine);
+  if (firstAt < 0 || wikiSrc.indexOf(upstreamWikiRewardLine, firstAt + upstreamWikiRewardLine.length) >= 0) {
+    throw new Error(`[${WIKI_FILE}] 找不到唯一的 PP 傭兵獎勵說明錨點，拒絕產生錯誤小百科。`);
+  }
+  wikiSrc = wikiSrc.slice(0, firstAt) + localWikiRewardLine + wikiSrc.slice(firstAt + upstreamWikiRewardLine.length);
+}
 const mercPolicyMustHave = [
-  "version: '3.7.61-hybrid-town-refresh-on-pp-v3.8.5'",
+  "version: '3.7.61-hybrid-drop60-town-refresh-on-pp-v3.8.5'",
+  'dropPerMercPct: 60',
+  'goldPartyMultiplier: false',
   'function mercRehireCostPolicy() { return 0; }',
   'paidManualRehire: false',
   'townRefresh: true'
@@ -109,8 +168,9 @@ if (mobileBannerAt < 0 || ownerAt < 0 || mercAt < 0 || powersaveInventoryAt < 0 
 }
 
 if (CHECK) {
-  console.log('✅ --check：舊傭兵獎勵、回城免費刷新政策與載入順序正確。');
+  console.log('✅ --check：傭兵均分經驗、掉寶 +60%、金幣 ×1、回城免費刷新政策與載入順序正確。');
 } else {
   writeFileSync(FILE, src);
-  console.log(`✅ 舊傭兵獎勵政策已固定（${FILE}）；其他戰鬥核心維持 PP 最新版。`);
+  writeFileSync(WIKI_FILE, wikiSrc);
+  console.log(`✅ 傭兵掉寶 +60% 政策已固定（${FILE}、${WIKI_FILE}）；金幣與其他戰鬥核心維持原政策。`);
 }

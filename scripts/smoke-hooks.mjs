@@ -284,10 +284,33 @@ const powersaveInventoryProblems = await page.evaluate(() => {
 const mercPolicyProblems = await page.evaluate(() => {
   const bad = [];
   const p = window.__legacyMercPolicy;
-  if (!p || p.version !== '3.7.61-hybrid-town-refresh-on-pp-v3.8.5') bad.push('傭兵混合政策層未啟動');
+  if (!p || p.version !== '3.7.61-hybrid-drop60-town-refresh-on-pp-v3.8.5') bad.push('傭兵混合政策層未啟動');
   if (typeof GAME_VERSION === 'undefined' || GAME_VERSION !== 'v3.8.5') bad.push(`核心版本不是 v3.8.5（${typeof GAME_VERSION === 'undefined' ? 'missing' : GAME_VERSION}）`);
-  if (typeof partyRewardMult !== 'function' || partyRewardMult() !== 1) bad.push('金幣／掉落仍按隊伍人數加乘');
-  if (typeof partyDropRate !== 'function' || Math.abs(partyDropRate(0.125) - 0.125) > 1e-12) bad.push('掉落率仍按隊伍人數加乘');
+  if (!p || p.dropPerMercPct !== 60 || p.goldPartyMultiplier !== false) bad.push('傭兵掉寶／金幣政策中繼資料錯誤');
+  if (typeof partyRewardMult !== 'function' || partyRewardMult() !== 1) bad.push('金幣仍按隊伍人數加乘');
+  if (typeof partyDropMult !== 'function' || typeof partyDropRate !== 'function') {
+    bad.push('傭兵掉寶倍率函式未載入');
+  } else {
+    const oldAllies = player.allies;
+    const setAlive = n => {
+      player.allies = Array.from({ length: n }, (_, i) => ({ uid: `drop-test-${i}`, _downed: false }));
+    };
+    const near = (a, b) => Math.abs(a - b) <= 1e-12;
+    try {
+      setAlive(0);
+      if (!near(partyDropMult(), 1) || !near(partyDropRate(0.125), 0.125)) bad.push('無傭兵掉寶倍率不是 ×1');
+      setAlive(1);
+      if (!near(partyDropMult(), 1.6) || !near(partyDropRate(0.125), 0.2)) bad.push('1 名傭兵掉寶倍率不是 ×1.6');
+      player.allies.push({ uid: 'drop-test-downed', _downed: true });
+      if (!near(partyDropMult(), 1.6)) bad.push('倒地傭兵仍被計入掉寶倍率');
+      setAlive(3);
+      if (!near(partyDropMult(), 2.8) || !near(partyDropRate(0.125), 0.35)) bad.push('3 名傭兵掉寶倍率不是 ×2.8');
+      setAlive(7);
+      if (!near(partyDropMult(), 5.2) || !near(partyDropRate(0.25), 1)) bad.push('王族 7 名傭兵不是 ×5.2 或單件掉率未封頂 100%');
+    } finally {
+      player.allies = oldAllies;
+    }
+  }
   if (typeof mercRehireCost !== 'function' || mercRehireCost(1) !== 0 || mercRehireCost(50) !== 0 || mercRehireCost(100) !== 0) bad.push('傭兵快照更新仍會收費');
   if (typeof currentRoleMercenaryEmployer !== 'function' || currentRoleMercenaryEmployer() !== null) bad.push('反向受僱登記仍生效');
   if (typeof mercenaryRoleBattleBlocked !== 'function' || mercenaryRoleBattleBlocked('dragon_valley', false) !== false) bad.push('受僱角色仍被鎖在安全區');
