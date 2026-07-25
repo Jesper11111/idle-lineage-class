@@ -72,6 +72,7 @@ if (missing.length) throw new Error(`[${FILE}] 舊傭兵政策驗證失敗：${m
 
 const indexHtml = readFileSync('index.html', 'utf8');
 const mercPolicySrc = readFileSync('afk-merc-policy.js', 'utf8');
+const powersaveInventorySrc = readFileSync('afk-powersave-inventory.js', 'utf8');
 const worldMapSrc = readFileSync('js/11-world-map.js', 'utf8');
 const mercPolicyMustHave = [
   "version: '3.7.61-hybrid-town-refresh-on-pp-v3.8.5'",
@@ -86,13 +87,25 @@ if (mercPolicyMissing.length || /\bwindow\.refreshAllAllies\s*=/.test(mercPolicy
 if (!worldMapSrc.includes("if (typeof refreshAllAllies === 'function') refreshAllAllies();")) {
   throw new Error('[js/11-world-map.js] 找不到進安全區的 refreshAllAllies 單一掛點，拒絕繼續。');
 }
+const powersaveInventoryMustHave = [
+  "version: '1.1.0-local'",
+  'TAB_COUNT_PATCH_MS = 250',
+  'TAB_FULL_REBUILD_MS = 1000',
+  'document.addEventListener(\'DOMContentLoaded\', install'
+];
+const powersaveInventoryMissing = powersaveInventoryMustHave.filter(x => !powersaveInventorySrc.includes(x));
+if (powersaveInventoryMissing.length) {
+  throw new Error(`[afk-powersave-inventory.js] 背包增量更新契約不完整：${powersaveInventoryMissing.join(' | ')}`);
+}
 const mobileBannerAt = indexHtml.indexOf('<script src="afk-mobile-banner.js');
 const ownerAt = indexHtml.indexOf('<script src="afk-offline-owner.js');
 const mercAt = indexHtml.indexOf('<script src="afk-merc-policy.js');
+const powersaveInventoryAt = indexHtml.indexOf('<script src="afk-powersave-inventory.js');
 const offlineAt = indexHtml.indexOf('<script src="afk-offline.js');
-if (mobileBannerAt < 0 || ownerAt < 0 || mercAt < 0 || offlineAt < 0 ||
-    mobileBannerAt > ownerAt || ownerAt > mercAt || mercAt > offlineAt) {
-  throw new Error('[index.html] 載入順序必須是 afk-mobile-banner → afk-offline-owner → afk-merc-policy → afk-offline。');
+if (mobileBannerAt < 0 || ownerAt < 0 || mercAt < 0 || powersaveInventoryAt < 0 || offlineAt < 0 ||
+    mobileBannerAt > ownerAt || ownerAt > mercAt || mercAt > powersaveInventoryAt ||
+    powersaveInventoryAt > offlineAt) {
+  throw new Error('[index.html] 載入順序必須是 afk-mobile-banner → afk-offline-owner → afk-merc-policy → afk-powersave-inventory → afk-offline。');
 }
 
 if (CHECK) {

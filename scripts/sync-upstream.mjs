@@ -3,7 +3,7 @@
  *
  * <upstream-dir> 必須是 pp771007/idle-lineage-class 的 checkout。
  * assets/public 由呼叫端先用 rsync --delete（或本機等價方式）鏡像；本腳本處理：
- *   1. 鏡像 PP 的 js/css、全部 afk-*.js（保留三支 Jesper 專用政策檔）、sw.js 與 wiki checkpoint。
+ *   1. 鏡像 PP 的 js/css、全部 afk-*.js（保留 Jesper 專用政策／效能檔）、sw.js 與 wiki checkpoint。
  *   2. 直接採用 PP index.html，只在 PP afk-offline.js 前注入本地政策層。
  *   3. 驗存檔 I/O，補回既有核心鉤子、舊傭兵獎勵政策與離線安全政策。
  *   4. 重產 manifest、版本戳與 upstream checkpoint，再跑 smoke。
@@ -44,13 +44,18 @@ function mirrorFlatDir(name, accept = () => true) {
 mirrorFlatDir('js', f => f.endsWith('.js'));
 mirrorFlatDir('css');
 
-const localAfkFiles = new Set(['afk-mobile-banner.js', 'afk-offline-owner.js', 'afk-merc-policy.js']);
+const localAfkFiles = new Set([
+  'afk-mobile-banner.js',
+  'afk-offline-owner.js',
+  'afk-merc-policy.js',
+  'afk-powersave-inventory.js'
+]);
 const ppAfkFiles = readdirSync(UP).filter(f => /^afk-.+\.js$/.test(f) && !localAfkFiles.has(f));
 for (const f of ppAfkFiles) copyFileSync(join(UP, f), f);
 for (const f of readdirSync('.').filter(f => /^afk-.+\.js$/.test(f))) {
   if (!localAfkFiles.has(f) && !ppAfkFiles.includes(f)) rmSync(f);
 }
-console.log(`[sync] 鏡像 PP 外掛：${ppAfkFiles.length} 支；保留 Jesper 政策檔 ${[...localAfkFiles].join(', ')}`);
+console.log(`[sync] 鏡像 PP 外掛：${ppAfkFiles.length} 支；保留 Jesper 本地檔 ${[...localAfkFiles].join(', ')}`);
 
 for (const f of ['sw.js', 'wiki-checkpoint.json']) {
   if (existsSync(join(UP, f))) copyFileSync(join(UP, f), f);

@@ -17,7 +17,8 @@ import { platform } from 'node:os';
 import { chromium } from 'playwright';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const plugin = await readFile(join(ROOT, 'afk-powersave.js'));
+const basePlugin = await readFile(join(ROOT, 'afk-powersave.js'));
+const inventoryPlugin = await readFile(join(ROOT, 'afk-powersave-inventory.js'));
 const fixture = `<!doctype html>
 <html lang="zh-Hant">
 <body>
@@ -82,6 +83,7 @@ const fixture = `<!doctype html>
     });
   </script>
   <script src="/afk-powersave.js"></script>
+  <script src="/afk-powersave-inventory.js"></script>
   <script>window.renderTabs(true);</script>
 </body>
 </html>`;
@@ -89,7 +91,12 @@ const fixture = `<!doctype html>
 const server = createServer((req, res) => {
   if (req.url === '/afk-powersave.js') {
     res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' });
-    res.end(plugin);
+    res.end(basePlugin);
+    return;
+  }
+  if (req.url === '/afk-powersave-inventory.js') {
+    res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' });
+    res.end(inventoryPlugin);
     return;
   }
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });

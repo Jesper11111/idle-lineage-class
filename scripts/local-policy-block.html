@@ -1,4 +1,6 @@
-    <!-- Jesper 本地政策層：全裝置隱藏來源橫幅、離線互斥、舊傭兵獎勵＋回城免費刷新政策；必須早於 PP 的 afk-offline.js。 -->
+    <!-- Jesper 本地層：全裝置隱藏來源橫幅、離線互斥、舊傭兵政策、同步保留的背包增量更新；必須早於 PP 的 afk-offline.js。 -->
     <script src="afk-mobile-banner.js"></script>
     <script src="afk-offline-owner.js"></script>
     <script src="afk-merc-policy.js"></script>
+    <!-- 先載入、DOMContentLoaded 才安裝，確保包在 PP 後續 renderTabs wrappers 的最外層。 -->
+    <script src="afk-powersave-inventory.js"></script>
