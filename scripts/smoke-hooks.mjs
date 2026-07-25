@@ -52,7 +52,7 @@ const logs = [];
 // afk-battlehud 桌機也會 init(只是 CSS 讓它不顯示)→ 放 need 即可;它取代的是核心手機版 #mobile-vitals。
 // afk-touchtip 只在觸控裝置 init(桌機有 hover,本來就不該掛)→ 桌機那輪永遠等不到,必須放手機輪。
 const needMobileOnly = ['[AFK-touchtip]'];
-const need = ['[AFK]', '[AFK-merc-policy]', '[AFK-banner]', '[AFK-mobile-banner]', '[AFK-lzcache]', '[AFK-synccompress]', '[AFK-mobile]', '[AFK-backnav]', '[AFK-battlehud]', '[AFK-mapbar]', '[AFK-nozoom]', '[AFK-trackinfo]', '[AFK-relicguard]', '[AFK-enhtarget]', '[AFK-retrial]', '[AFK-battlebuffs]', '[AFK-slotinfo]', '[AFK-dex]', '[AFK-wiki]', '[AFK-syncinfo]', '[AFK-statpts]', '[AFK-statlist]', '[AFK-pwa]', '[AFK-storage]', '[AFK-history]', '[AFK-quotawarn]', '[AFK-notice]', '[AFK-reissueid]', '[AFK-diag]', '[AFK-mobname]', '[AFK-training]', '[AFK-powersave]', '[AFK-itemsearch]', '[AFK-eqlist]', '[AFK-npclist]', '[AFK-skin]'];
+const need = ['[AFK]', '[AFK-merc-policy]', '[AFK-banner]', '[AFK-mobile-banner]', '[AFK-lzcache]', '[AFK-synccompress]', '[AFK-mobile]', '[AFK-backnav]', '[AFK-battlehud]', '[AFK-mapbar]', '[AFK-nozoom]', '[AFK-trackinfo]', '[AFK-relicguard]', '[AFK-enhtarget]', '[AFK-retrial]', '[AFK-battlebuffs]', '[AFK-slotinfo]', '[AFK-dex]', '[AFK-wiki]', '[AFK-syncinfo]', '[AFK-statpts]', '[AFK-statlist]', '[AFK-pwa]', '[AFK-storage]', '[AFK-history]', '[AFK-quotawarn]', '[AFK-notice]', '[AFK-reissueid]', '[AFK-diag]', '[AFK-mobname]', '[AFK-training]', '[AFK-powersave]', '[AFK-itemsearch]', '[AFK-eqlist]', '[AFK-npclist]', '[AFK-skin]', '[AFK-junkmgr]', '[AFK-mercguard]'];
 const seen = (list) => list.every((n) => logs.some((l) => l.includes(n) && l.includes('hooks OK')));
 
 // ⚠ 不用 waitUntil:'networkidle':作者新版(.49 起)加了背景音樂 assets/bgm/*.mp3，<audio> 媒體串流會讓網路
@@ -147,6 +147,37 @@ const toggleOffProblems = await opage.evaluate(() => {
     const el = document.querySelector(sel);
     if (!el) { bad.push(nm + '不存在'); continue; }
     if (el.getBoundingClientRect().height <= 0) bad.push(nm + '高度為 0(被收進桌機 Modal?)');
+  }
+  return bad;
+});
+
+// --- 第四輪:平板幾何(觸控 + 寬 > 768),驗右欄分頁不會「內外兩層都不捲」---
+//   afk-mobile 的 detectMobile() 只要 pointer:coarse 就算手機,範圍比上游 CSS 的手機斷點
+//   (max-width:768px / max-height:520px and pointer:coarse)大 → 觸控平板在我方眼中是手機、在上游眼中是桌機。
+//   我方「把分頁攤平、交給 #game-screen 單層捲」那組規則若沒包進上游同一條 media query,平板就會拿到
+//   「分頁不捲(我方規則) + #game-screen 也不捲(上游桌機幾何)」→ 道具/防具/設定超出畫面的部分永遠
+//   看不到也滑不到(2026-07-25 玩家回報)。前三輪都是手機或桌機尺寸,正好落在這道縫的兩側,測不到。
+const tctx = await browser.newContext({
+  viewport: { width: 820, height: 1180 }, hasTouch: true, deviceScaleFactor: 2,
+  userAgent: 'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+});
+const tpage = await tctx.newPage();
+await tpage.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'domcontentloaded' });
+await tpage.waitForTimeout(3000);
+const tabletProblems = await tpage.evaluate(() => {
+  const bad = [];
+  const SCROLLABLE = ['auto', 'scroll'];
+  const oy = (el) => getComputedStyle(el).overflowY;
+  if (!document.body.classList.contains('m-mobile')) return bad;
+  if (matchMedia('(max-width: 768px), (max-height: 520px) and (pointer: coarse)').matches) return bad;
+  const gs = document.getElementById('game-screen');
+  if (gs && SCROLLABLE.includes(oy(gs))) return bad;
+  const panel = document.getElementById('tab-content-panel');
+  if (panel && oy(panel) === 'visible') bad.push('#tab-content-panel 被攤平(overflow-y:visible),但 #game-screen 不是捲動容器');
+  for (const id of ['tab-items', 'tab-weapons', 'tab-armors', 'tab-automation']) {
+    const el = document.getElementById(id);
+    if (!el) { bad.push(`#${id} 不存在(上游改了分頁 id?)`); continue; }
+    if (!SCROLLABLE.includes(oy(el))) bad.push(`#${id} 不是捲動容器(overflow-y:${oy(el)}),而 #game-screen 也不捲`);
   }
   return bad;
 });
@@ -261,6 +292,14 @@ if (toggleOffProblems.length) {
   console.error('冒煙測試失敗:全裝置橫幅隱藏或關閉「手機版面」後的逃生門/入口不正確:');
   for (const p of toggleOffProblems) console.error('  ' + p);
   console.error('  判準:不可停用的基礎設施不能依賴可被關掉的外掛提供的 CSS 變數 / body class。');
+  process.exit(1);
+}
+
+if (tabletProblems.length) {
+  console.error('冒煙測試失敗:平板(觸控·寬 820)上右欄分頁內外兩層都不捲,超出畫面的內容看不到也滑不到:');
+  for (const p of tabletProblems) console.error('  ' + p);
+  console.error('  判準:要覆寫上游「寫在 media query 裡」的樣式時,自己的規則必須包進同一條 media query');
+  console.error('       (afk-mobile.js 的 MOBILE_GEOM_MQ);只寫 body.m-mobile 會讓觸控平板拿到混搭幾何。');
   process.exit(1);
 }
 

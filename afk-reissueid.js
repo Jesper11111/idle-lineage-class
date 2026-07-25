@@ -22,7 +22,10 @@
  *   - 逐 key 驗證寫入成功,任何一步失敗立刻中止並回報,不做「寫一半」。
  *
  * 連帶資料一起改(不改的話換完更亂):
- *   存檔      p.enSeed / p._roleEpoch / p.allies[].enSeed / p.mercPrefs / p.mercLedgerOutbox
+ *   存檔      p.enSeed / p._roleEpoch / p.mercPrefs / p.mercLedgerOutbox
+ *   傭兵      p.allies[] 全部解除(換發後身分獨立·舊招募快照沒意義;順帶解開「來源角色卡在受僱身份出不來」的死結——
+ *             撞號時刪僱主也解不掉·見 js/06 受僱鎖)。清前結算經驗+記住喝水/技能設定,重新招募即還原
+ *   僱傭登記  fb5_mercenary_employment_v1_*(受僱鎖唯一資料源)整批清除
  *   寵物名冊  outOwner 'char:<舊碼>' → 新碼(靠 outSlot 決定歸屬;判不出來就收回,見下)
  *   血盟      members[<舊碼>] 與 modes[].leaderId → 新碼
  *   傭兵帳本  fb5_merc_exp_ledger 內 {slot,enSeed} 的 enSeed → 新碼(待領經驗才不會失效)
@@ -40,6 +43,10 @@
   var PET_ROSTER = core('PET_ROSTER_KEY', 'fb5_pet_roster');
   var CLAN_KEY = core('CLAN_STATE_KEY', 'fb5_clan_state_v1');
   var MERC_KEY = core('MERC_LEDGER_KEY', 'fb5_merc_exp_ledger');
+  var EMP_BASE = core('MERC_EMPLOYMENT_KEY_BASE', 'fb5_mercenary_employment_v1_');   // 僱傭登記前綴(js/06;受僱鎖唯一資料源,傭兵全解後要一併清)
+  // 傭兵可記憶的喝水＋技能設定欄位(比照 js/06 MERC_PREF_FIELDS):解除前存進 mercPrefs,重新招募即還原。
+  //   ⚠️ 本地變數名不能與 core() 要 eval 的全域名同字(否則直接 eval 會抓到本地那顆尚未賦值的 var → undefined),故改叫 KEYS。
+  var MERC_PREF_KEYS = core('MERC_PREF_FIELDS', ['_atkSkill', '_healSkill', '_convertSkill', '_healHpPct', '_potHpPct', '_hpSkillPct', '_castMpPct', '_hpSafePct']);
   var REISSUE_LOG_KEY = 'afk_reissue_log';    // 換發對照表(舊碼→新碼),很小,留著方便事後查帳
   // 上游離線收益的三把暫存鍵。前綴與組法必須與 js/27 的 OFFLINE_STORE_PREFIX / _offlineStoreKey 一致
   //   (那兩者是 IIFE 內的區域宣告,外部取不到,只能照抄;上游改了這裡就搬不到,但只是留孤兒不會弄壞收益)。
@@ -94,6 +101,30 @@
     return plan;
   }
 
+  // 解除傭兵前把該傭兵未結算的累積經驗記入待領帳本(比照 js/06 _settleAllyExp 的紀錄格式)。
+  //   useSeed = 來源角色「換發後的新碼」→ 來源角色下次載入即以新碼領到(換發已把它的存檔改成新碼)。
+  function settleAllyExp(ally, employerP, slotN, useSeed) {
+    try {
+      var banked = Math.floor((ally && ally._expGained) || 0);
+      if (banked <= 0) return false;
+      var rec = {
+        uid: 'MX' + Date.now().toString(36) + '_' + Math.floor(Math.random() * 1e9).toString(36),
+        party: (employerP && employerP.name ? employerP.name : '?') + '@' + slotN,
+        slot: String(ally._slot), cls: ally.cls, name: ally.name || '', enSeed: useSeed || ally.enSeed || '',
+        exp: banked, ts: Date.now(), reason: 'dismiss', claimed: false
+      };
+      var writeLedger = function () {
+        var raw = _lzGet(MERC_KEY), list;
+        try { list = raw ? JSON.parse(raw) : []; } catch (e) { list = []; }
+        if (!Array.isArray(list)) list = [];
+        list.push(rec); _lzSet(MERC_KEY, JSON.stringify(list));
+      };
+      if (typeof _mercLedgerLocked === 'function') { if (!_mercLedgerLocked(writeLedger)) writeLedger(); }
+      else writeLedger();
+      return true;
+    } catch (e) { return false; }
+  }
+
   // ── 換發本體 ──────────────────────────────────────────────────────────────
   //   回傳 {ok, steps:[...], error}。任何一步寫入失敗就 ok:false,呼叫端據此提示玩家。
   function reissue(plan) {
@@ -105,7 +136,7 @@
       if (!claim[e.oldSeed] || e.slot < claim[e.oldSeed].slot) claim[e.oldSeed] = e;
     });
 
-    var steps = [], fail = null;
+    var steps = [], fail = null, freedMercs = 0, settledExp = 0;
     function note(t) { steps.push(t); }
 
     // 1) 各存檔位:身分碼 + 角色世代 + 檔內以身分碼為鍵的傭兵資料
@@ -117,17 +148,8 @@
       p.enSeed = e.newSeed;
       p._roleEpoch = newEpoch();   // 世代一併換新:舊分頁若還開著,它會失去寫入權(正是我們要的)
 
-      // 傭兵快照的 enSeed = 「來源角色」的身分碼;靠 ally._slot 判斷是哪一格,對得上才換。
-      //   換掉才不會被 purgeReplacedAllies(js/06:423)判成「來源格換人了」而自動解散。
-      if (Array.isArray(p.allies)) {
-        p.allies.forEach(function (a) {
-          if (!a || !a.enSeed) return;
-          var src = bySlot[String(a._slot)];
-          if (src && a.enSeed === src.oldSeed) a.enSeed = src.newSeed;
-        });
-      }
-      // mercPrefs 以「來源角色身分碼」為鍵,但鍵本身不帶格號 → 撞號時分不出是哪一格。
-      //   保守做法:同一組舊碼的設定複製給所有共用它的新碼(設定記憶是無害的偏好值,寧可多留)。
+      // mercPrefs 既有記憶(來源角色身分碼為鍵):先把舊碼 → 新碼(下面解除傭兵時再把「當前設定」覆蓋上去,現行值優先)。
+      //   撞號時同一組舊碼的設定複製給所有共用它的新碼(偏好值無害,寧可多留)。
       if (p.mercPrefs && typeof p.mercPrefs === 'object') {
         var np = {};
         Object.keys(p.mercPrefs).forEach(function (k) {
@@ -136,6 +158,27 @@
           else np[k] = p.mercPrefs[k];
         });
         p.mercPrefs = np;
+      }
+      // 🔓 解除所有招募中的傭兵:換發後各角色身分全部獨立,舊傭兵快照本就綁在舊身分關係上 → 清掉最乾淨,
+      //   並順帶解開「來源角色卡在受僱身份、出不了安全區」的死結(撞號時連刪僱主都解不掉,見 js/06 受僱鎖)。
+      //   清前保住不吃虧:①各傭兵喝水/技能設定存進「來源新碼」下的 mercPrefs(重新招募即還原)
+      //   ②累積經驗結算進待領帳本(用來源新碼→來源角色下次載入即領到)。
+      if (Array.isArray(p.allies) && p.allies.length) {
+        p.allies.forEach(function (a) {
+          if (!a) return;
+          var asrc = bySlot[String(a._slot)];
+          var srcNewSeed = asrc ? asrc.newSeed : (a.enSeed || '');   // 來源角色換發後的身分碼(不在計畫內=來源格空,退回舊碼·無害)
+          if (srcNewSeed) {
+            if (!p.mercPrefs || typeof p.mercPrefs !== 'object') p.mercPrefs = {};
+            var pref = {};
+            MERC_PREF_KEYS.forEach(function (f) { if (a[f] !== undefined && a[f] !== null) pref[f] = a[f]; });
+            pref._autoBuff = (a._autoBuff && typeof a._autoBuff === 'object') ? JSON.parse(JSON.stringify(a._autoBuff)) : {};
+            p.mercPrefs[srcNewSeed] = pref;   // 現行設定覆蓋上面 re-key 的舊值
+          }
+          if (settleAllyExp(a, p, e.slot, srcNewSeed)) settledExp++;
+          freedMercs++;
+        });
+        p.allies = [];
       }
       if (Array.isArray(p.mercLedgerOutbox)) {
         p.mercLedgerOutbox.forEach(function (r) {
@@ -148,6 +191,20 @@
       note('第 ' + e.slot + ' 格 ' + e.name + ' → ' + e.newSeed);
     }
     if (fail) return { ok: false, error: fail, steps: steps };
+
+    // 1b) 傭兵已全部解除 → 清掉所有僱傭登記(受僱鎖的唯一資料源;殘留會讓「擔任傭兵」殘影/鎖定不散)。
+    //     走 _lsGet/_lsRemove(與 js/06 同層·未壓縮);EMP_BASE 對不上只是清不到,不會弄壞任何東西。
+    try {
+      ['normal', 'classic'].forEach(function (mode) {
+        var idxKey = EMP_BASE + mode;
+        if (_lsGet(idxKey) != null) _lsRemove(idxKey);
+        for (var bn = 1; bn <= slotMax(); bn++) {
+          var bk = EMP_BASE + mode + '_leader_' + bn;
+          if (_lsGet(bk) != null) _lsRemove(bk);
+        }
+      });
+    } catch (eb) {}
+    if (freedMercs) note('解除全部招募中傭兵 ' + freedMercs + ' 名(斷開受僱糾纏·各角色可重新招募;設定已保留' + (settledExp ? '、' + settledExp + ' 筆待領經驗已結算' : '') + ')');
 
     // 2) 寵物名冊(一般 / 經典兩桶,各含匯入前備份)
     //    outOwner 判不出歸屬時一律收回(outOwner=null)——留著指向舊碼會被每一格都判成
@@ -364,8 +421,9 @@
       '<li><b>血盟</b>——血盟本身、名稱、陣營、等級都不受影響,下次載入角色會自動重新加入。' +
       '但同一組舊碼被多格共用時,<b>成員記錄(含貢獻度)只會保留給格號最小的那一格</b>,其餘各格貢獻度從 0 開始' +
       '(貢獻度不足 5 點時開不了血盟 Buff,捐一點金幣就補回來)。<b>盟主身分</b>同樣只留給格號最小的那格。</li>' +
-      '<li><b>傭兵</b>——招募中的傭兵會跟著改掛新身分,不會被解散;待領經驗紀錄也會一併轉過去。' +
-      '少數對不上來源存檔位的舊傭兵仍可能在下次載入時自動解散(設定會被記住、經驗會結算)。</li>' +
+      '<li><b>傭兵</b>——<b>所有招募中的傭兵都會被解除</b>(換發後身分全部獨立,舊招募關係一併清掉,' +
+      '順帶解決「角色卡在受僱身份、出不了安全區」的死結)。各角色之後到傭兵面板即可<b>重新招募</b>' +
+      '(免費);每個傭兵的<b>喝水/技能設定會被記住、累積經驗會結算入帳</b>,不吃虧。</li>' +
       '<li><b>其他分頁</b>——如果你在別的分頁或另一台裝置開著同一個角色,那邊會停止寫入存檔' +
       '(這是刻意的保護)。換發後請把其他分頁全部關掉重開。</li>' +
       '<li><b>離線收益</b>——暫存資料會跟著改掛新身分。但<b>身分碼重複的那幾格</b>因為分不出暫存屬於誰,' +
@@ -455,8 +513,8 @@
       AFK_TOGGLES.register({
         id: 'reissueid', name: '換發身分證', group: '存檔工具', def: true,
         desc: '⚠️ 進階工具,平常用不到。把所有角色的身分碼換新:讓複製出來的角色各自獨立,' +
-          '舊備份檔也能重複匯入成不同角色。會改寫每一格存檔且無法復原,只在遇到「相同角色已存在」' +
-          '或寵物/血盟互相打架時才需要。'
+          '舊備份檔也能重複匯入成不同角色;同時解除所有招募中的傭兵(可重新招募)。會改寫每一格存檔且無法復原,' +
+          '只在遇到「相同角色已存在」、寵物/血盟互相打架、或角色卡在受僱身份出不了安全區時才需要。'
       });
     }
     window.AFK_SETTINGS = window.AFK_SETTINGS || { _items: [], add: function (it) { this._items.push(it); } };

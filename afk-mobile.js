@@ -37,6 +37,10 @@
     //   (afk-banner 不可被停用，正常一定拿得到；取不到時退成不匹配任何元素的選擇器，避免產出無效 CSS)
     var MODAL_HOSTS = (window.AFK_BANNER && AFK_BANNER.MODAL_HOSTS) || '#afk-no-such-element';
     var MODAL_BOXES = (window.AFK_BANNER && AFK_BANNER.MODAL_BOXES) || '#afk-no-such-element';
+    // 上游 css/style.css「手機版面」那條 media query 的原文條件。凡是要覆寫上游手機規則的，都必須包進同一條——
+    //   本檔 detectMobile() 只要 pointer:coarse 就算手機，範圍比它大(觸控平板在我們眼中是手機、在上游眼中是桌機)，
+    //   裸寫 body.m-mobile 會讓平板拿到「我們的手機規則 + 上游的桌機幾何」的混搭版。
+    var MOBILE_GEOM_MQ = '(max-width: 768px), (max-height: 520px) and (pointer: coarse)';
     var _styleInjected = false;
     function ensureOffsetStyle() {
         if (_styleInjected) return; _styleInjected = true;
@@ -60,7 +64,7 @@
             //      pointer:coarse 就算手機 → 平板(寬 > 768 的觸控裝置)會拿到「我們的 top:8px」卻沒有上游的
             //      transform:none，殘留的 translate(-50%,-50%) 把整個視窗往上推半個身高(實測 top 到 -211~-489，
             //      上半截整個跑出畫面)。加上這層 media query，寬螢幕就乖乖走下面的桌機幾何。
-            + '@media (max-width: 768px), (max-height: 520px) and (pointer: coarse){\n'
+            + '@media ' + MOBILE_GEOM_MQ + '{\n'
             + '  body.m-mobile #warehouse-window-frame, body.m-mobile #item-modal:not(.hidden), body.m-mobile #town-interaction-container:not(.hidden){ top: calc(8px + var(--orig-bar-h, 0px)) !important; height: calc(100dvh - 16px - var(--orig-bar-h, 0px) - var(--m-nav-h, 0px)) !important; }\n'
             + '}\n'
             //   ③ B 型·置中彈窗容器(含內聯 position:fixed 與 .fixed.inset-0 兩種都有的)：padding 夾安全區 + 內卡壓 max-height。
@@ -77,13 +81,19 @@
             //      ⚠ 必須排除 .equipment-panel-host：「裝備」分頁是核心的「嵌入式裝備視窗」(js/19)——#equipment-window 以
             //        position:fixed 蓋在 #tab-content-panel 的視窗座標上，依賴 host 有明確高度(--equipment-panel-height)。
             //        這條 auto 高度與那條同特異度、本檔較晚載入會蓋掉它 → host 塌掉、12 格裝備框整個錯位(踩過)。
-            + 'body.m-mobile #tab-content-panel:not(.equipment-panel-host){ height: auto !important; min-height: 0 !important; overflow: visible !important; }\n'
-            + 'body.m-mobile #tab-content-panel:not(.equipment-panel-host) > .ability-window-tab, body.m-mobile #tab-content-panel:not(.equipment-panel-host) > [id^="tab-"]{ height: auto !important; overflow: visible !important; }\n'
+            //      🚨 整組必須跟上游「手機幾何」同一條 media query：這裡把分頁攤平、交給 #game-screen 單層捲，
+            //        而 #game-screen 的 overflow-y:auto 是上游寫在該 media query 裡的。平板(觸控·寬>768)在
+            //        detectMobile() 眼中是手機、在上游眼中是桌機 → 內層被這裡關掉捲動、外層又還是不捲的桌機三欄，
+            //        兩層都不捲＝道具/防具/設定分頁超出的部分永遠看不到也滑不到(2026-07-25 平板玩家回報)。
+            + '@media ' + MOBILE_GEOM_MQ + '{\n'
+            + '  body.m-mobile #tab-content-panel:not(.equipment-panel-host){ height: auto !important; min-height: 0 !important; overflow: visible !important; }\n'
+            + '  body.m-mobile #tab-content-panel:not(.equipment-panel-host) > .ability-window-tab, body.m-mobile #tab-content-panel:not(.equipment-panel-host) > [id^="tab-"]{ height: auto !important; overflow: visible !important; }\n'
             //      ⚠ 背包條列式(afk-invlist)把 .classic-inventory-viewport 設成自己的捲動容器(overflow:auto+overscroll contain),
             //        分頁流式化後它 height 撐開、沒東西可捲 → 手勢在它身上被 contain 擋死、不鏈給 #game-screen=整頁滑不動。
-            //        手機流式下退回普通元素,由 #game-screen 單層捲動(桌機不受影響,invlist 原規則照舊)。
-            + 'body.m-mobile #tab-content-panel:not(.equipment-panel-host) .classic-inventory-shell{ height: auto !important; }\n'
-            + 'body.m-mobile #tab-content-panel:not(.equipment-panel-host) .classic-inventory-viewport{ height: auto !important; overflow: visible !important; overscroll-behavior: auto !important; touch-action: auto !important; }\n'
+            //        手機流式下退回普通元素,由 #game-screen 單層捲動(桌機/平板不受影響,invlist 原規則照舊)。
+            + '  body.m-mobile #tab-content-panel:not(.equipment-panel-host) .classic-inventory-shell{ height: auto !important; }\n'
+            + '  body.m-mobile #tab-content-panel:not(.equipment-panel-host) .classic-inventory-viewport{ height: auto !important; overflow: visible !important; overscroll-behavior: auto !important; touch-action: auto !important; }\n'
+            + '}\n'
             //   ⑥ 內層捲動區的 iOS 觸控三件套：溢出量小時沒有這組會「滑不動」(觸控被外層吃掉·afk-invlist 踩過同一雷)；
             //      overscroll-behavior:contain 同時擋「捲到底把後面的遊戲畫面一起帶著捲」的連鎖(雙層捲軸打架)。
             + 'body.m-mobile :is(.classic-skill-grid-scroll, #warehouse-window-content, #interaction-content, .as-box, #combat-log, #sys-log, #card-book-body, #equip-book-body, #misc-book-body, #relic-book-body, #modal-compare, #item-modal > div:not(#modal-compare)){ -webkit-overflow-scrolling: touch; touch-action: pan-y pinch-zoom; overscroll-behavior: contain; }\n'

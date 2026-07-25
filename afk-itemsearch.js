@@ -80,13 +80,8 @@
   if (typeof window.renderTabs === 'function' && !window.renderTabs.__afkISearch) {
     var _origTabs = window.renderTabs;
     var wrapped = function () {
-      var psBefore = window.__afkPsInventory && window.__afkPsInventory.renderEpoch;
       var r = _origTabs.apply(this, arguments);
-      var psAfter = window.__afkPsInventory && window.__afkPsInventory.renderEpoch;
-      // 省電外掛若只做數量角標增量更新，核心 DOM 沒有重建；不要再白掃三個（含隱藏）分頁。
-      if (psBefore == null || psAfter !== psBefore) {
-        try { ensureBox(); filterAll(); } catch (e) {}   // 重建後的新列要重套目前的關鍵字
-      }
+      try { ensureBox(); filterAll(); } catch (e) {}   // 重建後的新列要重套目前的關鍵字
       return r;
     };
     wrapped.__afkISearch = true;
