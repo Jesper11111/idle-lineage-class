@@ -24,13 +24,44 @@ const MIME = {
   '.svg': 'image/svg+xml', '.ico': 'image/x-icon'
 };
 
+function itemSignature(it) {
+  const star = Math.max(1, Math.min(3, Math.floor(Number(it.attrMagicStar) || 1)));
+  return it.id + '|' + (it.en || 0) + '|' +
+    (it.bless === true ? 'B' : (it.bless ? 'C' : 0)) + '|' +
+    (it.anc === true ? 'A' : (it.anc || 0)) + '|' +
+    (it.attr || '') + '|' + (it.seteff || '') +
+    (it.attrMagic ? '|' + it.attrMagic + (star > 1 ? '@' + star : '') : '');
+}
+
+function inventoryIdentity(items) {
+  const totals = new Map();
+  const nonWishSignatures = new Set();
+  let wishSlots = 0;
+  let totalCount = 0;
+  for (const item of items || []) {
+    const count = item.cnt || 1;
+    const signature = itemSignature(item);
+    const key = item.gw ? signature + '|gw:' + JSON.stringify(item.gw) : signature;
+    totals.set(key, (totals.get(key) || 0) + count);
+    totalCount += count;
+    if (item.gw) wishSlots++;
+    else nonWishSignatures.add(signature);
+  }
+  return {
+    invCount: nonWishSignatures.size + wishSlots,
+    invTotal: totalCount,
+    invSignatures: [...totals].sort((a, b) => a[0].localeCompare(b[0])),
+  };
+}
+
 function identityOf(p) {
   const eq = {};
   for (const [k, v] of Object.entries((p && p.eq) || {})) eq[k] = v && v.id ? v.id : null;
+  const inventory = inventoryIdentity((p && p.inv) || []);
   return {
     cls: p && p.cls, name: p && p.name, enSeed: p && p.enSeed,
     classicMode: !!(p && p.classicMode), lv: p && p.lv,
-    invCount: ((p && p.inv) || []).length,
+    ...inventory,
     allyCount: ((p && p.allies) || []).length,
     eq
   };
@@ -97,11 +128,35 @@ export async function testSaveFiles(paths) {
         for (const k in exported) {
           if (k !== 'wh' && k !== 'pets' && k !== 'pandoraDiamonds' && k !== 'clanState') clean[k] = exported[k];
         }
+        if (exported.wh) {
+          const warehouse = {
+            items: Array.isArray(exported.wh.items) ? exported.wh.items : [],
+            gold: Number.isFinite(Number(exported.wh.gold)) ? Math.max(0, Math.floor(Number(exported.wh.gold))) : 0,
+          };
+          if (!_lzSet(whKey(exported.p), JSON.stringify(warehouse))) return { error: '測試倉庫寫入失敗' };
+        }
         localStorage.removeItem('afk_ts_' + slot);
         localStorage.removeItem('afk_map_' + slot);
         if (!_lzSet('lineage_idle_save_' + slot, _saveWrap(JSON.stringify(clean)))) return { error: '測試存檔寫入失敗' };
         currentSlot = slot;
-        loadGame();
+        const originalLoadWarehouse = window.loadWarehouse;
+        let loadWarehouseCalls = 0;
+        window.loadWarehouse = function () {
+          loadWarehouseCalls++;
+          return originalLoadWarehouse.apply(this, arguments);
+        };
+        try {
+          loadGame();
+        } finally {
+          window.loadWarehouse = originalLoadWarehouse;
+        }
+        const loadedWarehouse = originalLoadWarehouse();
+        const expectedWarehouseItems = exported.wh && Array.isArray(exported.wh.items)
+          ? exported.wh.items.filter(item => item && item.id &&
+              (DB.items[item.id] || (typeof _PET_LEGACY_COLLARS !== 'undefined' && _PET_LEGACY_COLLARS[item.id])))
+          : [];
+        const expectedWarehouseTotal = expectedWarehouseItems.reduce((sum, item) => sum + (item.cnt || 1), 0);
+        const loadedWarehouseTotal = (loadedWarehouse.items || []).reduce((sum, item) => sum + (item.cnt || 1), 0);
         const originalTownRefresh = window.refreshAllAllies;
         let townRefreshCalls = 0;
         const goldBeforeTownRefresh = player.gold || 0;
@@ -123,6 +178,15 @@ export async function testSaveFiles(paths) {
         const p = JSON.parse(stored.payload).p;
         const eq = {};
         for (const k in (p.eq || {})) eq[k] = p.eq[k] && p.eq[k].id ? p.eq[k].id : null;
+        const totals = new Map();
+        let invTotal = 0;
+        for (const item of p.inv || []) {
+          const count = item.cnt || 1;
+          const signature = itemSig(item);
+          const key = item.gw ? signature + '|gw:' + JSON.stringify(item.gw) : signature;
+          totals.set(key, (totals.get(key) || 0) + count);
+          invTotal += count;
+        }
         const employmentKeys = [];
         for (let n = 0; n < localStorage.length; n++) {
           const key = localStorage.key(n);
@@ -132,8 +196,20 @@ export async function testSaveFiles(paths) {
         return {
           identity: {
             cls: p.cls, name: p.name, enSeed: p.enSeed, classicMode: !!p.classicMode, lv: p.lv,
-            invCount: (p.inv || []).length, allyCount: (p.allies || []).length, eq
+            invCount: (p.inv || []).length,
+            invTotal,
+            invSignatures: [...totals].sort((a, b) => a[0].localeCompare(b[0])),
+            allyCount: (p.allies || []).length,
+            eq
           },
+          warehouseProvided: !!exported.wh,
+          expectedWarehouseTotal,
+          loadedWarehouseTotal,
+          expectedWarehouseGold: exported.wh
+            ? (Number.isFinite(Number(exported.wh.gold)) ? Math.max(0, Math.floor(Number(exported.wh.gold))) : 0)
+            : 0,
+          loadedWarehouseGold: loadedWarehouse.gold || 0,
+          loadWarehouseCalls,
           version: GAME_VERSION,
           signedRoundtrip: true,
           partyCount: partyExpShareCount(),
@@ -167,6 +243,12 @@ export async function testSaveFiles(paths) {
       if (got.error) failures.push(got.error);
       else {
         if (JSON.stringify(got.identity) !== JSON.stringify(input.expected)) failures.push('角色核心資料往返後不一致');
+        if (got.warehouseProvided &&
+            (got.loadedWarehouseTotal !== got.expectedWarehouseTotal ||
+             got.loadedWarehouseGold !== got.expectedWarehouseGold)) {
+          failures.push(`倉庫資料載入後不一致（物品 ${got.expectedWarehouseTotal} → ${got.loadedWarehouseTotal}；金幣 ${got.expectedWarehouseGold} → ${got.loadedWarehouseGold}）`);
+        }
+        if (got.loadWarehouseCalls !== 1) failures.push(`載入角色期間重複解析倉庫 ${got.loadWarehouseCalls} 次`);
         if (got.version !== 'v3.8.5') failures.push('核心版本不是 PP v3.8.5');
         if (got.partyCount !== got.expectedPartyCount) failures.push('傭兵經驗均分人數錯誤');
         if (got.rewardMult !== 1 || Math.abs(got.dropRate - 0.125) > 1e-12) failures.push('金幣／掉落仍有隊伍人數加乘');
