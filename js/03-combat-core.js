@@ -2241,9 +2241,9 @@ function consumeWetMult(target, ele) {
     if (target && ele === 'wind' && (target._wetUntil || 0) > state.ticks) { target._wetUntil = 0; return 2; }
     return 1;
 }
-function getPhysicalDmg(diceStr, target, wpn, arrowData, forceHeavy, forceHit, forceLand, forceCrit, wpnInst, forceGraze, probe) {   // 🔎 v3.5.87 probe=true：純探測模式（穿透波及命中判定用）——不寫 _beautyMissStack、不設 _vfxBig、不消耗潮濕 _wetUntil；回傳值照常
+function getPhysicalDmg(diceStr, target, wpn, arrowData, forceHeavy, forceHit, forceLand, forceCrit, wpnInst, forceGraze, probe) {
     let isRanged = !!(wpn && wpn.ranged);
-    let hitBonus = (isRanged ? player.d.rangedHit : player.d.meleeHit) + player.d.extraHit + (player._skillHitBonus || 0) + (player._setBeauty5 ? (player._beautyMissStack || 0) : 0);   // 🗼 范德之劍：施展衝擊之暈時本次技能近距離命中+1；🔮 麗人5/5：未命中堆疊命中
+    let hitBonus = (isRanged ? player.d.rangedHit : player.d.meleeHit) + player.d.extraHit + (player._skillHitBonus || 0);   // 🗼 范德之劍：施展衝擊之暈時本次技能近距離命中+1
     let dmgBonus = (isRanged ? player.d.rangedDmg : player.d.meleeDmg);
     // 🌅 日出之國異常（玩家承受）：弱化＝傷害−5/命中−2；疾病＝命中−4（AC+8 在敵方命中端）；目盲＝命中−6
     if (player.statuses) {
@@ -2279,8 +2279,7 @@ function getPhysicalDmg(diceStr, target, wpn, arrowData, forceHeavy, forceHit, f
     else if (player.buffs && player.buffs.sk_elf_preciseshot > 0 && rollHit === 1) hit = true;   // 🏹 精準射擊：擲骰1由必定未命中→必定命中（最高命中率可達100%）
     else if (rollHit !== 1 && hitValue >= rollHit) hit = true;
     else if (rollHit === 19) { hit = true; graze = true; }   // 一般武器：擲到19本應未命中時 → 擦傷（傷害剩50%）
-    if(!hit) { if (player._setBeauty5 && !probe) player._beautyMissStack = (player._beautyMissStack || 0) + 10; return { dmg: 0, hit: false, heavy: false, crit: false, graze: false, crush: false, ranged: isRanged }; }   // 🔮 麗人5/5：未命中→額外命中+10可堆疊（🔎 探測不堆疊）
-    if (player._setBeauty5 && player._beautyMissStack && !probe) player._beautyMissStack = 0;   // 🔮 麗人5/5：物理命中→堆疊歸零（🔎 探測不歸零）
+    if(!hit) return { dmg: 0, hit: false, heavy: false, crit: false, graze: false, crush: false, ranged: isRanged };
 
     // ⚔️ 武器種類內建特性（2026-07 用戶要求·僅自然骰路徑=一般攻擊/雙擊·🎮 經典模式停用）：
     //    鋼爪＝命中(非擦傷)後「額外 5%」機率升級為重擊（沿用重擊完整效果：取最大擲骰/VFX金字/訊息）；雙刀＝命中(非擦傷) 5% 機率最終傷害×2（見下方 _outDmg·訊息標記「雙刃×2」）
@@ -2336,9 +2335,9 @@ function getPhysicalDmg(diceStr, target, wpn, arrowData, forceHeavy, forceHit, f
 
     let _outDmg = inner + fixed;
     if (graze) _outDmg = Math.max(1, Math.floor(_outDmg * (((_cw && _cw.grazeDmgPct) || 50) / 100)));   // 擦傷：最終傷害剩 50%；🏺 v3.7.20 迷宮惡魔的瞥視 grazeDmgPct:30 → 挫傷剩 30%
-    _outDmg = Math.max(1, Math.floor(_outDmg * fragileMult(target)));   // 🔮 脆弱（白鳥5）：受所有來源傷害 +20%
+    _outDmg = Math.max(1, Math.floor(_outDmg * fragileMult(target)));   // 🔮 脆弱（白鳥5）：受所有來源傷害 +10%
     _outDmg = Math.max(1, Math.floor(_outDmg * wpnEnFinalMult(wpnInst || player.eq.wpn)));   // 🔧 武器強化最終傷害倍率；🛡️ v2.6.69 審計#14：有傳 wpnInst（如迅猛雙斧副手揮擊傳 offwpn）就用「該武器自身」的強化與分級，不再硬吃主手倍率
-    _outDmg = Math.max(1, Math.floor(_outDmg * rlFuryMult()));   // 🔮 紅獅5/5(×1.2)＋😡狂怒5/5：最終傷害（普攻及所有走本函式的物理攻擊：反擊/居合/看破/連擊/連射/穿透/魔擊/物理技能）
+    _outDmg = Math.max(1, Math.floor(_outDmg * rlFuryMult()));   // 🔮 紅獅5/5(×1.1)＋😡狂怒5/5：最終傷害（普攻及所有走本函式的物理攻擊：反擊/居合/看破/連擊/連射/穿透/魔擊/物理技能）
     { let _ecm = elementCounterMult(_wAff ? _wAff.ele : getWpnEle(null, DB.items[_swingId]), target.e);
       if (wpn && wpn.counterAllEle && target.e && target.e !== 'none') _ecm = Math.max(_ecm, 1.4);   // 🏺 不定形的變幻劍：一般攻擊剋制地/水/火/風一切屬性之敵（強制 ≥×1.4）
       if (wpn && wpn.counterEles && target.e && wpn.counterEles.includes(target.e)) _ecm = Math.max(_ecm, 1.4);   // 🌑 v3.4.67 冥皇執行劍：一般攻擊對指定屬性(地/風)敵人 ×1.4（與屬性剋制取大）
@@ -2650,7 +2649,6 @@ function procCounter(t) {
     let idx = mapState.mobs.findIndex(m => m && m.uid === t.uid);
     if (t.curHp <= 0) { if (idx !== -1) killMob(idx); }
     else renderMobs();
-    // 🔮 鐵衛 5/5：改由「受到傷害時」觸發（見 enemyPhysicalAttack / applyMobMagic），不再於反擊時觸發
 }
 // ===== 居合（武士刀）：對攻擊者打一次「必定命中、可自然重擊/爆擊」的一般攻擊；只打攻擊者 =====
 function procIai(t) {
@@ -2670,9 +2668,17 @@ function procIai(t) {
     let idx = mapState.mobs.findIndex(m => m && m.uid === t.uid);
     if (t.curHp <= 0) { if (idx !== -1) killMob(idx); }
     else renderMobs();
-    // 🔮 鐵衛 5/5：改由「受到傷害時」觸發（見 enemyPhysicalAttack / applyMobMagic），不再於居合時觸發
 }
-// 雙擊（鋼爪/雙刀）：依武器 comboRate% 機率發動，追加一次「額外一般攻擊」，獨立判定命中、傷害＝完整一般攻擊（🔮 暗影5/5→額外攻擊再×1.5）；本身不再觸發雙擊/穿透等（不遞迴）。fullDmg=false（爆擊精通沿用）保留舊倍率×0.5（暗影5/5×1.0）
+// 雙擊（鋼爪/雙刀）：暗影 3/5 裝備鋼爪／雙刀時，於武器基礎機率額外 +20%。
+function comboTriggerChance(owner, wpn, wpnRef) {
+    if (!wpn || wpn.eff !== 'combo') return 0;
+    let chance = Math.max(0, Number(wpn.comboRate) || 0);
+    let ref = wpnRef || (owner && owner.eq && owner.eq.wpn);
+    let tags = ref && typeof getWeaponTags === 'function' ? getWeaponTags(ref.id) : [];
+    if (owner && owner._setShadow3 && (tags.includes('鋼爪') || tags.includes('雙刀'))) chance += 20;
+    return Math.min(100, chance);
+}
+// 雙擊（鋼爪/雙刀）：依武器雙擊機率追加一次「額外一般攻擊」，獨立判定命中、傷害＝完整一般攻擊（暗影5/5→額外攻擊傷害加倍）；本身不再觸發雙擊/穿透等（不遞迴）。fullDmg=false（爆擊精通沿用）保留舊倍率×0.5（暗影5/5×1.0）
 // ===== 🐉 弱點曝光（weakExpose）：鎖鏈劍一般攻擊命中時依機率對目標附加堆疊（最多3層，鎖刃精通5層）；屠宰者命中時消耗並轉為額外傷害（見 castSkill 屠宰者）=====
 function weakExposeMaxLayers() { return hasMastery('k_chainblade') ? 5 : 3; }   // 🏅 鎖刃精通：上限 5 層
 function playerCanWeakExpose() {
@@ -2825,29 +2831,6 @@ function reboundExtraAttack(mob) {
     if (mob.curHp <= 0 && idx !== -1) killMob(idx);
 }
 
-// 🔮 鐵衛 5/5：受到傷害時，額外對全體敵人造成一次「必中」的一般攻擊（每 tick 最多觸發一次，避免連續受擊洗版）
-function ironGuardSweep() {
-    if (!player._setIron5) return;
-    if (typeof state !== 'undefined' && state && player._ironSweepTick === state.ticks) return;   // 每 tick 節流
-    if (typeof state !== 'undefined' && state) player._ironSweepTick = state.ticks;
-    let targets = [];
-    mapState.mobs.forEach(m => { if (m && m.curHp > 0 && !m._dead) targets.push(m); });
-    if (!targets.length) return;
-    logCombat(`<span class="font-bold" style="color:#93c5fd;text-shadow:0 0 6px #3b82f6;">【鐵衛 5/5】</span>受擊反震，對全體敵人發動一次必中的反擊！`, 'player');
-    targets.forEach(m => {
-        if (!m || m.curHp <= 0 || m._dead) return;   // 可能已被前一刀的擊殺波及
-        let wpn = player.eq.wpn ? DB.items[player.eq.wpn.id] : null;
-        let dice = wpn ? (m.s === 'L' ? wpn.dmgL : wpn.dmgS) : 2;
-        let res = getPhysicalDmg(dice, m, wpn, null, false, true, false);   // forceHit=true → 必中
-        m.curHp -= res.dmg;
-        m.justHit = getWpnEle(player.eq.wpn, wpn);
-        mobWake(m);
-        logCombat(`反擊命中 <span class="${getMobColor(m.lv)}">${m.n}</span>，造成 ${res.dmg} 點傷害。`, 'player');
-        if (m.curHp <= 0) { let ri = mapState.mobs.findIndex(x => x && x.uid === m.uid); if (ri !== -1) killMob(ri); }
-    });
-    renderMobs();
-}
-
 // 🔮 冰矛圍籬（鑽石高崙武器 10% proc·js/07 c.iceLance→本函式）：免費單體水魔法（不耗 MP、不需學會；公式同 castSkill 單體魔法）。⚠️魔女5/5 已改走 stormBuffTick(sk_blizzard)＝冰雪暴，不再用本函式。
 function witchIceLance() {
     let sk = DB.skills['sk_ice_lance'];
@@ -2932,10 +2915,12 @@ function qiguPlayerAttack(target, wpn) {
     dmg = Math.max(1, Math.floor(dmg * fragileMult(target) * illuLvMult(player)));   // 🔮 脆弱/破甲；🔮 幻術士等級加成 ×(1+等級/50)
     target.curHp -= dmg;
     target.justHit = (ele !== 'none') ? ele : 'magic';
+    if (typeof moonShatterOnDamage === 'function') moonShatterOnDamage(player, target, dmg);
     if (target.st && target.st.mrhalf > 0) target.st.mrhalf = 0;
     mobWake(target);
     if (typeof reflectWallOnDamage === 'function') reflectWallOnDamage(target, dmg, 'magic', null);   // 🌑 v3.4.14 血壁空間：奇古獸普攻主擊＝魔法反射（玩家傭兵一致）
     if (player.dead) return;   // ☠️ v3.5.87 反射可反殺施放者：死後中止收尾（不結算擊殺/特效 proc·比照 js/04 playerAttack）
+    if (target.curHp > 0 && player._setIron5 && typeof ironGuardTaunt === 'function' && ironGuardTaunt(target, player)) logCombat(`<span class="font-bold" style="color:#93c5fd;text-shadow:0 0 6px #3b82f6;">【鐵衛 5/5】</span>嘲諷 <span class="${getMobColor(target.lv)}">${target.n}</span>！（3 秒）`, 'player-special');
     logCombat(`<span class="font-bold" style="color:#c4b5fd;text-shadow:0 0 6px #8b5cf6;">【幻術士】</span>奇古獸對 <span class="${getMobColor(target.lv)}">${target.n}</span> 造成 ${dmg} 點魔法傷害。`, 'magic');
     if (target.curHp <= 0) killMob(mapState.targetIdx); else renderMobs();   // 主擊先結算（避免與下方特效各自 killMob 重複擊殺）
     qiguWeaponProc(target, wpn);        // 奇古獸特效（幻影衝擊/心靈破壞；主擊已擊殺則內部 guard 跳過、自行處理擊殺）

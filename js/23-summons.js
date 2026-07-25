@@ -670,6 +670,7 @@ function enemyAttackSummon(mob, s) {
     if (mob._grace) dmg = Math.floor(dmg * 1.5);
     dmg = Math.max(1, Math.floor(dmg * riftDamageMult()) - d.dr);
     dmg = Math.max(1, Math.floor(dmg * (typeof teamDmgReduceMult === 'function' ? teamDmgReduceMult(true) : 1)));   // 🔮 化身對寵物／召喚物保留受傷減免；鋼鐵防護只作用於施法者自身 AC
+    if (typeof ironGuardTauntWeakensAttack === 'function' && ironGuardTauntWeakensAttack(mob)) dmg = Math.floor(dmg * 0.9);   // 🔮 鐵衛 5/5：受嘲諷目標的一般攻擊傷害 -10%
     s.hp -= dmg;
     _petAnimAct(s, 'hurt');
     logCombat(`<span class="${getMobColor(mob.lv)}">${mob.n}</span> 攻擊 <span class="text-purple-300">${s.form}</span>，造成 ${dmg} 點傷害。`, 'enemy-attack', 'enemy');

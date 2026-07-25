@@ -1266,7 +1266,7 @@ function _renderMobsImpl() {
                 ? `<span class="px-1 rounded text-[10px] font-bold border" style="color:${(typeof RELIC_ELE_COLOR !== 'undefined' && RELIC_ELE_COLOR[m.e]) || '#cbd5e1'};background:rgba(15,23,42,.72);border-color:${(typeof RELIC_ELE_COLOR !== 'undefined' && RELIC_ELE_COLOR[m.e]) || '#cbd5e1'};" title="敵人屬性（巨大螞蟻的複眼）">${(typeof RELIC_ELE_LABEL !== 'undefined' && RELIC_ELE_LABEL[m.e]) || ''}屬性</span>`
                 : '';
             if(_showMobStatus && m.st) {   // 🩹 狀態開關關閉時不顯示異常狀態徽章
-                let order = ['freeze','stun','stone','sleep','paralyze','bind','blind','weaken','disease','vacuum','broken','slow','mrhalf','magicseal','fragile','armorbreak','confuse','panic','guardbreak','terror','doom','muddywater'];   // 🕸️ v3.7.75 束縛（排在硬控類之後）   // 🔮 含脆弱、🔧 破甲(黑妖破壞盔甲)、🔮 混亂/恐慌、🐉 護衛毀滅/恐懼/死神、🌊 污濁、⚡ 麻痺；中毒不顯示、出血改用 🩸 emoji（見下方圖片下方列）
+                let order = ['freeze','stun','stone','sleep','paralyze','bind','blind','weaken','disease','vacuum','broken','slow','mrhalf','magicseal','fragile','shatter','armorbreak','confuse','panic','guardbreak','terror','doom','muddywater'];   // 🕸️ v3.7.75 束縛（排在硬控類之後）   // 🔮 含脆弱、碎裂、🔧 破甲(黑妖破壞盔甲)、🔮 混亂/恐慌、🐉 護衛毀滅/恐懼/死神、🌊 污濁、⚡ 麻痺；中毒不顯示、出血改用 🩸 emoji（見下方圖片下方列）
                 _badgeTags = order.filter(k => m.st[k] > 0).map(k =>
                     `<span class="px-1 rounded bg-purple-900/70 text-purple-200 text-[10px]">${STATUS_NAME[k]}</span>`).join(' ');
             }

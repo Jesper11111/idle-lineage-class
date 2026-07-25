@@ -711,7 +711,8 @@ const WEAPON_TAGS = {
     // 🏺 遺物 第十七批：法師的護身短刀＝匕首（出血）；骸骨意志之弓由 isBow 旗標判定免 tag。
     relic_mage_dagger:['匕首'],
     // 🌅 日出之國：巨釜＝雙手鈍器（重擊）、尾刃＝單手劍+武士刀（反擊+居合）、斷角＝矛（noBleed 停出血）；羽扇 isBow／黑尾 chainsword／扇子·怒火 isWand 旗標判定免 tag。
-    relic_sr_kettle_maul:['雙手鈍器'], relic_sr_kama_blade:['單手劍','武士刀'], relic_sr_ushioni_horn:['矛']
+    relic_sr_kettle_maul:['雙手鈍器'], relic_sr_kama_blade:['單手劍','武士刀'], relic_sr_ushioni_horn:['矛'],
+    relic_wing_chaos_blades:['雙刀']   // 🔌 修正 Shines v3.8.26 遺漏：暗影 3/5 應辨識此武器為雙刀
 };
 function getWeaponTags(id){ return WEAPON_TAGS[id] || []; }
 // ⚔️ 雙擊機率 comboRate：未明定者依武器標籤套預設（鋼爪 33% / 雙刀 25%）；個別武器可在 def 寫 comboRate 覆寫（底比斯歐西里斯雙刀30 / 死亡之指20 / 恨之鋼爪50 / 破壞雙刀·破壞鋼爪30）。日後新增 combo 武器自動取得預設機率。

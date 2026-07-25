@@ -91,6 +91,36 @@ function threatOf(m, key) {
     return m._threat[key] || 0;
 }
 
+// 鐵衛 5/5：一般攻擊命中後，目標鎖定攻擊者 3 秒；到期後回到正常仇恨選敵。
+const IRON_GUARD_TAUNT_TICKS = 30;
+function _ironGuardTauntState(m) {
+    let taunt = m && m._ironGuardTaunt;
+    if (!taunt) return null;
+    if ((taunt.until || 0) <= _threatNow()) { delete m._ironGuardTaunt; return null; }
+    return taunt;
+}
+function ironGuardTaunt(m, ent) {
+    if (!m || m._dead || (m.curHp || 0) <= 0 || !ent) return false;
+    let now = _threatNow(), key = threatKey(ent), old = _ironGuardTauntState(m);
+    let firstApply = !old || old.key !== key;
+    m._ironGuardTaunt = { key:key, until:now + IRON_GUARD_TAUNT_TICKS };
+    if (THREAT_ENABLED) {
+        if (!m._threat) { m._threat = Object.create(null); m._threatT = now; }
+        else _threatDecayMob(m, now);
+        let highest = 0;
+        for (let k in m._threat) highest = Math.max(highest, Number(m._threat[k]) || 0);
+        m._threat[key] = Math.max(Number(m._threat[key]) || 0, highest + THREAT_K);
+    }
+    return firstApply;
+}
+function ironGuardTauntTarget(m) {
+    let taunt = _ironGuardTauntState(m);
+    if (!taunt || typeof player === 'undefined' || !player) return null;
+    if (taunt.key === 'P') return !player.dead && (player.hp || 0) > 0 ? player : null;
+    return (player.allies || []).find(a => a && !a._downed && (a.curHp || 0) > 0 && threatKey(a) === taunt.key) || null;
+}
+function ironGuardTauntWeakensAttack(m) { return !!_ironGuardTauntState(m); }
+
 // ---------- 四、歸因（快照差分·per-mob） ----------
 // snap＝_dpsSnap() 的同格式陣列（各怪 curHp）。與快照比對·每隻怪的掉血量 × mult 記給 ent。
 function threatCommitDiff(snap, ent) {
@@ -132,11 +162,13 @@ function threatHeal(caster, actualAmt) {
 // 回傳「怪 m 選擇攻擊 ent 的權重」＝ baseThreat×K + 累積仇恨。base<=0（不在候選）→原樣回傳。
 function victimThreatWeight(m, ent, baseWeight) {
     if (!THREAT_ENABLED || !(baseWeight > 0)) return baseWeight;
+    let taunt = _ironGuardTauntState(m);
+    if (taunt && taunt.key === threatKey(ent)) return 1000000000;   // 其他選敵管線也必定把嘲諷者視為最高仇恨
     return baseWeight * THREAT_K + threatOf(m, threatKey(ent));
 }
 
 // ---------- 七、存檔剝除（runtime 狀態不入檔·語意上仇恨讀檔本該歸零） ----------
 function stripThreatForSave() {
     if (typeof mapState === 'undefined' || !mapState || !mapState.mobs) return;
-    for (let m of mapState.mobs) { if (m) { if (m._threat) delete m._threat; if (m._threatT != null) delete m._threatT; } }
+    for (let m of mapState.mobs) { if (m) { if (m._threat) delete m._threat; if (m._threatT != null) delete m._threatT; if (m._ironGuardTaunt) delete m._ironGuardTaunt; } }
 }

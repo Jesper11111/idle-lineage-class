@@ -14,12 +14,15 @@ const MIME = {
   '.svg': 'image/svg+xml', '.webp': 'image/webp',
 };
 
-const [statsSource, coreSource, attackSource, allySource, skillSource] = await Promise.all([
+const [configSource, statsSource, coreSource, attackSource, allySource, skillSource, vfxSource, threatSource] = await Promise.all([
+  readFile(join(ROOT, 'js/01-drops-config.js'), 'utf8'),
   readFile(join(ROOT, 'js/02-stats-recompute.js'), 'utf8'),
   readFile(join(ROOT, 'js/03-combat-core.js'), 'utf8'),
   readFile(join(ROOT, 'js/04-combat-attack.js'), 'utf8'),
   readFile(join(ROOT, 'js/06-status-allies.js'), 'utf8'),
   readFile(join(ROOT, 'js/07-skills-cast.js'), 'utf8'),
+  readFile(join(ROOT, 'js/09-vfx-render.js'), 'utf8'),
+  readFile(join(ROOT, 'js/32-threat.js'), 'utf8'),
 ]);
 assert.ok(statsSource.includes('ed.bossEncounterPct') && statsSource.includes('ed.corrosiveJellySkin') && statsSource.includes('ed.charmOnHit'), '五件遺物能力未接入 stats 重算');
 assert.ok(coreSource.includes('Math.random() < _normalBossChance'), '山羊惡魔雙足未接入一般地圖頭目率');
@@ -28,6 +31,17 @@ assert.equal((attackSource.match(/corrosiveJellySkinOnBasicHit\(mob, (?:player|a
 assert.ok(attackSource.includes('player._forceComboRate != null'), '飛翼雙連未接入玩家強制雙擊');
 assert.ok(allySource.includes('ally._forceComboRate != null') && allySource.includes('function allyFlywingDouble'), '飛翼雙連未完整接入傭兵');
 assert.ok(skillSource.includes('function relicCharmOnHit') && skillSource.includes('function relicFlywingDouble'), '五件遺物技能函式缺失');
+assert.ok(configSource.includes("5件：最終傷害+10%") && configSource.includes("受所有來源傷害+10%"), '紅獅／白鳥新版數值未就位');
+assert.ok(statsSource.includes("spdMult *= (1 / 1.2)") && statsSource.includes("delete p._beautyMissStack"), '麗人近戰攻速或舊 runtime 清理未就位');
+assert.ok(coreSource.includes('function comboTriggerChance(owner, wpn, wpnRef)') && !coreSource.includes('function ironGuardSweep('), '暗影雙擊或舊鐵衛橫掃移除不完整');
+assert.ok(!attackSource.includes('player._setShadow3) { player.hp') && !attackSource.includes('player._setMoon5 && roll('), '暗影回血或月光魔法閃避舊規則仍殘留');
+assert.ok(!allySource.includes('function allyIronGuardSweep(') && !allySource.includes('ally._beautyMissStack ='), '傭兵舊鐵衛／麗人規則仍殘留');
+assert.equal((coreSource.match(/moonShatterOnDamage\(/g) || []).length, 1, '玩家核心月光碎裂掛點數量錯誤');
+assert.equal((attackSource.match(/moonShatterOnDamage\(/g) || []).length, 5, '玩家戰鬥月光碎裂掛點數量錯誤');
+assert.equal((allySource.match(/moonShatterOnDamage\(/g) || []).length, 10, '傭兵月光碎裂掛點數量錯誤');
+assert.equal((skillSource.match(/moonShatterOnDamage\(/g) || []).length, 9, '玩家技能月光碎裂掛點數量錯誤');
+assert.ok(vfxSource.includes("'fragile','shatter','armorbreak'"), '碎裂狀態未接入戰場顯示');
+assert.ok(threatSource.includes('const IRON_GUARD_TAUNT_TICKS = 30;') && threatSource.includes('return 1000000000;'), '鐵衛嘲諷狀態或仇恨鎖定未就位');
 
 const server = createServer(async (req, res) => {
   try {
@@ -261,8 +275,71 @@ try {
   });
 
   assert.deepEqual(relicBatch, [], relicBatch.join('\n'));
+
+  const setRework = await page.evaluate(() => {
+    const bad = [];
+    const expect = (condition, message) => { if (!condition) bad.push(message); };
+    const near = (actual, expected) => Math.abs(actual - expected) < 1e-9;
+
+    expect(SHERINE_SET_TEXT['紅獅'][2].includes('+10%'), '紅獅 5/5 說明不是最終傷害 +10%');
+    expect(SHERINE_SET_TEXT['白鳥'][2].includes('+10%'), '白鳥 5/5 說明不是全來源傷害 +10%');
+    expect(SHERINE_SET_TEXT['麗人'][2].includes('攻擊速度+20%'), '麗人 5/5 說明不是近戰攻速 +20%');
+    expect(SHERINE_SET_TEXT['狂怒'][2].includes('+3%') && SHERINE_SET_TEXT['狂怒'][2].includes('±15%'), '狂怒 5/5 說明數值錯誤');
+
+    state.running = false;
+    state.ticks = 100;
+    player.dead = false;
+    player.hp = 500;
+    player.mhp = 1000;
+    delete player.curHp;
+    player.mastery = null;
+    player.buffs = {};
+    player.allies = [];
+
+    const fragileTarget = { curHp: 100, ac: 50, weakExpose: 0, st: newMobStatus() };
+    fragileTarget.st.fragile = 10;
+    expect(near(fragileMult(fragileTarget), 1.1), `白鳥脆弱倍率應為 1.1，實際 ${fragileMult(fragileTarget)}`);
+
+    const comboWpn = DB.items.relic_wing_chaos_blades;
+    const comboOwner = { _setShadow3: true, eq: { wpn: { id: 'relic_wing_chaos_blades' } } };
+    const expectedCombo = Math.min(100, (Number(comboWpn.comboRate) || 0) + 20);
+    expect(comboTriggerChance(comboOwner, comboWpn, comboOwner.eq.wpn) === expectedCombo, '暗影 3/5 未在雙刀基礎雙擊率上增加 20%');
+    comboOwner._setShadow3 = false;
+    expect(comboTriggerChance(comboOwner, comboWpn, comboOwner.eq.wpn) === (Number(comboWpn.comboRate) || 0), '未裝暗影 3/5 時雙擊率被額外增加');
+
+    const moonOwner = { _setMoon5: true };
+    const moonTarget = { curHp: 100, ac: 50, weakExpose: 0, st: newMobStatus() };
+    expect(moonShatterOnDamage(moonOwner, moonTarget, 12) === true, '月光 5/5 首次傷害未套用碎裂');
+    expect(moonTarget.st.shatter === 30, `碎裂應持續 30 ticks，實際 ${moonTarget.st.shatter}`);
+    expect(mobEffAC(moonTarget, player) === 40, `碎裂應使 AC 50 降至 40，實際 ${mobEffAC(moonTarget, player)}`);
+    moonTarget.st.shatter = 1;
+    expect(moonShatterOnDamage(moonOwner, moonTarget, 5) === false && moonTarget.st.shatter === 30, '重複傷害應刷新碎裂但不得疊層');
+
+    const tauntMob = { uid: 'iron-taunt-test', curHp: 100, hp: 100 };
+    state.ticks = 200;
+    expect(ironGuardTaunt(tauntMob, player) === true, '鐵衛 5/5 首次嘲諷套用失敗');
+    expect(ironGuardTauntTarget(tauntMob) === player, '鐵衛嘲諷未優先鎖定施加者');
+    expect(ironGuardTauntWeakensAttack(tauntMob) === true, '鐵衛嘲諷未啟用一般攻擊 -10%');
+    state.ticks = 229;
+    expect(ironGuardTauntTarget(tauntMob) === player, '鐵衛嘲諷未維持完整 3 秒');
+    state.ticks = 230;
+    expect(ironGuardTauntTarget(tauntMob) === null && ironGuardTauntWeakensAttack(tauntMob) === false, '鐵衛嘲諷 3 秒後未失效');
+
+    player._setFury5 = true;
+    player._setRedLion5 = true;
+    expect(near(furyRageRatio(), 0.15), `狂怒玩家滿層應為 0.15，實際 ${furyRageRatio()}`);
+    expect(near(rlFuryMult(), 1.265), `紅獅與狂怒玩家乘數應為 1.265，實際 ${rlFuryMult()}`);
+    const furyAlly = { curHp: 500, mhp: 1000, _setFury5: true, _setRedLion5: true, buffs: {} };
+    expect(near(allyFuryRageRatio(furyAlly), 0.15), `狂怒傭兵滿層應為 0.15，實際 ${allyFuryRageRatio(furyAlly)}`);
+    expect(near(allyRlFuryMult(furyAlly), 1.265), `紅獅與狂怒傭兵乘數應為 1.265，實際 ${allyRlFuryMult(furyAlly)}`);
+    expect(near(allyBuffDmgReduceMult(furyAlly), 0.85), `狂怒傭兵滿層受傷乘數應為 0.85，實際 ${allyBuffDmgReduceMult(furyAlly)}`);
+
+    return bad;
+  });
+
+  assert.deepEqual(setRework, [], setRework.join('\n'));
   assert.deepEqual(pageErrors, [], `頁面執行錯誤：\n${pageErrors.join('\n')}`);
-  console.log('✅ Shines backports：死靈之書與五件遺物戰鬥契約通過');
+  console.log('✅ Shines backports：死靈之書、五件遺物與七套席琳套裝戰鬥契約通過');
 } finally {
   await browser.close();
   await new Promise(resolve => server.close(resolve));

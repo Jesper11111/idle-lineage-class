@@ -170,7 +170,7 @@ function cubeTick() {
             if (t && t.curHp > 0 && !t._dead) {
                 let d = Math.max(1, Math.floor(summonElementDamage(c.dice, c.ele || 'none', t, player.d.magicDmg || 0, magicDamageCoef(player.d, magicAttrDefense(t, c.ele || 'none'), sk.tier)) * illuLvMult(player) * wpnEnFinalMult(player.eq && player.eq.wpn)));   // 🔮 立方：SP／屬性防禦公式 ×(1+專屬法術階級/10)
                 d = illusionMagicDmg(d, true);   // 🔮 幻覺2/5回MP＋5/5二次傷害（比照立方dmg）
-                t.curHp -= d; t.justHit = (c.ele && c.ele !== 'none') ? c.ele : 'magic'; mobWake(t);
+                t.curHp -= d; if (typeof moonShatterOnDamage === 'function') moonShatterOnDamage(player, t, d); t.justHit = (c.ele && c.ele !== 'none') ? c.ele : 'magic'; mobWake(t);
                 logCombat(`<span class="font-bold" style="color:#fb923c;text-shadow:0 0 6px #ea580c;">【${sk.n}】</span>對 <span class="${getMobColor(t.lv)}">${t.n}</span> 造成 ${d} 點傷害。`, 'dot', 'player');   // 🟢 立方傷害＝DoT(綠)、玩家來源
                 if (t.curHp <= 0) { let i = mapState.mobs.findIndex(x => x && x.uid === t.uid); if (i !== -1) killMob(i); }
                 renderMobs();
@@ -181,7 +181,7 @@ function cubeTick() {
         if (!live.length) return;
         if (c.kind === 'dmg') {
             let txt = [];
-            live.forEach((m, i) => { let d = Math.max(1, Math.floor(summonElementDamage(c.dice, c.ele || 'none', m, player.d.magicDmg || 0, magicDamageCoef(player.d, magicAttrDefense(m, c.ele || 'none'), sk.tier)) * illuLvMult(player) * wpnEnFinalMult(player.eq && player.eq.wpn))); d = illusionMagicDmg(d, true, i === 0); m.curHp -= d; m.justHit = (c.ele && c.ele !== 'none') ? c.ele : 'magic'; mobWake(m); txt.push(d); });   // 🔮 全體立方每次發動只回一次MP，5件仍逐目標生效
+            live.forEach((m, i) => { let d = Math.max(1, Math.floor(summonElementDamage(c.dice, c.ele || 'none', m, player.d.magicDmg || 0, magicDamageCoef(player.d, magicAttrDefense(m, c.ele || 'none'), sk.tier)) * illuLvMult(player) * wpnEnFinalMult(player.eq && player.eq.wpn))); d = illusionMagicDmg(d, true, i === 0); m.curHp -= d; if (typeof moonShatterOnDamage === 'function') moonShatterOnDamage(player, m, d); m.justHit = (c.ele && c.ele !== 'none') ? c.ele : 'magic'; mobWake(m); txt.push(d); });   // 🔮 全體立方每次發動只回一次MP，5件仍逐目標生效
             logCombat(`<span class="font-bold" style="color:#fb923c;text-shadow:0 0 6px #ea580c;">【${sk.n}】</span>對全體造成 ${txt.join('、')} 點傷害。`, 'dot', 'player');   // 🟢 立方傷害＝持續傷害(DoT)→綠色 dot 分類＋玩家來源(src 顯式'player'蓋過 cubeTick 所處的 _combatSrc='summon')
             live.forEach(m => { if (m.curHp <= 0) { let i = mapState.mobs.findIndex(x => x && x.uid === m.uid); if (i !== -1) killMob(i); } });
             renderMobs();
@@ -461,7 +461,7 @@ function castSkillInner(skId) {
         let raw = (base.dmg || 1) + mobHardSkin(_t);                     // 無視硬皮：加回硬皮扣減量
         let dmg = Math.max(1, Math.floor(raw * mult));   // MP 佔比倍率（必定爆擊已含於 base.dmg）
         if (_t.race === '血盟') dmg *= 2;                                 // 對血盟敵人 x2
-        _t.curHp -= dmg; _t.justHit = getWpnEle(player.eq.wpn, wpn); mobWake(_t);
+        _t.curHp -= dmg; _t.justHit = getWpnEle(player.eq.wpn, wpn); if (typeof moonShatterOnDamage === 'function') moonShatterOnDamage(player, _t, dmg); mobWake(_t);
         if (typeof reflectWallOnDamage === 'function') reflectWallOnDamage(_t, dmg, (wpn && (wpn.isBow || wpn.ranged)) ? 'ranged' : 'melee', null);   // 🌑 v3.4.14 血壁空間：會心一擊＝技能直擊反射（玩家傭兵一致）
         if (player.dead) return true;   // ☠️ v3.5.87 反射可反殺施放者：死後中止收尾（不結算擊殺經驗/掉落·比照 js/04 playerAttack）
         logCombat(`<span class="font-bold" style="color:#f0abfc;text-shadow:0 0 8px #d946ef;">【會心一擊】</span>對 <span class="${getMobColor(_t.lv)}">${_t.n}</span> 造成 ${dmg} 點致命傷害！`, 'player-crit');
@@ -611,7 +611,7 @@ function castSkillInner(skId) {
                 if (_hb > 0) { dmg += _hb; applied = true; if (_slRand && !_slHitSet.includes(ht)) _slHitSet.push(ht); }   // 🐉 弱點曝光：每一擊命中都吃 +10/層
                 dmg = Math.floor(dmg * weakExposeDmgMult(ht));   // 🏅 鎖刃精通：每層弱點曝光最終傷害+10%
                 if (sk.hpCost && player._setDragonblood5) dmg = Math.max(1, Math.floor(dmg * 1.2));   // 🐉 龍血5/5：HP消耗技傷害+20%（屠宰者＝物理HP消耗技·與魔法路徑 js/07 一致）
-                ht.curHp -= dmg; ht.justHit = getWpnEle(player.eq.wpn, wpn); total += dmg; mobWake(ht);
+                ht.curHp -= dmg; ht.justHit = getWpnEle(player.eq.wpn, wpn); if (typeof moonShatterOnDamage === 'function') moonShatterOnDamage(player, ht, dmg); total += dmg; mobWake(ht);
                 if (typeof reflectWallOnDamage === 'function') reflectWallOnDamage(ht, dmg, 'melee', null);   // 🌑 v3.4.14 血壁空間：屠宰者每擊＝近距離技能直擊反射（玩家傭兵一致）
                 if (player.dead) { if (consume && applied) t.weakExpose = 0; if (_slRand) _slHitSet.forEach(m => { if (!hasMastery('k_weakness')) m.weakExpose = 0; }); return true; }   // ☠️ v3.5.87 反射反殺：死後中止後續斬擊與擊殺結算　⚡ 早退前補做弱點曝光消耗
                 log.push(dmg + (res.heavy ? '(重)' : '') + (_slRand ? `→${ht.n}` : ''));
@@ -632,7 +632,7 @@ function castSkillInner(skId) {
             player.mp -= cost; player.cds.atkSk = getAutoCastInterval(player, false, player.cds.atkSk);
             if (sk.hpCost) player.hp = Math.max(1, player.hp - effHpCost(sk));
             let base = 50 + Math.max(0, (player.lv || 1) - 30);
-            targets.forEach(m => { if (player.dead) return; if (!m || m.curHp <= 0 || m._dead) return; let dmg = Math.max(1, Math.floor(base * fragileMult(m))); m.curHp -= dmg; m.justHit = 'magic'; m._spellHurt = true; mobWake(m); if (typeof reflectWallOnDamage === 'function') reflectWallOnDamage(m, dmg, 'magic', null); });   // 🎬 v3.0.14 _spellHurt：法術傷害→hurt 動畫(含頭目)；🌑 v3.3.33 血壁空間魔法反射
+            targets.forEach(m => { if (player.dead) return; if (!m || m.curHp <= 0 || m._dead) return; let dmg = Math.max(1, Math.floor(base * fragileMult(m))); m.curHp -= dmg; if (typeof moonShatterOnDamage === 'function') moonShatterOnDamage(player, m, dmg); m.justHit = 'magic'; m._spellHurt = true; mobWake(m); if (typeof reflectWallOnDamage === 'function') reflectWallOnDamage(m, dmg, 'magic', null); });   // 🎬 v3.0.14 _spellHurt：法術傷害→hurt 動畫(含頭目)；🌑 v3.3.33 血壁空間魔法反射
             if (player.dead) return true;   // ☠️ v3.5.87 反射反殺：死後不結算擊殺
             logCombat(`施放 <span style="font-weight:700;color:#7dd3fc">${sk.n}</span>，咆哮震懾全場，對所有敵人造成約 ${base} 點固定傷害。`, 'skill');
             targets.forEach(m => { if (m && m.curHp <= 0 && !m._dead) { let i = mapState.mobs.findIndex(x => x && x.uid === m.uid); if (i !== -1) killMob(i); } });
@@ -695,7 +695,7 @@ function castSkillInner(skId) {
                 dmg = Math.max(1, Math.floor(magicBaseDamage(dmg, player.d, 0, true) * magicDamageCoef(player.d, magicAttrDefense(t, 'none'), sk.tier) * ((player.eq.wpn && (DB.items[player.eq.wpn.id] || {}).spellIgnoreMr) ? 1 : mrMult(Math.max(0, effMr)))));   // 🏺 v3.6.44 血祭儀式短刀：無視魔抗
             }
             dmg = Math.max(1, Math.floor(dmg * fragileMult(t) * illuLvMult(player) * wpnEnFinalMult(player.eq.wpn) * elementCounterMult(sk.weaponDmg ? getWpnEle(player.eq.wpn, player.eq.wpn ? DB.items[player.eq.wpn.id] : null) : 'none', t.e)));   // 🔮 幻術士等級加成 ×(1+等級/50)；🔧 武器強化 +11~+20 最終倍率；⚔️ 屬性剋制(僅武器傷害技吃武器屬性)
-            t.curHp -= dmg; t.justHit = sk.weaponDmg ? getWpnEle(player.eq.wpn, player.eq.wpn ? DB.items[player.eq.wpn.id] : null) : 'magic'; if (!sk.weaponDmg) t._spellHurt = true; mobWake(t);   // 🎬 v3.0.14 純魔法技→hurt(含頭目)
+            t.curHp -= dmg; if (typeof moonShatterOnDamage === 'function') moonShatterOnDamage(player, t, dmg); t.justHit = sk.weaponDmg ? getWpnEle(player.eq.wpn, player.eq.wpn ? DB.items[player.eq.wpn.id] : null) : 'magic'; if (!sk.weaponDmg) t._spellHurt = true; mobWake(t);   // 🎬 v3.0.14 純魔法技→hurt(含頭目)
             if (typeof reflectWallOnDamage === 'function' && t._reflectWall) { let _rwW = player.eq.wpn && DB.items[player.eq.wpn.id]; reflectWallOnDamage(t, dmg, sk.weaponDmg ? ((_rwW && (_rwW.isBow || _rwW.ranged)) ? 'ranged' : 'melee') : 'magic', null); }   // 🌑 v3.3.33 血壁空間：玩家技能傷害反射
             if (player.dead) return true;   // ☠️ v3.5.87 反射反殺：死後中止收尾（不結算擊殺）
             if (sk.mpDmgPct && t.st && t.st.mrhalf > 0) t.st.mrhalf = 0;   // 🔧 心靈破壞（魔法）：受一次魔法傷害後解除魔抗減半（與其他魔法路徑一致）
@@ -749,6 +749,7 @@ function castSkillInner(skId) {
                 // 遠距離物理技能命中滿血被動怪物，賦予 3 秒延遲（整段只觸發一次）
                 if(!delayDone && t.curHp === t.hp && t.beh === '被動' && res.ranged) { t._delayTicks = 30; delayDone = true; }
                 t.curHp -= res.dmg;
+                if (typeof moonShatterOnDamage === 'function') moonShatterOnDamage(player, t, res.dmg);
                 t.justHit = getWpnEle(player.eq.wpn, wpn);
                 if (typeof reflectWallOnDamage === 'function') reflectWallOnDamage(t, res.dmg, res.ranged ? 'ranged' : 'melee', null);   // 🌑 v3.4.14 血壁空間：物理技能每擊反射（衝擊之暈/三重矢·玩家傭兵一致）
                 if (player.dead) { player._skillHitBonus = 0; return true; }   // ☠️ v3.5.87 反射反殺：死後中止後續箭/擊與收尾（⚠️ 記得歸零范德命中加成）
@@ -835,7 +836,7 @@ function castSkillInner(skId) {
                     d = Math.max(1, Math.floor(d * elementCounterMult(sk.ele, t.e)));   // ⚔️ 屬性剋制：魔法剋怪 ×1.4、被剋 ×0.6（無屬性→×1）
                     if (idx === 0) d = Math.max(1, Math.floor(d * consumeWetMult(t, sk.ele)));   // 🏺 海洋水晶球：潮濕目標受風屬性魔法傷害 ×2 並解除（只在首段骰結算·避免多段各×2）
                     d = Math.floor(d * mageDmgMult);   // 保留流程相容性；目前不再追加舊法師專屬倍率
-                    d = Math.max(1, Math.floor(d * rlFuryMult()));   // 🔮 紅獅5/5(×1.2)＋😡狂怒5/5：攻擊技能最終傷害
+                    d = Math.max(1, Math.floor(d * rlFuryMult()));   // 🔮 紅獅5/5(×1.1)＋😡狂怒5/5：攻擊技能最終傷害
                     // 🔧 魔導精通同屬性傷害×2 已移除(2026-07 用戶要求)
                     d = Math.max(1, Math.floor(d * fragileMult(t) * illuLvMult(player)));    // 🔮 脆弱（白鳥5）；🔮 幻術士等級加成 ×(1+等級/50)（幻想/混亂）
                     d = Math.max(1, Math.floor(d * wpnEnFinalMult(player.eq.wpn)));   // 🔧 武器強化 +11~+20：最終傷害倍率（也影響玩家施放的傷害魔法；物理技能走 getPhysicalDmg 已含、不在此處）
@@ -848,6 +849,7 @@ function castSkillInner(skId) {
                     totalDmg = illusionMagicDmg(totalDmg, false);   // 🔮 攻擊技能下拉選單可選的一般傷害法術，不觸發幻覺2/5與5/5
                     totalDmg = Math.max(1, Math.floor(totalDmg * equipSkillDmgMult(sk, skId) * (_autoCastNow ? (_equipWpnField('autoCastDmgMult') || 1) : 1)));   // 🏺 遺物 特定技能傷害倍率（冰錐/光箭/究極光裂術 ×1.5）；🐍 枯竭魔杖：auto 施放傷害 ×autoCastDmgMult(1.5)
                     t.curHp -= totalDmg;
+                    if (typeof moonShatterOnDamage === 'function') moonShatterOnDamage(player, t, totalDmg);
                     _burstDmg += totalDmg;   // 🔧 魔爆累計
                     t.justHit = (sk.ele && sk.ele !== 'none') ? sk.ele : 'magic';
                     t._spellHurt = true;   // 🎬 v3.0.14 法術傷害→hurt 動畫(含頭目·renderMobs 頭目閘放行)
@@ -912,7 +914,7 @@ function castSkillInner(skId) {
                             logCombat(`<span class="font-bold" style="color:#f0abfc;text-shadow:0 0 6px #c026d3;">【魔爆】</span>魔力過載爆炸，波及全場！`, 'player-special');
                             _live.forEach((m, i) => {
                                 let _d = Math.max(1, Math.floor(_ex * fragileMult(m)));
-                                _d = illusionMagicDmg(_d, true, i === 0); m.curHp -= _d; if (typeof terrorVisageOnDamage === 'function') terrorVisageOnDamage(m, _d, 'magic'); m.justHit = 'magic'; mobWake(m);   // 🔮 魔爆每次發動只回一次MP，5件仍逐目標生效；🌅 巨大骷髏視為魔法
+                                _d = illusionMagicDmg(_d, true, i === 0); m.curHp -= _d; if (typeof moonShatterOnDamage === 'function') moonShatterOnDamage(player, m, _d); if (typeof terrorVisageOnDamage === 'function') terrorVisageOnDamage(m, _d, 'magic'); m.justHit = 'magic'; mobWake(m);   // 🔮 魔爆每次發動只回一次MP，5件仍逐目標生效；🌅 巨大骷髏視為魔法
                                 logCombat(`魔爆波及 <span class="${getMobColor(m.lv)}">${m.n}</span>，造成 ${_d} 點無屬性傷害。`, 'player');
                                 if (m.curHp <= 0) { let ri = mapState.mobs.findIndex(x => x && x.uid === m.uid); if (ri !== -1) killMob(ri); }
                             });

@@ -1088,6 +1088,7 @@ function enemyAttackPet(mob, p) {
     if (mob._grace) dmg = Math.floor(dmg * 1.5);
     dmg -= (d.dr || 0) + petRandomPhysicalDr(p, d) + petHardenDr(p);
     dmg = Math.floor(Math.max(1, dmg) * (typeof teamDmgReduceMult === 'function' ? teamDmgReduceMult(true) : 1) * petMasteryTakenMult() * petArmorDmgReduceMult(p));   // 👑 夥伴精通：受到傷害 −50%；🏺 寵物專用盔甲：受傷 ×(1−petDmgReduce)
+    if (typeof ironGuardTauntWeakensAttack === 'function' && ironGuardTauntWeakensAttack(mob)) dmg = Math.floor(dmg * 0.9);   // 🔮 鐵衛 5/5：受嘲諷目標的一般攻擊傷害 -10%
     dmg = Math.max(1, Math.floor(dmg * riftDamageMult()));
     if (petDevotionGuardOn(p)) dmg = 0;   // 🏺 v3.6.44 珍愛夥伴的執念：復活後 8 秒受到傷害 −100%
     p.hp -= dmg;

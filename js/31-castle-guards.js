@@ -294,6 +294,7 @@ function enemyAttackGuard(mob, s) {
     if (mob._grace) dmg = Math.floor(dmg * 1.5);
     dmg = Math.max(1, Math.floor(dmg * (typeof riftDamageMult === 'function' ? riftDamageMult() : 1)) - d.dr);
     dmg = Math.max(1, Math.floor(dmg * (typeof teamDmgReduceMult === 'function' ? teamDmgReduceMult(true) : 1)));
+    if (typeof ironGuardTauntWeakensAttack === 'function' && ironGuardTauntWeakensAttack(mob)) dmg = Math.floor(dmg * 0.9);   // 🔮 鐵衛 5/5：受嘲諷目標的一般攻擊傷害 -10%
     s.hp -= dmg;
     if (typeof _petAnimAct === 'function') _petAnimAct(s, 'hurt');
     logCombat(`<span class="${getMobColor(mob.lv)}">${mob.n}</span> 攻擊 <span class="text-cyan-300">${s.form}</span>，造成 ${dmg} 點傷害。`, 'enemy-attack', 'enemy');
