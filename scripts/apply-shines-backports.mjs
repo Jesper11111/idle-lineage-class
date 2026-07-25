@@ -77,8 +77,76 @@ function patchSkyGodAvatar() {
   already++;
 }
 
+// ── 回移 2：城堡護衛命中補強（Shines v3.8.18）─────────────────
+// 只移植命中公式；不帶入同檔後續的鐵衛套裝或任何傭兵規則。
+function patchCastleGuardAccuracy() {
+  const file = 'js/31-castle-guards.js';
+  let source = readFileSync(file, 'utf8');
+  const finalContracts = [
+    '        hitBonus: 30,',
+    '        hitBonus: 35,',
+    '        hitBonus: 33,',
+    'function _guardHit(lv, hitBonus) {',
+    '    hitBonus = Math.max(0, Number(hitBonus) || 0);',
+    '        if (d) return Math.max(1, Math.round(lv + hitBonus + (d.hit || 0) / hm));',
+    '    return Math.max(1, Math.round(lv * 2.2 + hitBonus));',
+    '        hit: _guardHit(lv, spec.hitBonus),',
+  ];
+  if (finalContracts.every(contract => source.includes(contract))) {
+    already++;
+    return;
+  }
+  if (source.includes('hitBonus:') || source.includes('function _guardHit(lv, hitBonus)')) {
+    throw new Error(`[${file}] 城堡護衛命中補強只套用了一部分，拒絕猜測合併。`);
+  }
+
+  const nl = source.includes('\r\n') ? '\r\n' : '\n';
+  const specPatches = [
+    ['        hpPerLv: 16, dpsRatio: 0.50, aspdSec: 1.0,', '        hitBonus: 30,'],
+    ['        hpPerLv: 10, dpsRatio: 0.70, aspdSec: 0.5,', '        hitBonus: 35,'],
+    ['        hpPerLv: 13, dpsRatio: 0.60, aspdSec: 0.7,', '        hitBonus: 33,'],
+  ];
+  for (const [anchor, addition] of specPatches) {
+    source = replaceOnce(file, source, anchor, anchor + nl + addition, '護衛部隊命中加成');
+  }
+  source = replaceOnce(
+    file,
+    source,
+    'function _guardHit(lv) {   // 命中沿用裸杜賓命中（剔除夥伴精通命中加成），維持與寵物同水準',
+    'function _guardHit(lv, hitBonus) {   // 護衛命中＝自身等級＋部隊補強＋裸杜賓命中（剔除夥伴精通）' +
+      nl + '    hitBonus = Math.max(0, Number(hitBonus) || 0);',
+    '護衛命中函式'
+  );
+  source = replaceOnce(
+    file,
+    source,
+    '        if (d) return Math.max(1, Math.round((d.hit || 0) / hm));',
+    '        if (d) return Math.max(1, Math.round(lv + hitBonus + (d.hit || 0) / hm));',
+    '護衛命中寵物基準公式'
+  );
+  source = replaceOnce(
+    file,
+    source,
+    '    return Math.max(1, Math.round(lv * 1.2));',
+    '    return Math.max(1, Math.round(lv * 2.2 + hitBonus));',
+    '護衛命中退路公式'
+  );
+  source = replaceOnce(
+    file,
+    source,
+    '        hit: _guardHit(lv),',
+    '        hit: _guardHit(lv, spec.hitBonus),',
+    '護衛數值命中呼叫'
+  );
+  if (!finalContracts.every(contract => source.includes(contract))) {
+    throw new Error(`[${file}] 城堡護衛命中補強完成後契約仍不完整。`);
+  }
+  writePatched(file, source, '城堡護衛命中補強');
+}
+
 const PATCHES = [
   patchSkyGodAvatar,
+  patchCastleGuardAccuracy,
 ];
 
 try {
