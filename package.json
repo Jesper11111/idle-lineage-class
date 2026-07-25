@@ -1,0 +1,24 @@
+{
+  "name": "idle-lineage-class-pp771007-v3.4.12",
+  "version": "1.0.0",
+  "description": "天堂（Lineage）主題的網頁放置遊戲。打怪、撿裝、強化、攻城，掛著就會自己變強。",
+  "main": "afk-analytics.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jesper11111/idle-lineage-class.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Jesper11111/idle-lineage-class/issues"
+  },
+  "homepage": "https://github.com/Jesper11111/idle-lineage-class#readme",
+  "devDependencies": {
+    "playwright": "^1.62.0"
+  }
+}

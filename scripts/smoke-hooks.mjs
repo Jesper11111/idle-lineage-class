@@ -52,7 +52,7 @@ const logs = [];
 // afk-battlehud 桌機也會 init(只是 CSS 讓它不顯示)→ 放 need 即可;它取代的是核心手機版 #mobile-vitals。
 // afk-touchtip 只在觸控裝置 init(桌機有 hover,本來就不該掛)→ 桌機那輪永遠等不到,必須放手機輪。
 const needMobileOnly = ['[AFK-touchtip]'];
-const need = ['[AFK]', '[AFK-merc-policy]', '[AFK-banner]', '[AFK-mobile-banner]', '[AFK-lzcache]', '[AFK-synccompress]', '[AFK-mobile]', '[AFK-backnav]', '[AFK-battlehud]', '[AFK-mapbar]', '[AFK-nozoom]', '[AFK-trackinfo]', '[AFK-relicguard]', '[AFK-enhtarget]', '[AFK-retrial]', '[AFK-battlebuffs]', '[AFK-slotinfo]', '[AFK-dex]', '[AFK-wiki]', '[AFK-syncinfo]', '[AFK-statpts]', '[AFK-statlist]', '[AFK-pwa]', '[AFK-storage]', '[AFK-history]', '[AFK-quotawarn]', '[AFK-notice]', '[AFK-reissueid]', '[AFK-diag]', '[AFK-mobname]', '[AFK-training]', '[AFK-powersave]', '[AFK-itemsearch]', '[AFK-eqlist]', '[AFK-npclist]', '[AFK-skin]', '[AFK-junkmgr]', '[AFK-mercguard]'];
+const need = ['[AFK]', '[AFK-merc-policy]', '[AFK-banner]', '[AFK-mobile-banner]', '[AFK-lzcache]', '[AFK-synccompress]', '[AFK-mobile]', '[AFK-backnav]', '[AFK-battlehud]', '[AFK-mapbar]', '[AFK-nozoom]', '[AFK-trackinfo]', '[AFK-relicguard]', '[AFK-enhtarget]', '[AFK-retrial]', '[AFK-battlebuffs]', '[AFK-slotinfo]', '[AFK-dex]', '[AFK-wiki]', '[AFK-syncinfo]', '[AFK-statpts]', '[AFK-statlist]', '[AFK-pwa]', '[AFK-storage]', '[AFK-history]', '[AFK-quotawarn]', '[AFK-notice]', '[AFK-reissueid]', '[AFK-diag]', '[AFK-mobname]', '[AFK-training]', '[AFK-powersave]', '[AFK-powersave-inventory]', '[AFK-itemsearch]', '[AFK-eqlist]', '[AFK-npclist]', '[AFK-skin]', '[AFK-junkmgr]', '[AFK-mercguard]'];
 const seen = (list) => list.every((n) => logs.some((l) => l.includes(n) && l.includes('hooks OK')));
 
 // ⚠ 不用 waitUntil:'networkidle':作者新版(.49 起)加了背景音樂 assets/bgm/*.mp3，<audio> 媒體串流會讓網路
@@ -224,6 +224,21 @@ const offlineEngineProblems = await page.evaluate(() => {
   return bad;
 });
 
+// 背包省電層必須是最外層 renderTabs wrapper；只有印出 hooks OK 還不夠。
+// 若上游新增外掛在它之後重新包裝 renderTabs，戰鬥 tick 仍會先付出昂貴的背包掃描成本。
+const powersaveInventoryProblems = await page.evaluate(() => {
+  const bad = [];
+  const p = window.__afkPsInventory;
+  if (!p || p.version !== '1.1.0-local') bad.push('背包增量更新模組未啟動');
+  if (p && (p.countPatchMs !== 250 || p.fullRebuildMs !== 1000)) {
+    bad.push(`背包增量更新節流參數異常（${p.countPatchMs}/${p.fullRebuildMs}ms）`);
+  }
+  if (typeof window.renderTabs !== 'function' || window.renderTabs.__afkPsInventory !== true) {
+    bad.push('背包增量更新不是最外層 renderTabs wrapper');
+  }
+  return bad;
+});
+
 // 舊傭兵獎勵／招募／受僱政策＋回城免費刷新 + PP v3.8.5 戰鬥模組並存契約。
 const mercPolicyProblems = await page.evaluate(() => {
   const bad = [];
@@ -318,6 +333,12 @@ if (offlineEngineProblems.length) {
 if (offlineToggleOffProblems.length) {
   console.error('冒煙測試失敗:關閉離線掛機後，新版離線引擎回退接管:');
   for (const p of offlineToggleOffProblems) console.error('  ' + p);
+  process.exit(1);
+}
+
+if (powersaveInventoryProblems.length) {
+  console.error('冒煙測試失敗:背包增量更新載入／包裝順序不正確:');
+  for (const p of powersaveInventoryProblems) console.error('  ' + p);
   process.exit(1);
 }
 
