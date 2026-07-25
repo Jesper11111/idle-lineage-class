@@ -10,6 +10,7 @@
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { patchNecromancyBook } from './backports/necro-book.mjs';
+import { patchRelicBatch25 } from './backports/relic-batch-25.mjs';
 
 const CHECK = process.argv.includes('--check');
 let changed = 0;
@@ -369,6 +370,12 @@ const PATCHES = [
   patchCastleGuardAccuracy,
   patchOldSaveLoadOptimization,
   () => patchNecromancyBook({
+    replaceOnce,
+    writePatched,
+    patchNamedFunction,
+    markAlready: () => { already++; },
+  }),
+  () => patchRelicBatch25({
     replaceOnce,
     writePatched,
     patchNamedFunction,

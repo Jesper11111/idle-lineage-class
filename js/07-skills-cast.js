@@ -287,6 +287,7 @@ function manualCast(skId) {
     // 🔧 魔力奪取已改為轉換技能（type:'convert', drain:true），改由 castSkill 的 convert 分支處理：
     //    命中判定改用 abnormalMagicHit（與迷魅術一致，吃魔法命中/怪MR/等級差），吸取量＝怪物等級/2
     } else if(sk.mEff === 'charm') {
+        if (player.d && player.d.charmOnHit) { logSys('裝備斯克巴女皇的魅惑之吻時，迷魅術會改為命中後自動施展。'); return; }
         if(!t) { logSys('沒有目標。'); return; }
         if(t.boss) { logSys('無法魅惑 BOSS。'); return; }
         player.mp -= cost; cost = 0;
@@ -316,6 +317,45 @@ function manualCast(skId) {
 }
 
 function rollDice(count, sides) { let s = 0; for(let i = 0; i < count; i++) s += roll(1, sides); return s; }
+function relicCharmOnHit(t) {
+    let p = player;
+    if (!p || !p.d || !p.d.charmOnHit || p.charmed || !t || t.curHp <= 0 || t._dead || t.boss || t.noCharm) return false;
+    if (!((hasMastery('m_summon') && (t.lv || 1) < p.lv) || abnormalMagicHit(t, 12))) return false;
+    let idx = mapState.mobs.findIndex(m => m && m.uid === t.uid);
+    if (idx === -1) return false;
+    p.buffs = p.buffs || {};
+    p.buffs.sk_charm = 3600;
+    p.charmed = {
+        skId:'sk_charm', n:'迷魅：' + t.n, dmgDice: t.dmg && t.dmg[1] ? t.dmg : [1,4],
+        interval: Math.max(10, Math.floor((t.atkSpd || 2) * 10)), ele:'none', kind:'melee',
+        hitBonus:(t.hit||0), proc:null, cd:10, endTick: state.ticks + 36000
+    };
+    logCombat(`<span class="font-bold" style="color:#f0abfc;text-shadow:0 0 6px #d946ef;">【魅惑術】</span><span class="${getMobColor(t.lv)}">${t.n}</span> 成為你的僕人。`, 'magic');
+    if (typeof playSpellFx === 'function') { try { playSpellFx('迷魅術', t); } catch (e) {} }
+    mapState.mobs[idx] = null;
+    renderMobs();
+    return true;
+}
+function relicFlywingDouble(t) {
+    if (!t || t.curHp <= 0 || t._dead || (player.mp || 0) < 12) return false;
+    player.mp -= 12;
+    let prior = player._forceComboRate;
+    player._forceComboRate = 100;
+    let swings = 0;
+    try {
+        for (let i = 0; i < 2; i++) {
+            if (!t || t._dead || t.curHp <= 0 || player.dead) break;
+            playerAttack();
+            swings++;
+        }
+    } finally {
+        if (prior == null) delete player._forceComboRate; else player._forceComboRate = prior;
+    }
+    if (swings > 0) logCombat('<span class="font-bold" style="color:#c4b5fd;text-shadow:0 0 6px #8b5cf6;">【飛翼雙連】</span>殘翼交錯，連續斬出兩次一般攻擊！', 'player-special');
+    player.cds.atkSk = getAutoCastInterval(player, false, player.cds.atkSk);
+    calcStats(); updateUI();
+    return swings > 0;
+}
 // 🔮 castSkill 包裝：魔力精通時，依本次施法實際消耗的 MP，回饋傭兵 10%（以 MP 差額判定，涵蓋所有施法分支；轉換類增MP不觸發）
 let _reqWpnWarnAt = -9999;   // 🛡️ v2.6.69 審計#15：reqWpn 不符提示節流（每 60 秒最多一次）
 let _costItemWarnAt = -9999;   // 🌀 costItem 施法材料不足提示節流（每 60 秒最多一次）
@@ -408,6 +448,8 @@ function castSkillInner(skId) {
     if (sk.darkCrit) {
         let _t = getTarget(); if (!_t || _t.curHp <= 0) return false;
         if (player.cds.atkSk > 0) return false;   // ⚔️ v3.1.77 稽核中#11：比照其他攻擊技吃攻擊技冷卻（原分支位於冷卻閘之前＝唯一不受冷卻的 atk 技）
+        let _darkCritWpn = player.eq.wpn ? DB.items[player.eq.wpn.id] : null;
+        if (_darkCritWpn && _darkCritWpn.darkCritMorph === 'flywing_double') return relicFlywingDouble(_t);
         if ((player.mp || 0) <= 0) return false;   // 🩸 v3.1.77 稽核中#11：MP=0 時倍率為 0 → 燒半血只打 1 點且不觸發 castLock 可反覆自殘·必須有 MP 才施放
         if (player.hp <= player.mhp * 0.5) return false;   // HP 不足以負擔代價
         let mult = (player.mmp > 0 ? player.mp / player.mmp : 0) * 10;   // 100%MP→×10、50%→×5

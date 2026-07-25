@@ -278,6 +278,7 @@ function playerAttack() {
             target._trauma = { s: Math.min(_tp.maxStacks || 2, _cur + 1), dmg: _tp.dmg || 5, until: state.ticks + (_tp.dur || 6) * 10 };
             logCombat(`<span class="font-bold" style="color:#f87171;">【${wpn.n}】</span><span class="${getMobColor(target.lv)}">${target.n}</span> 陷入創傷！（受物理傷害 +${(_tp.dmg || 5) * target._trauma.s}·${_tp.dur || 6} 秒·${target._trauma.s} 層）`, 'player-special');
         }
+        if (target.curHp > 0 && typeof relicCharmOnHit === 'function' && relicCharmOnHit(target)) return;
         if (target.curHp <= 0) killMob(mapState.targetIdx);
         else renderMobs();
     } else {
@@ -289,7 +290,7 @@ function playerAttack() {
     rapidfireProc(arrowData);
 
     // 雙擊（鋼爪/雙刀）：發動攻擊即依武器 comboRate% 機率追加一次完整一般攻擊（不論主攻擊命中與否）
-    if (wpn && wpn.eff === 'combo' && Math.random() * 100 < (wpn.comboRate || 0)) procCombo(target, true);
+    if (wpn && Math.random() * 100 < (player._forceComboRate != null ? player._forceComboRate : (wpn.eff === 'combo' ? (wpn.comboRate || 0) : 0))) procCombo(target, true);
     // ⚔️ v3.5.100 副手已改為獨立計時器（js/03 tick 內的 pOffDmgTick），不再掛在主手攻擊後面。
     //   舊寫法有個副作用：主攻擊被迴避時上面第 20 行就 return，副手那一拍會整個消失——分離後不再受主手成敗影響。
     if (result.hit && hasMastery('k_royal_magic') && Math.random() < 0.1) royalMagicFreeCast();   // 👑 魔法精通：一般攻擊命中 10% 免MP額外施放選定攻擊技
@@ -1083,13 +1084,21 @@ function _statusInflictHeal(beforeKeys) {
         }
     }
 }
-function enemyPhysicalAttack(mob, idx, stunChance = 0, atkDmg = null, atkDb = null) {
+function enemyPhysicalAttack(mob, idx, stunChance = 0, atkDmg = null, atkDb = null, isBasicAttack = false) {
     if (bindMobBlockedVs(mob, player)) return;   // 🕸️ v3.7.75 束縛：被束縛的怪物搆不到裝備遠距離武器的玩家（連擊技也走這裡→一併落空）
     let _snap = _playerStatusSnap(); _statusHealDepth++;
-    try { return _enemyPhysicalAttackInner(mob, idx, stunChance, atkDmg, atkDb); }
+    try { return _enemyPhysicalAttackInner(mob, idx, stunChance, atkDmg, atkDb, isBasicAttack); }
     finally { _statusHealDepth--; if (_statusHealDepth === 0) _statusInflictHeal(_snap); }
 }
-function _enemyPhysicalAttackInner(mob, idx, stunChance = 0, atkDmg = null, atkDb = null) {   // atkDmg/atkDb：連擊技覆寫骰子/加值（如鐮刀劍氣斬 9×3D70+99，與一般攻擊不同）
+function corrosiveJellySkinOnBasicHit(mob, defender) {
+    if (!mob || !defender || !defender.d || !defender.d.corrosiveJellySkin) return false;
+    let before = Math.max(0, Number(mob._corrosiveJellyAtkDown) || 0);
+    let after = Math.min(15, before + 3);
+    if (after <= before) return false;
+    mob._corrosiveJellyAtkDown = after;
+    return true;
+}
+function _enemyPhysicalAttackInner(mob, idx, stunChance = 0, atkDmg = null, atkDb = null, isBasicAttack = false) {   // atkDmg/atkDb：連擊技覆寫骰子/加值（如鐮刀劍氣斬 9×3D70+99，與一般攻擊不同）
     if(player.dead) return;
     if(inAbsBarrier()) return;   // 🛡️ 絕對屏障：不受任何傷害（敵方一般/連擊攻擊完全無效，亦不觸發反擊）
     if(!mob || mob.curHp <= 0) return;   // 🔧 攻擊者已死亡（如連擊中被反擊/居合反殺）：死怪不得繼續攻擊
@@ -1158,7 +1167,7 @@ function _enemyPhysicalAttackInner(mob, idx, stunChance = 0, atkDmg = null, atkD
         let diceCount = (atkDmg ? atkDmg[0] : mob.dmg[0]) || 1;
         let diceSides = (atkDmg ? atkDmg[1] : mob.dmg[1]) || 1;
         let baseWeaponDmg = heavy ? (diceCount * diceSides) : roll(diceCount, diceSides);
-        let dmgBonus = (atkDb != null ? atkDb : (mob.db || 0)) - (st.weaken > 0 ? 4 : 0) - (st.broken > 0 ? 2 : 0) - ((st.confuse > 0 || st.panic > 0) ? 10 : 0) - (st.doom > 0 ? 20 : 0) + ((mob._siegeDmgEnd > state.ticks) ? 4 : 0);   // 暴風神射：額外傷害+4；🔮 混亂/恐慌：一般攻擊傷害-10；🐉 驚悚死神：一般攻擊傷害-20
+        let dmgBonus = (atkDb != null ? atkDb : (mob.db || 0)) - (isBasicAttack ? Math.max(0, Number(mob._corrosiveJellyAtkDown) || 0) : 0) - (st.weaken > 0 ? 4 : 0) - (st.broken > 0 ? 2 : 0) - ((st.confuse > 0 || st.panic > 0) ? 10 : 0) - (st.doom > 0 ? 20 : 0) + ((mob._siegeDmgEnd > state.ticks) ? 4 : 0);   // 暴風神射：額外傷害+4；🔮 混亂/恐慌：一般攻擊傷害-10；🐉 驚悚死神：一般攻擊傷害-20
         let totalDmg = baseWeaponDmg + dmgBonus;
         if (mob._sherine) totalDmg = Math.floor(totalDmg * (mob._sherineMad ? 3 : 2));   // 🔮 席琳的世界：怪物一般攻擊傷害 ×2（瘋狂×3）
         if (mob._grace) totalDmg = Math.floor(totalDmg * 1.5);   // 🔮 席琳的恩賜：再 ×1.5
@@ -1261,6 +1270,7 @@ function _enemyPhysicalAttackInner(mob, idx, stunChance = 0, atkDmg = null, atkD
             return;
         }
         player.hp -= totalDmg;
+        if (isBasicAttack && totalDmg > 0) corrosiveJellySkinOnBasicHit(mob, player);
         // 🏺 v3.7.20 長老的黑曜水晶球（crushTornado）：被重擊時 → 對敵方全體施放龍捲風（procFreeMagicSkill target:'all' 自動掃全場·免費施放）
         if (heavy && player.hp > 0 && player.eq && player.eq.shield) {
             let _ctd = DB.items[player.eq.shield.id];
@@ -1400,7 +1410,7 @@ function aggroVictimPool(allies) {
 // 🤝 Phase 3：怪物一般攻擊的「受害者選擇」——玩家與每名非倒地傭兵各依 mercAggroWeight 加權隨機（不分玩家/傭兵）；魔法/狀態攻擊不在此（仍只打玩家）。
 function enemyAttackChooseVictim(mob, idx) {
     try { if (typeof playMobAttack === 'function') playMobAttack(mob); } catch (e) {}   // 🔊 怪物一般攻擊音（每次普攻動作一次·不分打玩家/傭兵·查無對應則靜音）
-    if (player.dead) { enemyPhysicalAttack(mob, idx); return; }   // 玩家已死：照舊（enemyPhysicalAttack 內部即 return）
+    if (player.dead) { enemyPhysicalAttack(mob, idx, 0, null, null, true); return; }   // 玩家已死：照舊（enemyPhysicalAttack 內部即 return）
     let allies = (player.allies || []).filter(a => a && !a._downed && (a.curHp || 0) > 0);
     // 🐾 v3.2.17 出戰寵物加入受害者池：受擊權重 物理4／特殊3／魔法2（PET_KIND_WEIGHT）
     let pets = (typeof petsOutList === 'function') ? petsOutList().filter(p => p && !p._downed && (p.hp || 0) > 0) : [];
@@ -1409,7 +1419,7 @@ function enemyAttackChooseVictim(mob, idx) {
     if (typeof necroSkeletonList === 'function') sums = sums.concat(necroSkeletonList().filter(s => s && !s._downed && (s.hp || 0) > 0));   // 🏺 Shines v3.8.12 骷髏復生實體
     if (typeof mercSummonList === 'function') sums = sums.concat(mercSummonList());   // 🧱 v3.4.50 傭兵召喚物（無 sprite·有血量）也入受害者池·受擊走同一 enemyAttackSummon
     let guards = (typeof guardAliveList === 'function') ? guardAliveList() : [];   // 🏰 城堡護衛加入受害者池（可被打→30 秒自動復活）
-    if (!allies.length && !pets.length && !sums.length && !guards.length && !_hasAggroHide(player)) { enemyPhysicalAttack(mob, idx); return; }   // 無傭兵無寵物無召喚無護衛且玩家未裝孵育巢：照舊打玩家（快速路徑）
+    if (!allies.length && !pets.length && !sums.length && !guards.length && !_hasAggroHide(player)) { enemyPhysicalAttack(mob, idx, 0, null, null, true); return; }   // 無傭兵無寵物無召喚無護衛且玩家未裝孵育巢：照舊打玩家（快速路徑）
     let pool = aggroVictimPool(allies);   // 🏺 聖甲蟲的孵育巢：未裝備者優先被指定攻擊（寵物無裝備·不參與孵育巢過濾）
     allies = pool.allies;
     let _petW = petAggroWeight, _sumW = summonAggroWeight, _gW = (typeof guardAggroWeight === 'function') ? guardAggroWeight : (() => 4);   // 🐾🧙🏰 v3.2.82 模組共用權重
@@ -1420,20 +1430,20 @@ function enemyAttackChooseVictim(mob, idx) {
     for (let p of pets) total += _tw(mob, p, _petW(p));
     for (let s of sums) total += _tw(mob, s, _sumW(s));
     for (let g of guards) total += _tw(mob, g, _gW(g));
-    if (total <= 0) { enemyPhysicalAttack(mob, idx); return; }
+    if (total <= 0) { enemyPhysicalAttack(mob, idx, 0, null, null, true); return; }
     let r = Math.random() * total;
     r -= pw;
-    if (r < 0) { enemyPhysicalAttack(mob, idx); return; }   // 抽中玩家
-    for (let a of allies) { r -= _tw(mob, a, mercAggroWeight(a)); if (r < 0) { enemyAttackAlly(mob, a); return; } }
-    for (let p of pets) { r -= _tw(mob, p, _petW(p)); if (r < 0) { if (typeof enemyAttackPet === 'function') enemyAttackPet(mob, p); else enemyPhysicalAttack(mob, idx); return; } }
-    for (let s of sums) { r -= _tw(mob, s, _sumW(s)); if (r < 0) { if (typeof enemyAttackSummon === 'function') enemyAttackSummon(mob, s); else enemyPhysicalAttack(mob, idx); return; } }
-    for (let g of guards) { r -= _tw(mob, g, _gW(g)); if (r < 0) { if (typeof enemyAttackGuard === 'function') enemyAttackGuard(mob, g); else enemyPhysicalAttack(mob, idx); return; } }
+    if (r < 0) { enemyPhysicalAttack(mob, idx, 0, null, null, true); return; }   // 抽中玩家
+    for (let a of allies) { r -= _tw(mob, a, mercAggroWeight(a)); if (r < 0) { enemyAttackAlly(mob, a, true); return; } }
+    for (let p of pets) { r -= _tw(mob, p, _petW(p)); if (r < 0) { if (typeof enemyAttackPet === 'function') enemyAttackPet(mob, p); else enemyPhysicalAttack(mob, idx, 0, null, null, true); return; } }
+    for (let s of sums) { r -= _tw(mob, s, _sumW(s)); if (r < 0) { if (typeof enemyAttackSummon === 'function') enemyAttackSummon(mob, s); else enemyPhysicalAttack(mob, idx, 0, null, null, true); return; } }
+    for (let g of guards) { r -= _tw(mob, g, _gW(g)); if (r < 0) { if (typeof enemyAttackGuard === 'function') enemyAttackGuard(mob, g); else enemyPhysicalAttack(mob, idx, 0, null, null, true); return; } }
     // Floating-point fallback must respect aggro hiding and keep pets in the candidate pool.
-    if (pool.playerIn) enemyPhysicalAttack(mob, idx);
-    else if (allies.length) enemyAttackAlly(mob, allies[allies.length - 1]);
+    if (pool.playerIn) enemyPhysicalAttack(mob, idx, 0, null, null, true);
+    else if (allies.length) enemyAttackAlly(mob, allies[allies.length - 1], true);
     else if (pets.length && typeof enemyAttackPet === 'function') enemyAttackPet(mob, pets[pets.length - 1]);
     else if (sums.length && typeof enemyAttackSummon === 'function') enemyAttackSummon(mob, sums[sums.length - 1]);
-    else enemyPhysicalAttack(mob, idx);
+    else enemyPhysicalAttack(mob, idx, 0, null, null, true);
 }
 
 // 🤝 Phase 3：怪物對「協力傭兵」的一般物理攻擊（enemyPhysicalAttack 的精簡版：保留 ER迴避/命中/元素抗/固定+隨機減免/鐵衛3/盾牌格檔/裂痕加成；移除玩家專屬的反擊·反射·看破·狀態附加·死亡）。
@@ -1470,15 +1480,15 @@ function teamIlluAura(forWho, forMinion) {
     if (ed === 0 && eh === 0 && md === 0 && mel === 0) return null;
     return { ed: ed, eh: eh, md: md, mel: mel, royalEd: royalEd };
 }
-function enemyAttackAlly(mob, ally) {
+function enemyAttackAlly(mob, ally, isBasicAttack = false) {
     if (!ally) return;
     if (bindMobBlockedVs(mob, ally)) return;   // 🕸️ v3.7.75 束縛：被束縛的怪物搆不到裝備遠距離武器的傭兵
     if (!ally.statuses) ally.statuses = {};
     let _snap = _allyStatusSnap(ally);   // 🏺 statusHealHp（傭兵）：物理受擊也可能上異常（onHitPoison 等），與魔法路徑同型包裝
-    try { return _enemyAttackAllyInner(mob, ally); }
+    try { return _enemyAttackAllyInner(mob, ally, isBasicAttack); }
     finally { _allyStatusInflictHeal(ally, _snap); }
 }
-function _enemyAttackAllyInner(mob, ally) {
+function _enemyAttackAllyInner(mob, ally, isBasicAttack = false) {
     if (!mob || mob.curHp <= 0 || !ally || ally._downed || (ally.curHp || 0) <= 0) return;
     if (typeof _mobAnimTrigger === 'function') _mobAnimTrigger(mob, 'attack');   // 🎞️ 序列幀：攻擊動作（打傭兵也播·鏡像 enemyPhysicalAttack·鎖定播放中會被忽略）
     mob._facePartyKey = 'A:' + String(ally._slot || '');   // 🧭 可序列化隊員鍵；不保存傭兵物件參照
@@ -1527,7 +1537,7 @@ function _enemyAttackAllyInner(mob, ally) {
         return;
     }
     let dc = (mob.dmg && mob.dmg[0]) || 1, ds = (mob.dmg && mob.dmg[1]) || 1;
-    let totalDmg = (heavy ? dc * ds : roll(dc, ds)) + ((mob.db || 0) - (st.weaken > 0 ? 4 : 0) - (st.broken > 0 ? 2 : 0) - ((st.confuse > 0 || st.panic > 0) ? 10 : 0) - (st.doom > 0 ? 20 : 0) + ((mob._siegeDmgEnd > state.ticks) ? 4 : 0));
+    let totalDmg = (heavy ? dc * ds : roll(dc, ds)) + ((mob.db || 0) - (isBasicAttack ? Math.max(0, Number(mob._corrosiveJellyAtkDown) || 0) : 0) - (st.weaken > 0 ? 4 : 0) - (st.broken > 0 ? 2 : 0) - ((st.confuse > 0 || st.panic > 0) ? 10 : 0) - (st.doom > 0 ? 20 : 0) + ((mob._siegeDmgEnd > state.ticks) ? 4 : 0));
     if (mob._sherine) totalDmg = Math.floor(totalDmg * (mob._sherineMad ? 3 : 2));
     if (mob._grace) totalDmg = Math.floor(totalDmg * 1.5);
     let resFactor = 1.0;
@@ -1566,6 +1576,7 @@ function _enemyAttackAllyInner(mob, ally) {
         return;
     }
     ally.curHp -= totalDmg;
+    if (isBasicAttack && totalDmg > 0) corrosiveJellySkinOnBasicHit(mob, ally);
     // 🏺 v3.7.52 高崙的生命印記（傭兵）：受到重擊時 MR-100·3 秒（js/02 通用消費·js/03 到期重算）
     if (heavy && ally.eq && ally.eq.helm) {
         let _gmda = DB.items[ally.eq.helm.id];
