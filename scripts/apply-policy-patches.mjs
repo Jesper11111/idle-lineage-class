@@ -1,7 +1,7 @@
 /**
  * apply-policy-patches.mjs — PP 核心同步後，固定使用者指定的舊傭兵獎勵政策。
  *
- * 只修改 js/05 的獎勵公式；招募費用、手動重招募、回村結算與受僱限制由
+ * 只修改 js/05 的獎勵公式；招募費用、回城免費自動刷新與受僱限制由
  * afk-merc-policy.js 覆寫。其他戰鬥函式仍來自 PP 最新版。
  */
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -71,6 +71,21 @@ const missing = mustHave.filter(x => !src.includes(x));
 if (missing.length) throw new Error(`[${FILE}] 舊傭兵政策驗證失敗：${missing.join(' | ')}`);
 
 const indexHtml = readFileSync('index.html', 'utf8');
+const mercPolicySrc = readFileSync('afk-merc-policy.js', 'utf8');
+const worldMapSrc = readFileSync('js/11-world-map.js', 'utf8');
+const mercPolicyMustHave = [
+  "version: '3.7.61-hybrid-town-refresh-on-pp-v3.8.5'",
+  'function mercRehireCostPolicy() { return 0; }',
+  'paidManualRehire: false',
+  'townRefresh: true'
+];
+const mercPolicyMissing = mercPolicyMustHave.filter(x => !mercPolicySrc.includes(x));
+if (mercPolicyMissing.length || /\bwindow\.refreshAllAllies\s*=/.test(mercPolicySrc)) {
+  throw new Error(`[afk-merc-policy.js] 回城免費自動刷新政策驗證失敗：${mercPolicyMissing.join(' | ') || '不可覆寫 PP 核心 refreshAllAllies'}`);
+}
+if (!worldMapSrc.includes("if (typeof refreshAllAllies === 'function') refreshAllAllies();")) {
+  throw new Error('[js/11-world-map.js] 找不到進安全區的 refreshAllAllies 單一掛點，拒絕繼續。');
+}
 const mobileBannerAt = indexHtml.indexOf('<script src="afk-mobile-banner.js');
 const ownerAt = indexHtml.indexOf('<script src="afk-offline-owner.js');
 const mercAt = indexHtml.indexOf('<script src="afk-merc-policy.js');
@@ -81,7 +96,7 @@ if (mobileBannerAt < 0 || ownerAt < 0 || mercAt < 0 || offlineAt < 0 ||
 }
 
 if (CHECK) {
-  console.log('✅ --check：舊傭兵獎勵政策與載入順序正確。');
+  console.log('✅ --check：舊傭兵獎勵、回城免費刷新政策與載入順序正確。');
 } else {
   writeFileSync(FILE, src);
   console.log(`✅ 舊傭兵獎勵政策已固定（${FILE}）；其他戰鬥核心維持 PP 最新版。`);

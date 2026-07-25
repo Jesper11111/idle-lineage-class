@@ -89,7 +89,7 @@ try {
   const t = new Date(Date.now() + 8 * 3600 * 1000);
   ck.syncedAt = t.toISOString().slice(0, 16).replace('T', ' ') + ' (UTC+8)';
   ck.note = '由 sync-upstream.mjs 自動更新；新版基準=pp771007/main，PP 內含原版 ' + upVer +
-    '。同步後固定套用 Jesper 舊傭兵政策、離線安全政策、妖精傭兵不受目前屬性限制與手機隱藏來源橫幅。';
+    '。同步後固定套用 Jesper 舊傭兵獎勵政策、回城免費更新快照、離線安全政策、妖精傭兵不受目前屬性限制與全裝置隱藏來源橫幅。';
   writeFileSync('upstream-checkpoint.json', JSON.stringify(ck, null, 2) + '\n');
   console.log('[sync] upstream-checkpoint.json → pp771007 ' + upSha.slice(0, 10) + '（原版 ' + upVer + '）');
 } catch (e) {

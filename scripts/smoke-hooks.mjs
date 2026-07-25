@@ -67,7 +67,7 @@ const _deadline = Date.now() + 20000;   // 最多等 20 秒讓全部外掛初始
 while (Date.now() < _deadline && !seen(need)) await page.waitForTimeout(200);
 await page.waitForTimeout(300);   // 緩衝:讓 hooks 之後的索引(dex/wiki)與 AFK_EXTRA 建好,再做地圖翻譯檢查
 
-// 桌機仍保留 PP 的來源橫幅，並由 afk-banner 正常讓位。
+// 全裝置都必須隱藏 PP 的來源橫幅；桌機也不可留下高度或讓位空白。
 await page.evaluate(() => {
   const d = document.createElement('div');
   d.id = '_orig_pbar';
@@ -81,11 +81,10 @@ const desktopBannerProblems = await page.evaluate(() => {
   const bad = [];
   const bar = document.getElementById('_orig_pbar');
   const barH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--orig-bar-h')) || 0;
-  if (!bar || getComputedStyle(bar).display === 'none' || bar.getBoundingClientRect().height <= 0) {
-    bad.push('桌機橫幅被誤隱藏');
-  } else if (barH < bar.getBoundingClientRect().bottom) {
-    bad.push(`桌機 --orig-bar-h(${barH}px) 沒讓開橫幅`);
+  if (!bar || getComputedStyle(bar).display !== 'none' || bar.getBoundingClientRect().height !== 0) {
+    bad.push('桌機上的非官方轉載橫幅仍可見');
   }
+  if (barH !== 0) bad.push(`桌機隱藏橫幅後 --orig-bar-h 仍是 ${barH}px`);
   return bad;
 });
 await page.evaluate(() => {
@@ -114,7 +113,7 @@ await opage.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'domcontent
 await opage.evaluate(() => localStorage.setItem('afk_toggle_mobile', '0'));
 await opage.reload({ waitUntil: 'domcontentloaded' });
 await opage.waitForTimeout(3000);
-// 模擬線上的非官方橫幅：手機政策必須把它隱藏，即使「手機版面」外掛已關閉。
+// 模擬線上的非官方橫幅：全裝置政策必須把它隱藏，即使「手機版面」外掛已關閉。
 await opage.evaluate(() => {
   if (document.getElementById('_orig_pbar')) return;
   const d = document.createElement('div');
@@ -128,7 +127,7 @@ await opage.evaluate(() => {
 await opage.waitForTimeout(1500);
 const toggleOffProblems = await opage.evaluate(() => {
   const bad = [];
-  // 手機隱藏政策不可依賴可停用的 afk-mobile；關掉手機版面後仍須維持。
+  // 橫幅隱藏政策不可依賴可停用的 afk-mobile；關掉手機版面後仍須維持。
   const bar = document.getElementById('_orig_pbar');
   const barH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--orig-bar-h')) || 0;
   if (!bar || getComputedStyle(bar).display !== 'none' || bar.getBoundingClientRect().height !== 0) {
@@ -194,21 +193,22 @@ const offlineEngineProblems = await page.evaluate(() => {
   return bad;
 });
 
-// 舊傭兵政策 + PP v3.8.5 戰鬥模組並存契約。
+// 舊傭兵獎勵／招募／受僱政策＋回城免費刷新 + PP v3.8.5 戰鬥模組並存契約。
 const mercPolicyProblems = await page.evaluate(() => {
   const bad = [];
   const p = window.__legacyMercPolicy;
-  if (!p || p.version !== '3.7.61-policy-on-pp-v3.8.5') bad.push('舊傭兵政策層未啟動');
+  if (!p || p.version !== '3.7.61-hybrid-town-refresh-on-pp-v3.8.5') bad.push('傭兵混合政策層未啟動');
   if (typeof GAME_VERSION === 'undefined' || GAME_VERSION !== 'v3.8.5') bad.push(`核心版本不是 v3.8.5（${typeof GAME_VERSION === 'undefined' ? 'missing' : GAME_VERSION}）`);
   if (typeof partyRewardMult !== 'function' || partyRewardMult() !== 1) bad.push('金幣／掉落仍按隊伍人數加乘');
   if (typeof partyDropRate !== 'function' || Math.abs(partyDropRate(0.125) - 0.125) > 1e-12) bad.push('掉落率仍按隊伍人數加乘');
-  if (typeof mercRehireCost !== 'function' || mercRehireCost(1) !== 1000 || mercRehireCost(50) !== 100000 || mercRehireCost(100) !== 500000) bad.push('手動重新招募費率曲線不符舊規則');
+  if (typeof mercRehireCost !== 'function' || mercRehireCost(1) !== 0 || mercRehireCost(50) !== 0 || mercRehireCost(100) !== 0) bad.push('傭兵快照更新仍會收費');
   if (typeof currentRoleMercenaryEmployer !== 'function' || currentRoleMercenaryEmployer() !== null) bad.push('反向受僱登記仍生效');
   if (typeof mercenaryRoleBattleBlocked !== 'function' || mercenaryRoleBattleBlocked('dragon_valley', false) !== false) bad.push('受僱角色仍被鎖在安全區');
-  if (typeof refreshAllAllies !== 'function' || refreshAllAllies !== mercBankAlliesAtTown) {
-    // 實作是薄 wrapper，不要求函式參照相同；用政策旗標確認「不刷新」。
-    if (!p || p.townRefresh !== false) bad.push('回村仍會免費刷新傭兵戰力');
+  if (typeof refreshAllAllies !== 'function' || refreshAllAllies === mercBankAlliesAtTown ||
+      !p || p.townRefresh !== true || p.paidManualRehire !== false) {
+    bad.push('回城未使用免費自動刷新戰力快照政策');
   }
+  if (typeof renderAllyNPC !== 'function' || String(renderAllyNPC).includes('onclick="rehireAlly')) bad.push('傭兵面板仍顯示手動重新招募按鈕');
   if (!p || p.elementRestriction !== false || typeof allySkillElementOk !== 'function' ||
       allySkillElementOk({ elfEle: 'water', grantedSkills: [] }, 'sk_elf_dancefire') !== true) {
     bad.push('妖精傭兵仍受目前屬性限制');
@@ -252,13 +252,13 @@ if (!allOK) {
 }
 
 if (desktopBannerProblems.length) {
-  console.error('冒煙測試失敗:手機橫幅政策誤傷桌機:');
+  console.error('冒煙測試失敗:桌機橫幅未完全隱藏:');
   for (const p of desktopBannerProblems) console.error('  ' + p);
   process.exit(1);
 }
 
 if (toggleOffProblems.length) {
-  console.error('冒煙測試失敗:手機橫幅隱藏或關閉「手機版面」後的逃生門/入口不正確:');
+  console.error('冒煙測試失敗:全裝置橫幅隱藏或關閉「手機版面」後的逃生門/入口不正確:');
   for (const p of toggleOffProblems) console.error('  ' + p);
   console.error('  判準:不可停用的基礎設施不能依賴可被關掉的外掛提供的 CSS 變數 / body class。');
   process.exit(1);
@@ -283,9 +283,9 @@ if (offlineToggleOffProblems.length) {
 }
 
 if (mercPolicyProblems.length) {
-  console.error('冒煙測試失敗:舊傭兵政策與 v3.8.5 戰鬥模組並存契約不成立:');
+  console.error('冒煙測試失敗:傭兵混合政策與 v3.8.5 戰鬥模組並存契約不成立:');
   for (const p of mercPolicyProblems) console.error('  ' + p);
   process.exit(1);
 }
 
-console.log('冒煙測試通過:外掛 hooks、舊離線互斥、舊傭兵政策與 v3.8.5 戰鬥模組均成立，且地圖名已完整翻譯。');
+console.log('冒煙測試通過:外掛 hooks、舊離線互斥、傭兵混合政策與 v3.8.5 戰鬥模組均成立，且地圖名已完整翻譯。');

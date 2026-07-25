@@ -1,24 +1,16 @@
 /*
- * afk-mobile-banner.js — 手機隱藏原作「非官方轉載版本」橫幅。
+ * afk-mobile-banner.js — 全裝置隱藏原作「非官方轉載版本」橫幅。
  *
  * 只處理顯示政策：
- *   - 手機／觸控裝置隱藏 #_orig_pbar，釋放垂直空間。
- *   - 桌機保留 PP 原本的橫幅與 afk-banner 讓位行為。
- *   - 不依賴可停用的 afk-mobile，避免玩家關閉手機版面後橫幅又出現。
+ *   - 手機、平板與桌機一律隱藏 #_orig_pbar，不保留垂直空間。
+ *   - 保留原 DOM 作為 PP 的已建立標記，避免核心反覆插入同一橫幅。
+ *   - 不依賴任何可停用的版面外掛。
  */
 (function () {
   'use strict';
 
-  var ROOT_CLASS = 'afk-hide-origin-banner-mobile';
+  var ROOT_CLASS = 'afk-hide-origin-banner';
   var STYLE_ID = 'afk-mobile-banner-policy';
-
-  function isMobile() {
-    try {
-      return (typeof matchMedia === 'function' && matchMedia('(pointer:coarse)').matches) ||
-        /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '') ||
-        (window.innerWidth || 9999) <= 820;
-    } catch (e) { return false; }
-  }
 
   function ensureStyle() {
     if (document.getElementById(STYLE_ID)) return;
@@ -29,9 +21,8 @@
   }
 
   function sync() {
-    var hide = isMobile();
-    document.documentElement.classList.toggle(ROOT_CLASS, hide);
-    // 橫幅顯示狀態改變後立刻重算讓位高度；手機應回到 0px，桌機恢復實際高度。
+    document.documentElement.classList.add(ROOT_CLASS);
+    // 橫幅隱藏後立刻重算讓位高度；所有裝置都應回到 0px。
     try {
       if (window.AFK_BANNER && typeof window.AFK_BANNER.remeasure === 'function') {
         window.AFK_BANNER.remeasure();
@@ -42,13 +33,11 @@
   ensureStyle();
   sync();
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', sync);
-  window.addEventListener('resize', sync);
-  window.addEventListener('orientationchange', sync);
 
   window.AFK_MOBILE_BANNER = Object.freeze({
-    version: '1.0.0',
-    hiddenOnThisDevice: isMobile,
+    version: '2.0.0',
+    hiddenOnThisDevice: function () { return true; },
     sync: sync
   });
-  console.log('[AFK-mobile-banner] hooks OK — 手機隱藏非官方轉載橫幅，桌機保留。');
+  console.log('[AFK-mobile-banner] hooks OK — 全裝置隱藏非官方轉載橫幅。');
 })();

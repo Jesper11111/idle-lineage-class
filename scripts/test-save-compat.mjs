@@ -3,7 +3,7 @@
  *   - 簽章有效、JSON 可解析
  *   - 可載入並重新存成有效 SIG1
  *   - 角色身分、等級、背包、裝備、傭兵數不因載入／存檔往返而改變
- *   - 舊傭兵政策生效、妖精傭兵不限目前屬性，且 PP v3.8.5 戰鬥模組仍存在
+ *   - 舊傭兵獎勵／招募／受僱政策與回城免費刷新生效、妖精傭兵不限目前屬性，且 PP v3.8.5 戰鬥模組仍存在
  *
  * 可由 CLI 傳入多個絕對路徑，也可 import 後呼叫 testSaveFiles(paths)。
  */
@@ -102,6 +102,20 @@ export async function testSaveFiles(paths) {
         if (!_lzSet('lineage_idle_save_' + slot, _saveWrap(JSON.stringify(clean)))) return { error: '測試存檔寫入失敗' };
         currentSlot = slot;
         loadGame();
+        const originalTownRefresh = window.refreshAllAllies;
+        let townRefreshCalls = 0;
+        const goldBeforeTownRefresh = player.gold || 0;
+        window.refreshAllAllies = function () {
+          townRefreshCalls++;
+          return originalTownRefresh.apply(this, arguments);
+        };
+        try {
+          setMapSelectors(getHomeTown());
+          changeMap(true);
+        } finally {
+          window.refreshAllAllies = originalTownRefresh;
+        }
+        const townRefreshGoldDelta = (player.gold || 0) - goldBeforeTownRefresh;
         saveGame();
 
         const stored = _saveUnwrap(_lzGet('lineage_idle_save_' + slot));
@@ -130,6 +144,11 @@ export async function testSaveFiles(paths) {
           safeAreaBlocked: mercenaryRoleBattleBlocked('dragon_valley', false),
           rehireCosts: [mercRehireCost(1), mercRehireCost(50), mercRehireCost(100)],
           legacyPolicy: window.__legacyMercPolicy && window.__legacyMercPolicy.version,
+          townRefresh: window.__legacyMercPolicy && window.__legacyMercPolicy.townRefresh,
+          paidManualRehire: window.__legacyMercPolicy && window.__legacyMercPolicy.paidManualRehire,
+          townRefreshUsesCore: typeof refreshAllAllies === 'function' && refreshAllAllies !== mercBankAlliesAtTown,
+          townRefreshCalls,
+          townRefreshGoldDelta,
           mercElementRestriction: window.__legacyMercPolicy && window.__legacyMercPolicy.elementRestriction,
           mismatchedElfSkillAllowed: typeof allySkillElementOk === 'function' &&
             allySkillElementOk({ elfEle: 'water', grantedSkills: [] }, 'sk_elf_dancefire'),
@@ -153,8 +172,18 @@ export async function testSaveFiles(paths) {
         if (got.rewardMult !== 1 || Math.abs(got.dropRate - 0.125) > 1e-12) failures.push('金幣／掉落仍有隊伍人數加乘');
         if (got.employmentKeys.length) failures.push('仍寫入反向受僱登記');
         if (got.safeAreaBlocked !== false) failures.push('受僱角色仍被鎖在安全區');
-        if (JSON.stringify(got.rehireCosts) !== JSON.stringify([1000, 100000, 500000])) failures.push('重新招募費率錯誤');
-        if (got.legacyPolicy !== '3.7.61-policy-on-pp-v3.8.5') failures.push('舊傭兵政策層未啟動');
+        if (JSON.stringify(got.rehireCosts) !== JSON.stringify([0, 0, 0])) failures.push('免費更新快照費率錯誤');
+        if (got.legacyPolicy !== '3.7.61-hybrid-town-refresh-on-pp-v3.8.5') failures.push('傭兵混合政策層未啟動');
+        if (got.townRefresh !== true || got.paidManualRehire !== false || !got.townRefreshUsesCore) {
+          failures.push('回城免費自動刷新快照政策未完整啟動：' + JSON.stringify({
+            townRefresh: got.townRefresh,
+            paidManualRehire: got.paidManualRehire,
+            townRefreshUsesCore: got.townRefreshUsesCore
+          }));
+        }
+        if (got.townRefreshCalls !== 1 || got.townRefreshGoldDelta !== 0) {
+          failures.push(`回城刷新呼叫／費用錯誤（calls=${got.townRefreshCalls}, goldDelta=${got.townRefreshGoldDelta}）`);
+        }
         if (got.mercElementRestriction !== false || got.mismatchedElfSkillAllowed !== true) failures.push('妖精傭兵仍受目前屬性限制');
         if (got.offlineVersion !== '2.2.0-jesper-safety' || got.offlineOwner !== true) failures.push('舊離線安全引擎未獨占啟動');
         if (got.siegeStages !== 5 || !got.threatEnabled || got.mercThreatKey !== 'A:test' || !got.bindMercSupported || !got.guardLoaded) {
