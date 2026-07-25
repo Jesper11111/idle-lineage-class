@@ -1,2 +1,4 @@
 # rsync 路徑相對於 assets/；這些是核准自 Shines 回移、PP 尚未提供的必要資產。
 /icons/armors/天空之神的化身.png
+/icons/armors/死靈之書.png
+/anim/骷髏召喚物/

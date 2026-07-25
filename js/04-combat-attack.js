@@ -1406,6 +1406,7 @@ function enemyAttackChooseVictim(mob, idx) {
     let pets = (typeof petsOutList === 'function') ? petsOutList().filter(p => p && !p._downed && (p.hp || 0) > 0) : [];
     // 🧙 v3.2.21 召喚物 v2 加入受害者池（可被打死→全滅自動重施）：權重見下方 _sumW——v3.2.81 召喚術/造屍術＝4·屬性精靈＝3（原全 3）
     let sums = (typeof summonV2List === 'function') ? summonV2List().filter(s => s && !s._downed && (s.hp || 0) > 0) : [];
+    if (typeof necroSkeletonList === 'function') sums = sums.concat(necroSkeletonList().filter(s => s && !s._downed && (s.hp || 0) > 0));   // 🏺 Shines v3.8.12 骷髏復生實體
     if (typeof mercSummonList === 'function') sums = sums.concat(mercSummonList());   // 🧱 v3.4.50 傭兵召喚物（無 sprite·有血量）也入受害者池·受擊走同一 enemyAttackSummon
     let guards = (typeof guardAliveList === 'function') ? guardAliveList() : [];   // 🏰 城堡護衛加入受害者池（可被打→30 秒自動復活）
     if (!allies.length && !pets.length && !sums.length && !guards.length && !_hasAggroHide(player)) { enemyPhysicalAttack(mob, idx); return; }   // 無傭兵無寵物無召喚無護衛且玩家未裝孵育巢：照舊打玩家（快速路徑）
@@ -1431,6 +1432,7 @@ function enemyAttackChooseVictim(mob, idx) {
     if (pool.playerIn) enemyPhysicalAttack(mob, idx);
     else if (allies.length) enemyAttackAlly(mob, allies[allies.length - 1]);
     else if (pets.length && typeof enemyAttackPet === 'function') enemyAttackPet(mob, pets[pets.length - 1]);
+    else if (sums.length && typeof enemyAttackSummon === 'function') enemyAttackSummon(mob, sums[sums.length - 1]);
     else enemyPhysicalAttack(mob, idx);
 }
 
@@ -1681,6 +1683,7 @@ function killPlayer() {
     player.buffs.sk_charm = 0;
     // 🧙 v3.2.39 稽核修：v2 召喚實體也在死亡當下消散（summonV2Tick 被 !player.dead 閘住，死亡期間跑不到它的清理分支）
     if (player.summonsV2 && player.summonsV2.length) { player.summonsV2 = []; try { if (typeof renderSummonPanel === 'function') renderSummonPanel(true); } catch (e) {} }
+    if (typeof necroDismissAll === 'function') necroDismissAll();   // 🏺 Shines v3.8.12 骷髏復生實體同樣於玩家死亡時全數消散
     // 協力傭兵：死亡當下不解散；改由「祈求復活回城」時解散（原地復活/返生術/復活卷軸則保留）
     player.skills.forEach(s => { if(DB.skills[s] && DB.skills[s].summon) player.buffs[s] = 0; });
     // 🔮 幻術士：死亡時一併清除立方/幻象/化身/疼痛等增益（與召喚一致；復活後由自動施放重新展開）
@@ -1806,6 +1809,7 @@ function castMobMagic(mob, sk) {
     let allies = (player.allies || []).filter(a => a && !a._downed && (a.curHp || 0) > 0);
     let pets = (typeof petsOutList === 'function') ? petsOutList().filter(p => p && !p._downed && (p.hp || 0) > 0) : [];
     let sums = (typeof summonV2List === 'function') ? summonV2List().filter(s => s && !s._downed && (s.hp || 0) > 0) : [];   // 🧙 v3.2.82 召喚物加入魔法受害者池
+    if (typeof necroSkeletonList === 'function') sums = sums.concat(necroSkeletonList().filter(s => s && !s._downed && (s.hp || 0) > 0));   // 🏺 Shines v3.8.12 骷髏復生實體
     if (typeof mercSummonList === 'function') sums = sums.concat(mercSummonList());   // 🧱 v3.4.50 傭兵召喚物也入魔法受害者池（AOE 波及＋傷害型單體加權·applyMobMagicToSummon 通用）
     let guards = (typeof guardAliveList === 'function') ? guardAliveList() : [];   // 🏰 城堡護衛（同召喚物：純 CC/DoT 對其無效·僅傷害型單體加權·全體型一律波及）
     let petWeight = petAggroWeight;   // 🐾 v3.2.82 共用模組權重（含四寵覆寫）
@@ -1838,6 +1842,7 @@ function castMobMagic(mob, sk) {
     if (pool.playerIn) applyMobMagic(mob, sk);
     else if (allies.length) applyMobMagicToAlly(mob, sk, allies[allies.length - 1]);
     else if (pets.length && typeof applyMobMagicToPet === 'function') applyMobMagicToPet(mob, sk, pets[pets.length - 1]);
+    else if (sumIn && sums.length && typeof applyMobMagicToSummon === 'function') applyMobMagicToSummon(mob, sk, sums[sums.length - 1]);
     else applyMobMagic(mob, sk);
 }
 // 🏺 statusHealHp（牛鬼之子的黑戒·傭兵鏡像）：與玩家 _playerStatusSnap/_statusInflictHeal 同型——

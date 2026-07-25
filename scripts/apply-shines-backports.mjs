@@ -9,6 +9,7 @@
  * 用法：node scripts/apply-shines-backports.mjs [--check]
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { patchNecromancyBook } from './backports/necro-book.mjs';
 
 const CHECK = process.argv.includes('--check');
 let changed = 0;
@@ -81,6 +82,8 @@ function patchSkyGodAvatar() {
   }
 
   const dropFile = 'js/01-drops-config.js';
+  const dropEntry = "['底比斯 尼荷斯(藍)','relic_sky_god_avatar']";
+  const weightEntry = '"天空之神的化身":50';
   const dropBlock = [
     '// 🔌 Shines v3.8.27 選配回移：天空之神的化身（0.0001%）',
     "[['底比斯 尼荷斯(藍)','relic_sky_god_avatar']]",
@@ -88,9 +91,9 @@ function patchSkyGodAvatar() {
     'Object.assign(ITEM_WEIGHTS, {"天空之神的化身":50});',
   ].join('\n');
   let drops = readFileSync(dropFile, 'utf8');
-  if (!drops.includes(dropBlock)) {
-    if (drops.includes("'relic_sky_god_avatar'")) {
-      throw new Error(`[${dropFile}] 已存在天空之神掉落，但內容與核准版本不同。`);
+  if (!(drops.includes(dropEntry) && drops.includes(weightEntry))) {
+    if (drops.includes("'relic_sky_god_avatar'") || drops.includes(weightEntry)) {
+      throw new Error(`[${dropFile}] 天空之神掉落或重量只套用一部分，拒絕猜測合併。`);
     }
     const anchor = 'Object.assign(ITEM_WEIGHTS, {"古代地龍鱗盔甲":250,';
     drops = replaceOnce(dropFile, drops, anchor, dropBlock + '\n' + anchor, '天空之神掉落');
@@ -365,6 +368,12 @@ const PATCHES = [
   patchSkyGodAvatar,
   patchCastleGuardAccuracy,
   patchOldSaveLoadOptimization,
+  () => patchNecromancyBook({
+    replaceOnce,
+    writePatched,
+    patchNamedFunction,
+    markAlready: () => { already++; },
+  }),
 ];
 
 try {

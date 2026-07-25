@@ -2592,7 +2592,7 @@ function healBeneficiaries() {   // 全部「能被治癒/HoT 惠及」的存活
     if (typeof player !== 'undefined' && player && !player.dead) arr.push(player);
     (typeof player !== 'undefined' && player && player.allies || []).forEach(a => { if (a && !a._downed && (a.curHp || 0) > 0) arr.push(a); });
     try { if (typeof petsOutList === 'function') petsOutList().forEach(p => { if (p && !p._downed && (p.hp || 0) > 0) arr.push(p); }); } catch (e) {}
-    try { if (typeof summonV2List === 'function') summonV2List().forEach(s => { if (s && !s._downed && (s.hp || 0) > 0) arr.push(s); }); } catch (e) {}
+    try { if (typeof summonV2List === 'function') summonV2List().forEach(s => { if (s && !s._noHeal && !s._downed && (s.hp || 0) > 0) arr.push(s); }); } catch (e) {}
     try { if (typeof mercSummonList === 'function') mercSummonList().forEach(s => { if (s && !s._downed && (s.hp || 0) > 0) arr.push(s); }); } catch (e) {}   // 🩹 v3.4.71 傭兵召喚物（v3.4.50 起有血）也納入治癒受益池·欄位 hp/mhp 與玩家召喚物一致走 _sup* else 分支
     try { if (typeof guardAliveList === 'function') guardAliveList().forEach(g => { if (g && !g._downed && (g.hp || 0) > 0) arr.push(g); }); } catch (e) {}   // 🛡️ v3.8.4 城堡護衛納入治癒/HoT 受益池（欄位 hp/mhp·無 curHp/skId → 走 _sup* else 分支；無狀態無 MP 故不進淨化/回魔，同召喚物）
     return arr;
@@ -2808,12 +2808,16 @@ function allyMaintainBuffs(ally) {
     }
     // 🩸 v2.6.25 傭兵召喚維持（造屍術/召喚術/精靈召喚·單一召喚·比照玩家 setupSummon·owner=ally）：安全區/硬控(_block)不召；已有存活召喚則不重召；否則扣MP召喚（優先分階召喚術 sk_summon）。buff 由上方遞減·到期(歸0)自動重召。召喚物 tick 於 alliesTick 驅動（輸出歸 _dps.summon·擊殺歸真隊長）。
     if (!_block && ally.skills && ally.skills.length) {
+        if (typeof necroBookEquipped === 'function' && necroBookEquipped(ally) && ally.summon && ally.summon.skId === 'sk_zombie') {
+            ally.summon = null;
+            ally.buffs.sk_zombie = 0;
+        }
         let _live = ally.summon && ally.summon.skId && ((ally.buffs[ally.summon.skId] || 0) > 0) && state.ticks < ally.summon.endTick;
         if (!_live) {
             // 👑 v2.7.95 召喚也吃「開啟閘」：只召「來源角色有勾選自動施放」的召喚術（比照玩家 autoActions·玩家沒開→傭兵不耗 MP 召喚）；優先強力版 sk_summon>sk_elf_summon2>其他，但每個候選都須通過 _mercAutoOn
             let _sumSid = (ally.skills.includes('sk_summon') && _mercAutoOn(ally, 'sk_summon')) ? 'sk_summon'
                 : (ally.skills.includes('sk_elf_summon2') && _mercAutoOn(ally, 'sk_elf_summon2') && allySkillElementOk(ally, 'sk_elf_summon2')) ? 'sk_elf_summon2'   // 🩸 妖精傭兵優先「召喚強力屬性精靈」(上級精靈)：先學的一般版 sk_elf_summon 排在前面，.find 會先抓到它 → 傭兵永遠只召弱版；顯式優先強力版修正。🧝 v3.8.5 屬性精靈召喚是 reqEleAny → 尚未選屬性者不召（比照玩家）
-                : ally.skills.find(s => { let d = DB.skills[s]; return d && d.type === 'buff' && d.summon && _mercAutoOn(ally, s) && allySkillElementOk(ally, s); });
+                : ally.skills.find(s => { let d = DB.skills[s]; return d && d.type === 'buff' && d.summon && !(s === 'sk_zombie' && typeof necroBookEquipped === 'function' && necroBookEquipped(ally)) && _mercAutoOn(ally, s) && allySkillElementOk(ally, s); });
             if (_sumSid) {
                 let _ssk = DB.skills[_sumSid];
                 let _scost = (ally.d && typeof ally.d.getMpCost === 'function') ? ally.d.getMpCost(_ssk.mp, _ssk.tier) : (_ssk.mp || 0);

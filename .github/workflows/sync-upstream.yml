@@ -85,7 +85,9 @@ jobs:
         if: steps.chk.outputs.changed == 'true' && steps.merge.outcome == 'success'
         id: smoke
         continue-on-error: true
-        run: node scripts/smoke-hooks.mjs
+        run: |
+          node scripts/smoke-hooks.mjs
+          node scripts/test-shines-backports.mjs
 
       - name: 建立上游同步 PR（全綠才建立；不直推 main）
         if: steps.chk.outputs.changed == 'true' && steps.merge.outcome == 'success' && steps.smoke.outcome == 'success'

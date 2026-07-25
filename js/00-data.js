@@ -944,6 +944,7 @@ const DB = {
         "relic_flame_dk_sword":    { n: "烈焰的死亡騎士之劍", type: "wpn", relic: true, noEnhance: true, dmgS: 25, dmgL: 25, hit: 15, dmgBonus: 25, ele: "fire", ignHardSkin: true, flameDkMorph: true, procRateBase: 25, procRatePerEn: 0, spellProc: { skn: "煉獄火", dice: [16, 10], flat: 80, ele: "fire", aoe: true, burnDot: { dmg: 30, dur: 6 } }, procBurn: { magicHit: true, dmg: 30, dur: 6 }, req: "royal,knight,dragon", p: 10000, gachaWeight: 0, d: "【遺物】烈焰死亡騎士的佩劍，劍身裹著永不熄滅的地獄之火。反擊（一般限定）；居合（一般限定）；貫穿；裝備時變身 烈焰的死亡騎士；一般攻擊變成火屬性；攻擊時 25% 機率觸發煉獄火（火屬性全體魔法傷害，受魔法傷害影響，並有機率使目標陷入灼燒）；一般攻擊命中時，有機率使目標陷入灼燒（每秒 30 點火屬性傷害，持續 6 秒）。" },
         // 🔌 Shines v3.8.27 選配回移：天空之神的化身（PP 已具 wearerEle 框架）
         "relic_sky_god_avatar":     { n: "天空之神的化身",     type: "arm", slot: "armor", relic: true, noEnhance: true, ac: 11, wearerEle: "wind", req: "all", p: 10000, gachaWeight: 0, d: "【遺物】天空之神遺留在人間的羽衣，披上後身軀便與長風融為一體。" },
+        "relic_necro_book":         { n: "死靈之書",           type: "arm", slot: "shield", armguard: { stat: "none", base: 0, th: [0, 0, 0] }, relic: true, noEnhance: true, ac: 0, necroBook: true, killTeamHealPct: 1, req: "mage", p: 10000, gachaWeight: 0, d: "【遺物】以亡者皮骨裝訂的禁書，書頁會在敵人倒下時自行翻動，喚回仍不願安息的骸骨。" },
         "clk_elf": { n: "精靈斗篷", type: "arm", slot: "cloak", ac: 1, req: "all", safe: 6, p: 900, gachaWeight: 100 },
         "clk_oasis": { n: "歐西斯斗篷", type: "arm", slot: "cloak", ac: 0, req: "all", safe: 4, p: 15, gachaWeight: 100 },
         "arm_86": { n: "侏儒斗篷", type: "arm", slot: "cloak", ac: 0, req: "all", safe: 4, p: 18, gachaWeight: 100 },
