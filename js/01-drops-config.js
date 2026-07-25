@@ -776,7 +776,7 @@ const BUFF_NAMES = {   // buff 鍵 → 顯示名稱（DB.skills 查不到時使�
 // 遠古變體 true→'A'（其餘 'eternal'/'immortal'/'primordial' 原值）、屬性詞綴 attr。
 // 使用處：gainItem 堆疊、卸裝/換裝退回背包合併、倉庫一鍵存入(whSig)/堆疊(_whStackFind)、
 // 載入合併(consolidateInventory)、分頁重繪記憶簽章(renderTabs)。勿再各自手寫比對條件。
-function itemSig(it) { let _ams = Math.max(1, Math.min(3, Math.floor(Number(it.attrMagicStar) || 1))); return it.id + '|' + (it.en || 0) + '|' + (it.bless === true ? 'B' : (it.bless ? 'C' : 0)) + '|' + (it.anc === true ? 'A' : (it.anc || 0)) + '|' + (it.attr || '') + '|' + (it.seteff || '') + (it.attrMagic ? '|' + it.attrMagic + (_ams > 1 ? '@' + _ams : '') : ''); }   // 🔮 屬性附加魔法採可選尾碼；1星沿用舊簽章，2/3星分開，避免合併時遺失星級
+function itemSig(it) { let _ams = Math.max(1, Math.min(3, Math.floor(Number(it.attrMagicStar) || 1))); return it.id + '|' + (it.en || 0) + '|' + (it.bless === true ? 'B' : (it.bless ? 'C' : 0)) + '|' + (it.anc === true ? 'A' : (it.anc || 0)) + '|' + (it.attr || '') + '|' + (it.seteff || '') + (it.attrMagic ? '|' + it.attrMagic + (_ams > 1 ? '@' + _ams : '') : ''); }   // 來源、uid、鎖定與廢品旗標不入鍵；同能力物品不論來源皆可疊加。
 function sameItemSig(a, b) { return itemSig(a) === itemSig(b); }
 // 🔒 v3.6.92 「退回背包」的堆疊合併單一真相（卸裝/換裝/箭矢同步/副手同步/舊檔遷移共 6 處呼叫）：
 //    ① 併入同簽章堆疊——含鎖定疊（現行不變量＝同簽章永遠只有一格；舊制刻意跳過鎖定疊會多開一格）。
@@ -784,10 +784,24 @@ function sameItemSig(a, b) { return itemSig(a) === itemSig(b); }
 //    ③ 保護狀態只會擴散、不會遺失：來源鎖定→整疊鎖定並清掉廢品標記
 //       （舊制沒有這步——鎖定的裝備卸下併入未鎖疊時，鎖定狀態會靜默消失）。
 //    ④ 巨靈願望戒指(gw)每只的願望各自獨立，而 itemSig 不含 gw → 兩側都要排除，否則併疊會吃掉一份願望。
-//    回傳 true＝已併入既有堆疊；false＝呼叫端需自行 player.inv.push(e)。
+function _invStackFind(e, includeJunk) {
+    if (!e || e.gw || !Array.isArray(player.inv)) return null;
+    return player.inv.find(i => !i.gw && (includeJunk || !i.junk) && sameItemSig(i, e));
+}
+// 新取得的物品統一入口：來源不影響疊加；鎖定只會擴散，不會因合併遺失。
+function invAddOrStack(e) {
+    if (!e) return null;
+    if (!Array.isArray(player.inv)) player.inv = [];
+    let ex = _invStackFind(e, true);
+    if (!ex) { player.inv.push(e); return e; }
+    ex.cnt = (ex.cnt || 1) + (e.cnt || 1);
+    if (e.lock) { ex.lock = true; ex.junk = false; }
+    return ex;
+}
+// 回傳 true＝已併入既有堆疊；false＝呼叫端需自行 player.inv.push(e)。
 function invMergeBack(e) {
     if (!e || e.gw) return false;
-    let ex = player.inv.find(i => !i.gw && !i.junk && sameItemSig(i, e));
+    let ex = _invStackFind(e, false);
     if (!ex) return false;
     ex.cnt = (ex.cnt || 1) + (e.cnt || 1);
     if (e.lock) { ex.lock = true; ex.junk = false; }

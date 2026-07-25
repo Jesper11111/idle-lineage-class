@@ -1615,7 +1615,7 @@ function arkataRedeemItem(i) {
     let snap = JSON.parse(JSON.stringify(rec.item));
     list.splice(i, 1);   // 先銷毀紀錄再回灌，杜絕重複贖回
     snap.uid = uid(); snap.cnt = 1; snap.lock = false; snap.junk = false;
-    player.inv.push(snap);
+    invAddOrStack(snap);
     if (typeof registerEquipObtained === 'function') registerEquipObtained(snap.id);   // 直推 inv 繞過 gainItem → 手動補收集冊登錄與掉落統計
     if (typeof auditTrackGain === 'function') auditTrackGain({ id: snap.id, cnt: 1 });
     let nm = (typeof getItemFullName === 'function') ? getItemFullName(snap) : (DB.items[snap.id] ? DB.items[snap.id].n : snap.id);

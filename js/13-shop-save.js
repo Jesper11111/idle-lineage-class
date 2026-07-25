@@ -1543,9 +1543,8 @@ function consolidateInventory() {
     let seen = {};
     let out = [];
     player.inv.forEach(it => {
-        if ((it.en || 0) !== 0) { out.push(it); return; }   // 強化品不合併
         if (it.gw) { out.push(it); return; }                // 巨靈願望戒指：逐只獨立
-        let key = itemSig(it);   // 🔧 架構#3：統一簽章（祝福/詛咒/遠古變體/屬性/en 全部入鍵）
+        let key = itemSig(it);   // 🔧 架構#3：統一簽章（祝福/詛咒/遠古變體/屬性/en 全部入鍵；不同來源不分堆）
         // 🔒 v3.6.92 鎖定狀態不再入鍵（取代 v3.6.57 的 `|lock` 分堆）：同簽章一律併成一格，任一方鎖定→整疊鎖定。
         //    這是「再次獲得直接合併同一格」的收尾——舊存檔留下的「鎖定一疊＋未鎖定一疊」載入時自動歸併，
         //    製作遞迴留下的中間物殘量（js/14 _lockMergeOff）也在此併回鎖定疊。

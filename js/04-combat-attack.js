@@ -2571,7 +2571,7 @@ function pledgeBonusDrop(mob, rate) {
         let attr = _af.attr, bless = _af.bless, anc = _af.anc;
         let en = rollPledgeDropEnhance(d0.safe || 0);   // 依物品安定值決定強化等級（🏛️v3.0.83 傳統權重表分流已移除）
         let _jProbe = { id: id, en: en, bless: bless, anc: anc, attr: attr, seteff: false };   // 🔧 廢品記憶：血盟/攻城掉寶比照 gainItem，依完整簽章（含強化/祝福/詞綴）自動標記
-        player.inv.push({ id: id, uid: uid(), cnt: 1, en: en, bless: bless, anc: anc, attr: attr, seteff: false, lock: false, junk: !!(player.junkPrefs && player.junkPrefs[itemSig(_jProbe)]) });
+        invAddOrStack({ id: id, uid: uid(), cnt: 1, en: en, bless: bless, anc: anc, attr: attr, seteff: false, lock: false, junk: !!(player.junkPrefs && player.junkPrefs[itemSig(_jProbe)]) });
         // 🔧 v3.5.87 直推 inv 繞過 gainItem → 手動補「裝備收集冊登錄＋掉落統計」（比照 js/14 客製製作直推樣板；misc 收集冊對裝備本為 no-op 免補）
         if (typeof registerEquipObtained === 'function') registerEquipObtained(id);
         if (typeof auditTrackGain === 'function') auditTrackGain({ id: id, cnt: 1 });

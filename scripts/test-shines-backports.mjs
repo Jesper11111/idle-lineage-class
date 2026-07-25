@@ -14,7 +14,10 @@ const MIME = {
   '.svg': 'image/svg+xml', '.webp': 'image/webp',
 };
 
-const [configSource, statsSource, coreSource, attackSource, allySource, skillSource, vfxSource, threatSource] = await Promise.all([
+const [
+  configSource, statsSource, coreSource, attackSource, allySource, skillSource, vfxSource, threatSource,
+  equipSource, worldSource, warehouseSource, saveSource, craftSource, petSource,
+] = await Promise.all([
   readFile(join(ROOT, 'js/01-drops-config.js'), 'utf8'),
   readFile(join(ROOT, 'js/02-stats-recompute.js'), 'utf8'),
   readFile(join(ROOT, 'js/03-combat-core.js'), 'utf8'),
@@ -23,6 +26,12 @@ const [configSource, statsSource, coreSource, attackSource, allySource, skillSou
   readFile(join(ROOT, 'js/07-skills-cast.js'), 'utf8'),
   readFile(join(ROOT, 'js/09-vfx-render.js'), 'utf8'),
   readFile(join(ROOT, 'js/32-threat.js'), 'utf8'),
+  readFile(join(ROOT, 'js/08-items-equip.js'), 'utf8'),
+  readFile(join(ROOT, 'js/11-world-map.js'), 'utf8'),
+  readFile(join(ROOT, 'js/12-npc-quests.js'), 'utf8'),
+  readFile(join(ROOT, 'js/13-shop-save.js'), 'utf8'),
+  readFile(join(ROOT, 'js/14-craft-pandora.js'), 'utf8'),
+  readFile(join(ROOT, 'js/22-pets.js'), 'utf8'),
 ]);
 assert.ok(statsSource.includes('ed.bossEncounterPct') && statsSource.includes('ed.corrosiveJellySkin') && statsSource.includes('ed.charmOnHit'), '五件遺物能力未接入 stats 重算');
 assert.ok(coreSource.includes('Math.random() < _normalBossChance'), '山羊惡魔雙足未接入一般地圖頭目率');
@@ -42,6 +51,15 @@ assert.equal((allySource.match(/moonShatterOnDamage\(/g) || []).length, 10, '傭
 assert.equal((skillSource.match(/moonShatterOnDamage\(/g) || []).length, 9, '玩家技能月光碎裂掛點數量錯誤');
 assert.ok(vfxSource.includes("'fragile','shatter','armorbreak'"), '碎裂狀態未接入戰場顯示');
 assert.ok(threatSource.includes('const IRON_GUARD_TAUNT_TICKS = 30;') && threatSource.includes('return 1000000000;'), '鐵衛嘲諷狀態或仇恨鎖定未就位');
+assert.ok(configSource.includes('function invAddOrStack(e)') && configSource.includes('let ex = _invStackFind(e, false);'), '背包統一堆疊入口未就位');
+assert.ok(attackSource.includes('invAddOrStack({ id: id, uid: uid(), cnt: 1, en: en'), '血盟掉落未接入統一堆疊');
+assert.ok(equipSource.includes('invAddOrStack({ id:resultId, uid:uid(), cnt:1, en:_tEn'), '靈魂之球產物未接入統一堆疊');
+assert.ok(worldSource.includes('    invAddOrStack(snap);'), '阿卡塔贖回未接入統一堆疊');
+assert.ok(warehouseSource.includes("function _whStackFind(arr, it){ return (!it.gw) ?"), '倉庫仍禁止同強化值物品堆疊');
+assert.ok(!saveSource.includes('if ((it.en || 0) !== 0) { out.push(it); return; }') && saveSource.includes('不同來源不分堆'), '載入合併仍跳過強化品');
+assert.equal((craftSource.match(/    invAddOrStack\(inst\);/g) || []).length, 2, '兩個客製製作入口未完整接入統一堆疊');
+assert.equal((petSource.match(/invMergeBack\(_back\)/g) || []).length, 3, '寵物放生／換裝／卸裝退回堆疊掛點不完整');
+assert.ok(petSource.includes('if (!invMergeBack(_pg)) player.inv.push(_pg);'), '舊寵物裝備遷移未接入退回堆疊');
 
 const server = createServer(async (req, res) => {
   try {
@@ -338,8 +356,80 @@ try {
   });
 
   assert.deepEqual(setRework, [], setRework.join('\n'));
+
+  const itemStacking = await page.evaluate(() => {
+    const bad = [];
+    const expect = (condition, message) => { if (!condition) bad.push(message); };
+    let seq = 0;
+    const make = (overrides = {}) => Object.assign({
+      id: 'stack_contract_item',
+      uid: `stack-${++seq}`,
+      cnt: 1,
+      en: 7,
+      bless: false,
+      anc: false,
+      attr: false,
+      seteff: false,
+      lock: false,
+      junk: false,
+    }, overrides);
+
+    player.inv = [];
+    invAddOrStack(make({ cnt: 2, source: 'drop' }));
+    invAddOrStack(make({ cnt: 3, source: 'craft' }));
+    expect(player.inv.length === 1 && player.inv[0].cnt === 5, '同能力 +7 物品未跨來源合併');
+    invAddOrStack(make({ en: 8 }));
+    invAddOrStack(make({ bless: true }));
+    invAddOrStack(make({ anc: 'eternal' }));
+    invAddOrStack(make({ attr: 'fr3' }));
+    invAddOrStack(make({ seteff: '暗影' }));
+    invAddOrStack(make({ attrMagic: 'sk_test', attrMagicStar: 2 }));
+    invAddOrStack(make({ attrMagic: 'sk_test', attrMagicStar: 3 }));
+    expect(player.inv.length === 8, `不同強化／詞綴被誤併，應為 8 格，實際 ${player.inv.length}`);
+
+    player.inv = [];
+    invAddOrStack(make({ junk: true }));
+    invAddOrStack(make());
+    expect(player.inv.length === 1 && player.inv[0].cnt === 2 && player.inv[0].junk === true, '新取得物品未併入同簽章廢品疊');
+    invAddOrStack(make({ lock: true }));
+    expect(player.inv[0].cnt === 3 && player.inv[0].lock === true && player.inv[0].junk === false, '鎖定來源合併後未擴散保護或清除廢品');
+
+    player.inv = [make({ junk: true })];
+    expect(invMergeBack(make()) === false && player.inv.length === 1, '退回裝備不應併入廢品疊');
+    player.inv = [make()];
+    expect(invMergeBack(make({ cnt: 2, lock: true })) === true, '退回裝備未併入相同 +7 堆疊');
+    expect(player.inv[0].cnt === 3 && player.inv[0].lock === true, '退回鎖定裝備的數量或保護狀態錯誤');
+
+    const wh7 = make({ cnt: 2 });
+    expect(_whStackFind([wh7], make()) === wh7, '倉庫未找到相同 +7 堆疊');
+    expect(_whStackFind([wh7], make({ en: 8 })) == null, '倉庫誤併不同強化值');
+    expect(_whStackFind([wh7], make({ gw: ['str'] })) == null, '倉庫誤併巨靈願望戒指');
+
+    player.inv = [];
+    invAddOrStack(make({ gw: ['str'] }));
+    invAddOrStack(make({ gw: ['dex'] }));
+    expect(player.inv.length === 2, '不同願望的巨靈戒指被誤併');
+
+    player.inv = [
+      make({ cnt: 2, junk: true }),
+      make({ cnt: 3, lock: true }),
+      make({ en: 8 }),
+      make({ gw: ['str'] }),
+      make({ gw: ['dex'] }),
+    ];
+    consolidateInventory();
+    const merged7 = player.inv.find(item => item.en === 7 && !item.gw);
+    expect(player.inv.length === 4, `載入合併後應為 4 格，實際 ${player.inv.length}`);
+    expect(merged7 && merged7.cnt === 5 && merged7.lock === true && merged7.junk === false, '載入時同 +7 堆疊的數量或保護狀態錯誤');
+    expect(player.inv.some(item => item.en === 8 && !item.gw), '不同強化值在載入合併時遺失');
+    expect(player.inv.filter(item => item.gw).length === 2, '巨靈願望戒指在載入合併時遺失或誤併');
+
+    return bad;
+  });
+
+  assert.deepEqual(itemStacking, [], itemStacking.join('\n'));
   assert.deepEqual(pageErrors, [], `頁面執行錯誤：\n${pageErrors.join('\n')}`);
-  console.log('✅ Shines backports：死靈之書、五件遺物與七套席琳套裝戰鬥契約通過');
+  console.log('✅ Shines backports：死靈之書、五件遺物、七套席琳套裝與物品堆疊契約通過');
 } finally {
   await browser.close();
   await new Promise(resolve => server.close(resolve));

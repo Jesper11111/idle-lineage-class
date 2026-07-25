@@ -12,6 +12,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { patchNecromancyBook } from './backports/necro-book.mjs';
 import { patchRelicBatch25 } from './backports/relic-batch-25.mjs';
 import { patchSherineSetRework } from './backports/sherine-set-rework.mjs';
+import { patchItemStacking } from './backports/item-stacking.mjs';
 
 const CHECK = process.argv.includes('--check');
 let changed = 0;
@@ -383,6 +384,12 @@ const PATCHES = [
     markAlready: () => { already++; },
   }),
   () => patchSherineSetRework({
+    replaceOnce,
+    writePatched,
+    patchNamedFunction,
+    markAlready: () => { already++; },
+  }),
+  () => patchItemStacking({
     replaceOnce,
     writePatched,
     patchNamedFunction,
