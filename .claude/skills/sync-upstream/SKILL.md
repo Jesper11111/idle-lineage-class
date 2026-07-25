@@ -1,6 +1,6 @@
 ---
 name: sync-upstream
-description: 把本 repo 同步到 pp771007/idle-lineage-class 最新版，鏡像 PP 完整成品後重套本地舊傭兵政策、離線安全補丁與精靈傭兵技能例外，再重產 manifest、版本並測試。當使用者說「同步 PP」「同步上游」「更新上游」「跟進 PP」或 /sync-upstream 時使用。
+description: 把本 repo 同步到 pp771007/idle-lineage-class 最新版，鏡像 PP 完整成品後重套本地舊傭兵獎勵／招募／受僱政策、回城免費刷新、離線安全補丁與精靈傭兵技能例外，再重產 manifest、版本並測試。當使用者說「同步 PP」「同步上游」「更新上游」「跟進 PP」或 /sync-upstream 時使用。
 ---
 
 # /sync-upstream — 同步 PP 上游並保留本地政策
@@ -9,10 +9,11 @@ description: 把本 repo 同步到 pp771007/idle-lineage-class 最新版，鏡�
 
 ## 固定保留的本地政策
 
-1. 舊傭兵獎勵規則：經驗分攤、無隊伍金幣／掉寶倍率、付費招募／刷新、可重複受僱、非安全區也可管理。
+1. 舊傭兵獎勵／招募／受僱規則：經驗分攤、無隊伍金幣／掉寶倍率、付費招募、可重複受僱、非安全區也可管理。
 2. 離線安全：舊離線引擎嚴格獨占、首次遷移不補算、特殊副本禁止離線模擬。
 3. 妖精傭兵不套 PP 的「只能使用當前屬性精靈魔法」限制。
-4. 手機／觸控裝置隱藏非官方轉載橫幅，桌機保留。
+4. 手機、平板與桌機全部隱藏非官方轉載橫幅，不保留版面高度。
+5. 傭兵保留舊獎勵／招募／受僱政策，但每次進安全區免費自動更新戰力快照。
 
 ## 名詞
 
@@ -34,7 +35,7 @@ description: 把本 repo 同步到 pp771007/idle-lineage-class 最新版，鏡�
    腳本依序：
 
    - 鏡像 PP 的 `js/`、`css/`、根目錄 `afk-*.js`、`index.html`、`sw.js`、`wiki-checkpoint.json`
-   - 保留本站 `afk-offline-owner.js`、`afk-merc-policy.js`
+   - 保留本站 `afk-mobile-banner.js`、`afk-offline-owner.js`、`afk-merc-policy.js`
    - 在 PP 的 `afk-offline.js` 前注入 `scripts/local-policy-block.html`
    - 跑 `check-save-io.mjs`
    - 跑 `apply-core-patches.mjs`

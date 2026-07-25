@@ -1,10 +1,10 @@
 /*
- * afk-merc-policy.js — 在 PP 最新版上保留 v3.7.61 的傭兵經濟／受僱政策。
+ * afk-merc-policy.js — 在 PP 最新版上保留 v3.7.61 的傭兵獎勵／招募／受僱政策，另採回城免費刷新。
  *
  * 戰鬥本體仍使用 PP 最新核心（威脅值、綁定、城堡護衛等照常作用）。
  * 這裡只覆寫政策層：
- *   - 招募收費、手動付費重新招募
- *   - 回村只結算累積經驗，不自動刷新戰力快照
+ *   - 招募維持收費
+ *   - 回村免費自動結算累積經驗並刷新戰力快照
  *   - 不建立反向受僱登記、不限制同一角色只能受僱一次、不鎖安全區
  * 經驗均分、金幣與掉落倍率在核心 js/05 由 apply-policy-patches.mjs 固定。
  */
@@ -22,16 +22,8 @@
     return sum ? (sum.lv || 1) * 10000 : 0;
   }
 
-  function mercRehireMultLegacy(lv) {
-    lv = Math.max(1, Math.min(100, Math.floor(lv || 1)));
-    return (lv <= 50)
-      ? 0.1 * Math.pow(2, (lv - 1) / 49)
-      : 0.2 * Math.pow(2.5, (lv - 50) / 50);
-  }
-
-  function mercRehireCostLegacy(lv) {
-    return Math.floor((lv || 1) * 10000 * mercRehireMultLegacy(lv));
-  }
+  function mercRehireMultPolicy() { return 0; }
+  function mercRehireCostPolicy() { return 0; }
 
   function mercBankAlliesAtTownLegacy() {
     try {
@@ -47,56 +39,16 @@
     } catch (e) { return 0; }
   }
 
-  function refreshAllAlliesLegacy() {
-    // v3.7.61：回村只入帳傭兵累積經驗，不免費重建來源角色的最新戰力快照。
-    return mercBankAlliesAtTownLegacy();
-  }
-
-  function rehireAllyLegacy(slotN) {
+  // 相容舊存檔或殘留 UI 的手動呼叫；與回城自動刷新共用核心單名刷新，永遠不收費。
+  function rehireAllyPolicy(slotN) {
     slotN = String(slotN);
     var cur = (player.allies || []).find(function (a) { return a && a._slot === slotN; });
     if (!cur) return;
-    snapshotMercPrefs(cur);
-
-    var currentSeed = _slotCharEnSeed(slotN);
-    if (cur.enSeed && currentSeed && currentSeed !== cur.enSeed) {
-      var replacedMsg = _settleAllyExp(cur, 'dismiss');
-      player.allies = player.allies.filter(function (a) { return a && a._slot !== slotN; });
-      logSys('<span class="text-amber-300">存檔 ' + slotN + ' 已建立新角色，原傭兵 ' + cur._allyName +
-        ' 已解散（未收費）。</span>' + (replacedMsg ? ' ' + replacedMsg : ''));
-      saveGame(); updateUI();
-      var replacedPanel = document.getElementById('interaction-content');
-      if (replacedPanel) renderAllyNPC(replacedPanel);
-      return;
-    }
-
-    var sum = slotSummary(slotN);
-    if (!sum) {
-      var missingMsg = _settleAllyExp(cur, 'dismiss');
-      player.allies = player.allies.filter(function (a) { return a && a._slot !== slotN; });
-      logSys('<span class="text-amber-300">存檔 ' + slotN + ' 已無可用角色，傭兵已解散。</span>' +
-        (missingMsg ? ' ' + missingMsg : ''));
-    } else {
-      var cost = mercRehireCostLegacy(sum.lv || 1);
-      if ((player.gold || 0) < cost) {
-        logSys('<span class="text-red-400">重新招募 ' + (sum.name || '') + '（Lv.' + sum.lv + '）需要 ' +
-          cost.toLocaleString() + ' 金幣，你的金幣不足。</span>');
-        return;
-      }
-      var expMsg = _settleAllyExp(cur, 'rehire');
-      var fresh = buildAlly(slotN);
-      if (!fresh) {
-        player.allies = player.allies.filter(function (a) { return a && a._slot !== slotN; });
-        logSys('<span class="text-amber-300">存檔 ' + slotN +
-          ' 無法重新招募（角色不可用），傭兵已解散（未收費）。</span>' + (expMsg ? ' ' + expMsg : ''));
-      } else {
-        player.gold -= cost;
-        var idx = player.allies.findIndex(function (a) { return a && a._slot === slotN; });
-        if (idx !== -1) player.allies[idx] = fresh; else player.allies.push(fresh);
-        logSys('<span class="text-emerald-300 font-bold">花費 ' + cost.toLocaleString() + ' 金幣重新招募 ' +
-          fresh._allyName + '（存檔 ' + slotN + '，Lv.' + sum.lv + '），戰力快照已更新。</span>' +
-          (expMsg ? ' ' + expMsg : ''));
-      }
+    var result = refreshAllyOnce(slotN);
+    if (result && result.msg) logSys(result.msg);
+    if (result && result.kind === 'refresh') {
+      logSys('<span class="text-sky-300">' + (cur._allyName || ('存檔 ' + slotN)) +
+        ' 的戰力快照已免費更新。</span>');
     }
     saveGame(); updateUI();
     var panel = document.getElementById('interaction-content');
@@ -186,9 +138,6 @@
       var nameStyle = classic ? 'style="color:#fbbf24;"' : 'class="text-amber-300"';
       var button = active
         ? '<div class="flex flex-wrap justify-end gap-1.5 shrink-0">' +
-            '<button onclick="rehireAlly(\'' + n + '\')" class="btn py-1 px-3 text-sm font-bold bg-sky-900 border-sky-700 text-sky-200" ' +
-              'title="結算累積經驗並以最新存檔重建戰力快照">重新招募　' +
-              mercRehireCostLegacy(sum.lv || 1).toLocaleString() + '金</button>' +
             '<button onclick="dismissAlly(\'' + n + '\')" class="btn py-1 px-3 text-sm font-bold bg-red-950 border-red-700 text-red-200" ' +
               'title="只解散這名協力傭兵（招募費用不退還）">解散</button></div>'
         : (modeMatch
@@ -217,8 +166,8 @@
       '<b class="text-amber-300">費用＝該角色等級 × 10000 金幣</b>。協力傭兵戰鬥中不會陣亡，' +
       '<b class="text-emerald-300">你死亡並回城／原地復活後仍會留在身邊，可使用「解散」或「⚠ 全員退出」（費用不退還）</b>；' +
       '存讀檔不會使其消失。' + capHint +
-      '<br><span class="text-slate-400">回到安全區只結算累積經驗，不會免費刷新戰力快照；' +
-      '需要更新來源角色資料時請使用「重新招募」。重新招募費率由 Lv1 原價 1/10、Lv50 原價 1/5、Lv100 原價 1/2 平滑遞增。</span></div>' +
+      '<br><span class="text-slate-400">每次進入安全區（含載入存檔回到村莊）都會免費結算累積經驗，' +
+      '並依來源存檔的最新狀態自動重建戰力快照，不需要重新招募。</span></div>' +
       '<div class="flex items-center justify-between gap-2"><div class="text-sm">你的金幣：' +
       '<span class="text-yellow-400 font-bold">' + (player.gold || 0).toLocaleString() + '</span></div>' +
       ((player.allies || []).length
@@ -243,24 +192,24 @@
   window.allySkillElementOk = allowAllMercElementSkills;
 
   window.allyCost = allyCostLegacy;
-  window.mercRehireMult = mercRehireMultLegacy;
-  window.mercRehireCost = mercRehireCostLegacy;
+  window.mercRehireMult = mercRehireMultPolicy;
+  window.mercRehireCost = mercRehireCostPolicy;
   window.mercBankAlliesAtTown = mercBankAlliesAtTownLegacy;
-  window.refreshAllAllies = refreshAllAlliesLegacy;
-  window.rehireAlly = rehireAllyLegacy;
+  // refreshAllAllies 保留 PP 核心單一掛點：changeMap 進安全區時結算並重建快照。
+  window.rehireAlly = rehireAllyPolicy;
   window.toggleAlly = toggleAllyLegacy;
   window.dismissAlly = dismissAllyLegacy;
   window.renderAllyNPC = renderAllyNPCLegacy;
 
   window.__legacyMercPolicy = Object.freeze({
-    version: '3.7.61-policy-on-pp-v3.8.5',
+    version: '3.7.61-hybrid-town-refresh-on-pp-v3.8.5',
     rewardShare: true,
     paidRecruit: true,
-    paidManualRehire: true,
-    townRefresh: false,
+    paidManualRehire: false,
+    townRefresh: true,
     exclusiveEmployment: false,
     safeAreaLock: false,
     elementRestriction: false
   });
-  console.log('[AFK-merc-policy] hooks OK — 保留舊版傭兵經濟／受僱規則，妖精傭兵技能不受目前屬性限制。');
+  console.log('[AFK-merc-policy] hooks OK — 保留舊版傭兵獎勵／受僱規則，回城免費更新快照。');
 })();
