@@ -5,7 +5,7 @@
  * assets/public 由呼叫端先用 rsync --delete（或本機等價方式）鏡像；本腳本處理：
  *   1. 鏡像 PP 的 js/css、全部 afk-*.js（保留 Jesper 專用政策／效能檔）、sw.js 與 wiki checkpoint。
  *   2. 直接採用 PP index.html，只在 PP afk-offline.js 前注入本地政策層。
- *   3. 驗存檔 I/O，補回既有核心鉤子、舊傭兵獎勵政策與離線安全政策。
+ *   3. 驗存檔 I/O，補回既有核心鉤子、核准的 Shines 回移、舊傭兵獎勵政策與離線安全政策。
  *   4. 重產 manifest、版本戳與 upstream checkpoint，再跑 smoke。
  *
  * 用法：node scripts/sync-upstream.mjs <pp-upstream-clone-dir>
@@ -77,6 +77,7 @@ writeFileSync('index.html', idx);
 console.log('[sync] index.html = PP 完成品 + Jesper 本地政策層');
 
 run('node scripts/apply-core-patches.mjs');
+run('node scripts/apply-shines-backports.mjs');
 run('node scripts/apply-policy-patches.mjs');
 run('node scripts/apply-offline-safety-patches.mjs');
 

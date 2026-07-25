@@ -183,16 +183,18 @@ function registerEquipObtained(id) {   // gainItem 呼叫：獲得任何裝備�
 }
 
 // ---- 創角/讀檔保底：確保有一本收集冊，並把現有(背包+已裝備)裝備補登錄（舊存檔遷移）----
-function ensureEquipBook() {
+function ensureEquipBook(warehouse) {
     if (!player || !Array.isArray(player.inv)) return;
-    if (!player.equipDex) player.equipDex = {};
+    let changed = false;
+    if (!player.equipDex) { player.equipDex = {}; changed = true; }
     // 🗡️ 裝備收集冊改由「收藏」面板開啟→不再放在道具欄；移除舊存檔殘留的收集冊本體（資料在 player.equipDex·與本體無關）
-    if (player.inv.some(i => i.id === 'item_equip_book')) player.inv = player.inv.filter(i => i.id !== 'item_equip_book');
-    player.inv.forEach(i => { if (EQUIP_ITEM_CAT[i.id]) player.equipDex[i.id] = true; });
-    if (player.eq) for (let s in player.eq) { let e = player.eq[s]; if (e && e.id && EQUIP_ITEM_CAT[e.id]) player.equipDex[e.id] = true; }
+    if (player.inv.some(i => i.id === 'item_equip_book')) { player.inv = player.inv.filter(i => i.id !== 'item_equip_book'); changed = true; }
+    let register = i => { if (i && i.id && EQUIP_ITEM_CAT[i.id] && !player.equipDex[i.id]) { player.equipDex[i.id] = true; changed = true; } };
+    player.inv.forEach(register);
+    if (player.eq) for (let s in player.eq) register(player.eq[s]);
     // 🏛️ v3.0.61 倉庫庫存也補登錄（唯讀當前模式倉庫桶）：收集冊上線前入倉的裝備從未經 gainItem 登錄→圖鑑全暗（傳統模式裝備自帶強化、常整批入倉最易踩到）；讀檔時一併點亮
-    try { if (typeof loadWarehouse === 'function') { let _w = loadWarehouse(); if (_w && Array.isArray(_w.items)) _w.items.forEach(i => { if (i && i.id && EQUIP_ITEM_CAT[i.id]) player.equipDex[i.id] = true; }); } } catch (e) {}
-    if (typeof saveEquipDex === 'function') saveEquipDex();   // 🗡️ 補登錄後回寫共用桶（把該角色現有裝備併入共用收集）
+    try { let _w = warehouse || (typeof loadWarehouse === 'function' ? loadWarehouse() : null); if (_w && Array.isArray(_w.items)) _w.items.forEach(register); } catch (e) {}
+    if (changed && typeof saveEquipDex === 'function') saveEquipDex();   // 🗡️ 僅首次補登錄才回寫共用桶，避免每次載入重複序列化完整圖鑑
 }
 
 // ===== 全螢幕書頁 UI =====

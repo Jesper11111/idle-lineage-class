@@ -16,6 +16,7 @@ const OFFLINE_FILE = 'afk-offline.js';
 const SLOTINFO_FILE = 'afk-slotinfo.js';
 const MARKER = '// 🔒 Jesper offline safety policy v4';
 const SLOTINFO_MARKER = '// 🔒 Jesper offline migration visibility guard';
+const OFFSTATS_MARKER = '// 🔒 Jesper offline cache contract v5';
 
 function replaceOne(src, from, to, file, label) {
   const at = src.indexOf(from);
@@ -131,15 +132,138 @@ function patchOffline() {
     );
   }
 
+  if (!src.includes(OFFSTATS_MARKER)) {
+    src = replaceOne(
+      src,
+      "  var _saveSquelch = false;\n  async function runCatchup",
+      "  var _saveSquelch = false;\n" +
+      "  " + OFFSTATS_MARKER + "\n" +
+      "  // 快取必須隨真正影響戰力的資料失效。舊簽章只有地圖/等級/裝備 id+強化，會漏掉\n" +
+      "  // 配點、自動技能、套裝詞綴、傭兵與寵物；內容更新後甚至可能沿用舊版殺速與 BOSS 結果。\n" +
+      "  var OFFSTATS_SCHEMA = 2;\n" +
+      "  var OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r1';\n" +
+      "  function offStatsStable(v) {\n" +
+      "    if (v == null || typeof v === 'number' || typeof v === 'boolean' || typeof v === 'string') return v;\n" +
+      "    if (Array.isArray(v)) return v.map(offStatsStable);\n" +
+      "    if (typeof v !== 'object') return null;\n" +
+      "    var out = {};\n" +
+      "    Object.keys(v).sort().forEach(function (k) {\n" +
+      "      var x = v[k];\n" +
+      "      if (typeof x === 'function' || typeof x === 'undefined') return;\n" +
+      "      out[k] = offStatsStable(x);\n" +
+      "    });\n" +
+      "    return out;\n" +
+      "  }\n" +
+      "  function offStatsItem(it) {\n" +
+      "    if (!it || !it.id) return null;\n" +
+      "    var skip = { uid:1, cnt:1, lock:1, junk:1, junkSince:1, _autoSellQty:1, _ruleJunk:1, _userKeep:1, src:1, source:1 };\n" +
+      "    var out = {};\n" +
+      "    Object.keys(it).sort().forEach(function (k) {\n" +
+      "      if (skip[k] || typeof it[k] === 'function' || typeof it[k] === 'undefined') return;\n" +
+      "      out[k] = offStatsStable(it[k]);\n" +
+      "    });\n" +
+      "    return out;\n" +
+      "  }\n" +
+      "  function offStatsEq(eq) {\n" +
+      "    var out = {};\n" +
+      "    Object.keys(eq || {}).sort().forEach(function (slot) {\n" +
+      "      var sig = offStatsItem(eq[slot]); if (sig) out[slot] = sig;\n" +
+      "    });\n" +
+      "    return out;\n" +
+      "  }\n" +
+      "  function offStatsActor(a) {\n" +
+      "    if (!a) return null;\n" +
+      "    return offStatsStable({\n" +
+      "      cls:a.cls || '', lv:a.lv || 1, base:a.base || {}, d:a.d || {}, skills:a.skills || [],\n" +
+      "      grantedSkills:a.grantedSkills || [], config:a.config || {}, eq:offStatsEq(a.eq),\n" +
+      "      atkSkill:a._atkSkill || '', healSkill:a._healSkill || '', convertSkill:a._convertSkill || '',\n" +
+      "      summon:a.summon || null, slot:a._slot || ''\n" +
+      "    });\n" +
+      "  }\n" +
+      "  function offStatsPet(p) {\n" +
+      "    if (!p) return null;\n" +
+      "    return offStatsStable({ form:p.form || '', lv:p.lv || 1, d:p.d || {}, eq:offStatsEq(p.eq), outSlot:p.outSlot || '' });\n" +
+      "  }\n" +
+      "  function offStatsHash(text) {\n" +
+      "    var h = 2166136261;\n" +
+      "    for (var i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); }\n" +
+      "    return (h >>> 0).toString(36);\n" +
+      "  }\n" +
+      "  function offStatsSig() {\n" +
+      "    var pets = [];\n" +
+      "    try { if (typeof petsOutList === 'function') pets = petsOutList().map(offStatsPet); } catch (e) {}\n" +
+      "    var payload = {\n" +
+      "      schema:OFFSTATS_SCHEMA, ruleset:OFFSTATS_RULESET,\n" +
+      "      game:(typeof GAME_VERSION !== 'undefined' ? GAME_VERSION : ''), map:mapState.current,\n" +
+      "      modes:[!!player.sherineWorld, !!player.sherineMad, !!player.classicMode, !!player.traditionalMode],\n" +
+      "      player:offStatsActor(player), allies:(player.allies || []).map(offStatsActor), pets:pets\n" +
+      "    };\n" +
+      "    return 'v5|' + offStatsHash(JSON.stringify(offStatsStable(payload)));\n" +
+      "  }\n" +
+      "  async function runCatchup",
+      OFFLINE_FILE,
+      '離線取樣快取完整簽章 helper'
+    );
+
+    src = replaceOne(
+      src,
+      "    var OFFSTATS_MAX_AGE_MS = 72 * 3600 * 1000;\n" +
+      "    function offStatsSig() {\n" +
+      "      var eq = [];\n" +
+      "      try { for (var k in player.eq) { var e = player.eq[k]; if (e && e.id) eq.push(k + ':' + e.id + ':' + (e.en || 0)); } } catch (e) {}\n" +
+      "      eq.sort();\n" +
+      "      return ['v4', mapState.current, player.lv, player.sherineWorld ? 1 : 0, player.sherineMad ? 1 : 0,\n" +
+      "        player.classicMode ? 1 : 0, player.traditionalMode ? 1 : 0, eq.join(',')].join('|');   // v2:2026-07-11 上游大移植(遺物效果/傭兵攻速/能力上限100/藥水隨機)殺速普遍改變,讓全體舊統計失效重取樣\n" +
+      "    }",
+      "    var OFFSTATS_MAX_AGE_MS = 72 * 3600 * 1000;\n",
+      OFFLINE_FILE,
+      '離線取樣快取舊簽章移除'
+    );
+
+    src = replaceOne(
+      src,
+      'player._offStats = { v: 1, sig: offStatsSig(),',
+      'player._offStats = { v: OFFSTATS_SCHEMA, sig: offStatsSig(),',
+      OFFLINE_FILE,
+      '離線取樣快取 schema 寫入'
+    );
+
+    src = replaceOne(
+      src,
+      'player._offStats && player._offStats.v === 1 && player._offStats.svcE > 0',
+      'player._offStats && player._offStats.v === OFFSTATS_SCHEMA && player._offStats.svcE > 0',
+      OFFLINE_FILE,
+      '離線取樣快取 schema 讀取'
+    );
+
+    src = replaceOne(
+      src,
+      '    blockedInstanceMap: blockedInstanceMap,\n    mapName: mapName,',
+      '    blockedInstanceMap: blockedInstanceMap,\n' +
+      '    offStatsSchema: OFFSTATS_SCHEMA,\n' +
+      '    offStatsRuleset: OFFSTATS_RULESET,\n' +
+      '    offStatsSignature: offStatsSig,\n' +
+      '    mapName: mapName,',
+      OFFLINE_FILE,
+      '離線取樣快取除錯介面'
+    );
+  }
+
   const required = [
     MARKER,
     "MIGRATION_PREFIX = 'afk_offline_legacy_migrated_v'",
-    "return ['v4', mapState.current",
+    OFFSTATS_MARKER,
+    "OFFSTATS_SCHEMA = 2",
+    "OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r1'",
+    "return 'v5|' + offStatsHash",
+    'player._offStats = { v: OFFSTATS_SCHEMA',
+    'player._offStats.v === OFFSTATS_SCHEMA',
     'function blockedInstanceMap(map)',
     "if (!migrationDone()) return { map: '', ts: 0",
     "version: '2.2.0-jesper-safety'",
     'migrationDoneFor: migrationDone',
-    'blockedInstanceMap: blockedInstanceMap'
+    'blockedInstanceMap: blockedInstanceMap',
+    'offStatsSignature: offStatsSig'
   ];
   const missing = required.filter(x => !src.includes(x));
   if (missing.length) throw new Error(`[${OFFLINE_FILE}] 安全補丁驗證失敗：${missing.join(' | ')}`);

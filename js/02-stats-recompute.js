@@ -70,6 +70,7 @@ function recomputeStats() {
     d.physDrGated = 0;       // 🐍 遺物 祭祀儀式陶罐：受一般攻擊傷害減少%（每3秒最多1次·js/04 enemyPhysicalAttack·player._physDrCd 節流）
     d.lowMpRegenBonus = 0;   // 🐍 遺物 蛇神的凝視：MP<15% 時 MP自然恢復量額外+N（js/03 _regenMP）
     d.moveSpeedPct = 0;  // 🏺 遺物 寄居蟹背殼：移動速度%（負=變慢→怪物重生變慢·js/03 重生延遲讀取·與加速buff相乘）
+    d.bossEncounterPct = 0; d.corrosiveJellySkin = false; d.charmOnHit = false;   // 🏺 Shines v3.8.26 五件遺物
     d.poisonHealMult = 0;   // 🏺 遺物 毒液化身：受到毒性 DoT 時恢復所受傷害×此倍率的 HP（js/03 中毒 tick 讀取·0=無）
     d.dotCrit = false;       // 🏺 遺物 永不終止的夢魘：我方持續傷害(中毒/出血/猛爆劇毒)可爆擊（js/06 processMobStatusTick _teamDotCrit 讀取）
     d.dmgReflect = 0;        // 🏺 遺物 魅魔女皇的誘惑：受一般攻擊 N% 機率反射相同傷害且免疫該次（js/04 受擊路徑）
@@ -396,6 +397,9 @@ d.mr += (baseMr + bonusMr);
         if(ed.physDrGated) d.physDrGated += ed.physDrGated;   // 🐍 遺物 祭祀儀式陶罐：受一般攻擊傷害減少%（3秒節流·js/04）
         if(ed.lowMpRegenBonus) d.lowMpRegenBonus += ed.lowMpRegenBonus;   // 🐍 遺物 蛇神的凝視：MP<15% 時 MP自然恢復額外+N（js/03 _regenMP）
         if(!_recomputingAlly && !p._allyName && ed.moveSpeedPct) d.moveSpeedPct += ed.moveSpeedPct;   // 移速裝備只計主操作玩家；傭兵裝備不影響全隊接敵／補怪速度
+        if(!_recomputingAlly && !p._allyName && ed.bossEncounterPct) d.bossEncounterPct = Math.max(d.bossEncounterPct, ed.bossEncounterPct);   // 頭目遭遇率只計主操作玩家裝備
+        if(ed.corrosiveJellySkin) d.corrosiveJellySkin = true;
+        if(ed.charmOnHit) d.charmOnHit = true;
         if(e.gw && Array.isArray(e.gw)) e.gw.forEach(w => {   // 🏺 v3.6.44 巨靈的三個願望（非六維願望·六維於 Phase 1 區塊套用）
             if (w === 'hp60') p.mhp += 60; else if (w === 'mp30') p.mmp += 30;
             else if (w === 'md3') d.meleeDmg += 3; else if (w === 'rd3') d.rangedDmg += 3;
@@ -501,23 +505,23 @@ d.mr += (baseMr + bonusMr);
     for (let g in _shSets) p._sherineSetCnt[g] = _shSets[g];
     if (_shN('紅獅') >= 2) { d.extraDmg += 5; d.extraMp += 3; }
     if (_shN('紅獅') >= 3) { d.dr += 10; }
-    p._setRedLion5 = _shN('紅獅') >= 5;          // 最終傷害 +20%（普攻於 getPhysicalDmg、技能於 castSkill、各 proc 套用）
+    p._setRedLion5 = _shN('紅獅') >= 5;          // 最終傷害 +10%（普攻於 getPhysicalDmg、技能於 castSkill、各 proc 套用）
     if (_shN('白鳥') >= 2) { d.extraHit += 5; }
     if (_shN('白鳥') >= 3) { d.cha += 10; }   // 白鳥3件：魅力+10（可突破 60 上限）
     p._setWhiteBird5 = _shN('白鳥') >= 5;        // 一般攻擊命中附加「脆弱」3 秒
     if (_shN('鐵衛') >= 2) { d.ac -= 3; d.dr += 5; }
     p._setIron3 = _shN('鐵衛') >= 3;             // 受到傷害 −20%（受擊時·乘算）
-    p._setIron5 = _shN('鐵衛') >= 5;             // 🔧 受到傷害時，額外對全體敵人造成一次必中的一般攻擊（受擊處觸發）
+    p._setIron5 = _shN('鐵衛') >= 5;             // 🔧 一般攻擊命中附加嘲諷 3 秒（怪物單體攻擊優先鎖定自身，且一般攻擊傷害 -10%）
     if (_shN('麗人') >= 2) { d.meleeDmg += 3; d.meleeHit += 3; }
     if (_shN('麗人') >= 3) { d.meleeCrit += 3; }
-    p._setBeauty5 = _shN('麗人') >= 5;           // 🔧 每次攻擊未命中→額外命中+10可堆疊，直到一次物理命中歸零（getPhysicalDmg）
-    if (!p._setBeauty5) p._beautyMissStack = 0;  // 卸下套裝即清未命中堆疊
+    p._setBeauty5 = _shN('麗人') >= 5;           // 裝備近距離武器時攻擊速度 +20%
+    delete p._beautyMissStack;                    // 清除舊版麗人 5/5 的未命中堆疊 runtime
     if (_shN('疾風') >= 2) { d.rangedDmg += 3; d.rangedHit += 3; }
     if (_shN('疾風') >= 3) { d.rangedCrit += 3; }
     p._setGale5 = _shN('疾風') >= 5;             // 連射傷害 30%→80%
     if (_shN('月光') >= 2) { d.extraDmg += 2; d.extraHit += 3; }
     if (_shN('月光') >= 3) { d.er += 5; d.mr += 10; }
-    p._setMoon5 = _shN('月光') >= 5;             // ER 可迴避魔法（applyMobMagic 套用）
+    p._setMoon5 = _shN('月光') >= 5;             // 普攻／技能傷害附加碎裂 3 秒（AC-10）
     if (_shN('學徒') >= 2) { d.mpR += 5; d.extraMp += 6; }
     if (_shN('學徒') >= 3) { d.magicCrit += 3; }
     p._setApprentice5 = _shN('學徒') >= 5;       // MP<30% 時技能耗魔減半（getMpCost 套用）
@@ -526,7 +530,7 @@ d.mr += (baseMr + bonusMr);
     p._setWitch5 = _shN('魔女') >= 5;            // 🔧 每 5 次共鳴 → 免費冰雪暴（sk_blizzard·4×2D10 水全體·不受法師階級加成）
     if (!p._setWitch5) p._witchResCnt = 0;       // 卸下套裝即重置共鳴計數
     if (_shN('暗影') >= 2) { d.extraDmg += 7; }   // 🔧 暗影 2/5：額外傷害+7
-    p._setShadow3 = _shN('暗影') >= 3;            // 🔧 暗影 3/5：觸發迴避時恢復 2% HP（迴避處套用）
+    p._setShadow3 = _shN('暗影') >= 3;            // 🔧 暗影 3/5：裝備鋼爪／雙刀時，雙擊觸發機率 +20%
     p._setShadow5 = _shN('暗影') >= 5;            // 🔧 暗影 5/5：雙擊額外攻擊傷害加倍（×2·procCombo/allyComboAttack 套用）
     // 🔮 幻覺：立方、冰雪颶風/火牢 DoT、魔爆、spellProc/procSkill 等免費觸發魔法有效；2件每次法術事件僅回一次MP（AOE不逐目標回）；一般傷害法術、共鳴、反射無效；玩家與傭兵規則相同
     p._setIllusion2 = _shN('幻覺') >= 2;
@@ -536,7 +540,7 @@ d.mr += (baseMr + bonusMr);
     p._setDragonblood2 = _shN('龍血') >= 2;
     p._setDragonblood3 = _shN('龍血') >= 3;
     p._setDragonblood5 = _shN('龍血') >= 5;
-    // 😡 狂怒：2件 負重+500（負重段）、3件 最大HP+20%（HP段）皆於下方以 _shN('狂怒') 套用；5件 血量每少10%造傷+4%/受傷-4%(最多±20%)
+    // 😡 狂怒：2件 負重+500（負重段）、3件 最大HP+20%（HP段）皆於下方以 _shN('狂怒') 套用；5件 血量每少10%造傷+3%/受傷-3%(最多±15%)
     p._setFury5 = _shN('狂怒') >= 5;
 
     // 🎴 卡片收集：各地區「完成」加成（HP/MP/抗性/負重等；只取該區最高已達階；weight 累積到 d._cardWeightBonus 供下方負重段）
@@ -730,6 +734,10 @@ d.mr += (baseMr + bonusMr);
     let _rawIntSp = Math.max(0, getIntExtraMp(d.int));
     d.intSp = Math.min(33, _rawIntSp);
     d.itemSp = Math.max(0, (d.extraMp || 0) - _rawIntSp);
+    if (p._setBeauty5 && p.eq && p.eq.wpn) {
+        let _beautyWpn = DB.items[p.eq.wpn.id];
+        if (_beautyWpn && !_beautyWpn.isBow && !_beautyWpn.ranged) spdMult *= (1 / 1.2);   // 麗人 5/5：近距離武器攻速 +20%
+    }
     d.aspd = d.aspd * spdMult;   // 攻速倍率（加速/勇敢/餅乾/精通/裝備等）套入攻擊間隔；施法改由 castIntervalTicks 只讀職業／變身 cast
 
     // 🐾 馴獸師的飼料袋（allLures）：裝備時視為持有全部誘捕狀態；petCaptureOnKill 讀 player._allLures（不消耗、卸下即失效）

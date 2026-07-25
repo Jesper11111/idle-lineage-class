@@ -50,7 +50,7 @@
 使用者說「同步 PP/更新上游」就跑 `.claude/skills/sync-upstream/`。摘要:
 1. `git fetch upstream --tags --prune` + checkout `upstream/main` 到獨立 worktree。
 2. **assets 鏡像**:比對要用 **blob sha**(`git ls-files -s`),不能只比檔名——「兩邊都有但內容不同」佔過大宗(踩過:一次 10,149 檔)。補檔用 tar 走檔案清單(中文檔名不經 exe 參數);**上游沒有的檔要刪**(assets 已於 2026-07-19 達成純鏡像,刪前仍 grep `afk-*.js`+`scripts/` 確認外掛層沒引用)。
-3. `node scripts/sync-upstream.mjs <PP-worktree>`:鏡像 PP 核心與外掛 → **check-save-io** → 注入本地政策外掛 → apply-core/apply-policy/apply-offline-safety → 重產 manifest → stamp 版本 → smoke。**錨點失效會 exit 1**→讀 PP 該處 diff、更新補丁錨點再跑。
+3. `node scripts/sync-upstream.mjs <PP-worktree>`:鏡像 PP 核心與外掛 → **check-save-io** → 注入本地政策外掛 → apply-core/apply-shines-backports/apply-policy/apply-offline-safety → 重產 manifest → stamp 版本 → smoke。`assets/` 鏡像必須使用 `scripts/shines-backport-assets.txt` 排除清單保留核准回移資產。**錨點失效會 exit 1**→讀 PP 該處 diff、更新補丁錨點再跑。
    - **`scripts/check-save-io.mjs`(存檔寫入/壓縮把關)**:`afk-synccompress` 是唯一「整支覆寫核心存檔函式」的外掛(換掉 `_lzSet`、自己拼 `"LZ1:"+compressToUTF16`、bump `_lzWorkerRev`、退路呼叫 `_lsSet`),上游一改存檔格式/Worker 對帳,開著那支的玩家就會被寫出**讀不回來的存檔**,而 smoke 只驗掛點、驗不到。故同步時逐支比對這組核心函式的 sha(基準存在 `upstream-checkpoint.json` 的 `saveIo`),變了就 exit 1。處理:讀 diff → 判斷外掛要不要跟改(有疑慮先在 afk-toggles 給 `synccompress` 加 `locked` 鎖起來) → 確認安全再 `node scripts/check-save-io.mjs --accept` 收下新基準。
 4. 更新 `upstream-checkpoint.json` → commit(不主動 push)。
 5. 小百科與掉落查詢直接鏡像 PP；仍須針對 PP BASE..TARGET 的資料變動做畫面抽查。

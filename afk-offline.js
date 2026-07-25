@@ -494,6 +494,69 @@
   //   大存檔的 JSON.stringify+壓縮是結算的大宗成本——頭目密集圖 24h 可達數百次)。
   //   檢查點與結算尾自己要存時暫時放行(見 doCheckpoint);錨點不動,被擋掉的段落中斷了也只是重算,不丟收益。
   var _saveSquelch = false;
+  // 🔒 Jesper offline cache contract v5
+  // 快取必須隨真正影響戰力的資料失效。舊簽章只有地圖/等級/裝備 id+強化，會漏掉
+  // 配點、自動技能、套裝詞綴、傭兵與寵物；內容更新後甚至可能沿用舊版殺速與 BOSS 結果。
+  var OFFSTATS_SCHEMA = 2;
+  var OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r1';
+  function offStatsStable(v) {
+    if (v == null || typeof v === 'number' || typeof v === 'boolean' || typeof v === 'string') return v;
+    if (Array.isArray(v)) return v.map(offStatsStable);
+    if (typeof v !== 'object') return null;
+    var out = {};
+    Object.keys(v).sort().forEach(function (k) {
+      var x = v[k];
+      if (typeof x === 'function' || typeof x === 'undefined') return;
+      out[k] = offStatsStable(x);
+    });
+    return out;
+  }
+  function offStatsItem(it) {
+    if (!it || !it.id) return null;
+    var skip = { uid:1, cnt:1, lock:1, junk:1, junkSince:1, _autoSellQty:1, _ruleJunk:1, _userKeep:1, src:1, source:1 };
+    var out = {};
+    Object.keys(it).sort().forEach(function (k) {
+      if (skip[k] || typeof it[k] === 'function' || typeof it[k] === 'undefined') return;
+      out[k] = offStatsStable(it[k]);
+    });
+    return out;
+  }
+  function offStatsEq(eq) {
+    var out = {};
+    Object.keys(eq || {}).sort().forEach(function (slot) {
+      var sig = offStatsItem(eq[slot]); if (sig) out[slot] = sig;
+    });
+    return out;
+  }
+  function offStatsActor(a) {
+    if (!a) return null;
+    return offStatsStable({
+      cls:a.cls || '', lv:a.lv || 1, base:a.base || {}, d:a.d || {}, skills:a.skills || [],
+      grantedSkills:a.grantedSkills || [], config:a.config || {}, eq:offStatsEq(a.eq),
+      atkSkill:a._atkSkill || '', healSkill:a._healSkill || '', convertSkill:a._convertSkill || '',
+      summon:a.summon || null, slot:a._slot || ''
+    });
+  }
+  function offStatsPet(p) {
+    if (!p) return null;
+    return offStatsStable({ form:p.form || '', lv:p.lv || 1, d:p.d || {}, eq:offStatsEq(p.eq), outSlot:p.outSlot || '' });
+  }
+  function offStatsHash(text) {
+    var h = 2166136261;
+    for (var i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return (h >>> 0).toString(36);
+  }
+  function offStatsSig() {
+    var pets = [];
+    try { if (typeof petsOutList === 'function') pets = petsOutList().map(offStatsPet); } catch (e) {}
+    var payload = {
+      schema:OFFSTATS_SCHEMA, ruleset:OFFSTATS_RULESET,
+      game:(typeof GAME_VERSION !== 'undefined' ? GAME_VERSION : ''), map:mapState.current,
+      modes:[!!player.sherineWorld, !!player.sherineMad, !!player.classicMode, !!player.traditionalMode],
+      player:offStatsActor(player), allies:(player.allies || []).map(offStatsActor), pets:pets
+    };
+    return 'v5|' + offStatsHash(JSON.stringify(offStatsStable(payload)));
+  }
   async function runCatchup(totalTicks, withOverlay, huntMap, prePride, preObl, timing) {
     if (catchingUp) return;
     catchingUp = true;
@@ -628,21 +691,14 @@
     // ═══ 💾 結算統計快取(2026-07-10,使用者核可) ═══════════════════════════════
     // 結算量到的統計(殺速/每種 BOSS 實測/消耗率)存進存檔(player._offStats)帶簽章;下次同簽章
     // 直接進快速段 → 跳過 5 分鐘取樣與每種 BOSS 首打,同圖同實力的每日結算恆定秒級。
-    // 簽章=引擎版+地圖+等級+世界模式(席琳/瘋狂/經典/傳統)+全裝備(id+強化) → 任一變動即失效重取樣;
+    // 簽章=規則版+地圖/模式+玩家/傭兵/寵物戰力+完整裝備詞綴+自動技能設定 → 任一變動即失效重取樣;
     // 另設 72h 時效(防遊戲平衡改版後舊統計久留);撞死時清除(這套統計不可信)。
     var OFFSTATS_MAX_AGE_MS = 72 * 3600 * 1000;
-    function offStatsSig() {
-      var eq = [];
-      try { for (var k in player.eq) { var e = player.eq[k]; if (e && e.id) eq.push(k + ':' + e.id + ':' + (e.en || 0)); } } catch (e) {}
-      eq.sort();
-      return ['v4', mapState.current, player.lv, player.sherineWorld ? 1 : 0, player.sherineMad ? 1 : 0,
-        player.classicMode ? 1 : 0, player.traditionalMode ? 1 : 0, eq.join(',')].join('|');   // v2:2026-07-11 上游大移植(遺物效果/傭兵攻速/能力上限100/藥水隨機)殺速普遍改變,讓全體舊統計失效重取樣
-    }
     function saveOffStats() {   // 量到新統計就更新快取(隨檢查點/結算尾的 saveGame 固化進存檔)
       try {
         if (!(svcPerEvent > 0)) return;
         if (hpFloorFixed) return;   // 斷貨後的「質變戰局」統計不寫快取:簽章不含消耗品庫存,隔天補貨後會拿沒藥的殺速亂算
-        player._offStats = { v: 1, sig: offStatsSig(), svcE: svcPerEvent, batch: batchPerEvent, consume: consumePerTick || {}, boss: bossStats, savedAt: Date.now() };
+        player._offStats = { v: OFFSTATS_SCHEMA, sig: offStatsSig(), svcE: svcPerEvent, batch: batchPerEvent, consume: consumePerTick || {}, boss: bossStats, savedAt: Date.now() };
       } catch (e) {}
     }
     // ═══ 結算統計快取(宣告結束) ═══════════════════════════════════════════════
@@ -900,7 +956,7 @@
       return fastAdvance(svcPerEvent * (_killed / batchPerEvent));
     }
     // 💾 統計快取命中 → 直接進快速段(跳過取樣與 BOSS 首打);未命中 → 照常從取樣開始
-    if (fastEligible && player._offStats && player._offStats.v === 1 && player._offStats.svcE > 0
+    if (fastEligible && player._offStats && player._offStats.v === OFFSTATS_SCHEMA && player._offStats.svcE > 0
         && player._offStats.sig === offStatsSig()
         && (Date.now() - (player._offStats.savedAt || 0)) < OFFSTATS_MAX_AGE_MS) {
       svcPerEvent = player._offStats.svcE;
@@ -1358,6 +1414,9 @@
     migrationKeyFor: migrationKey,
     migrationDoneFor: migrationDone,
     blockedInstanceMap: blockedInstanceMap,
+    offStatsSchema: OFFSTATS_SCHEMA,
+    offStatsRuleset: OFFSTATS_RULESET,
+    offStatsSignature: offStatsSig,
     mapName: mapName,   // 對外:地圖 id→中文名(供 afk-mobile 在匯入頁顯示「掛在哪張地圖」)
     histKey: histKey,   // 對外:目前角色的離線紀錄 key(供 afk-history)
     setCkptMs: function (ms) { CKPT_MS = Math.max(200, +ms || 5000); },   // 🧪 測試用:縮短檢查點間隔(驗「結算中斷只丟尾段」)

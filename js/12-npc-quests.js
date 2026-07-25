@@ -357,7 +357,7 @@ if (typeof window !== 'undefined' && window.addEventListener) window.addEventLis
 //    同簽章永遠只有一格，任一方鎖定→合併後整疊鎖定（旗標傳遞統一走 _whStackAbsorb）。
 // ⚠️ 巨靈願望戒指(gw)每只的三個願望各自獨立，而 itemSig 不含 gw → 必須顯式排除，
 //    否則存入/取出會把兩只不同願望的戒指併成一疊、其中一份願望資料就此消失。
-function _whStackFind(arr, it){ return ((it.en||0)===0 && !it.gw) ? arr.find(x => (x.en||0)===0 && !x.gw && sameItemSig(x, it)) : null; }
+function _whStackFind(arr, it){ return (!it.gw) ? arr.find(x => !x.gw && sameItemSig(x, it)) : null; }
 function _whStackAbsorb(stack, src, n){ stack.cnt += n; if(src && src.lock){ stack.lock = true; stack.junk = false; } }   // 合併時保護狀態只會擴散、不會遺失
 // 🗑️ 自動販賣暫態旗標不屬於倉庫（那是每次背包工作階段的狀態）。存入與取出都清掉，否則
 //    帶著早已過期 junkSince 的物品一回到背包就會被下一次 10 秒掃描直接賣掉＝零寬限期。

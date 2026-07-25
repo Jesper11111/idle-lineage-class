@@ -776,7 +776,7 @@ const BUFF_NAMES = {   // buff 鍵 → 顯示名稱（DB.skills 查不到時使�
 // 遠古變體 true→'A'（其餘 'eternal'/'immortal'/'primordial' 原值）、屬性詞綴 attr。
 // 使用處：gainItem 堆疊、卸裝/換裝退回背包合併、倉庫一鍵存入(whSig)/堆疊(_whStackFind)、
 // 載入合併(consolidateInventory)、分頁重繪記憶簽章(renderTabs)。勿再各自手寫比對條件。
-function itemSig(it) { let _ams = Math.max(1, Math.min(3, Math.floor(Number(it.attrMagicStar) || 1))); return it.id + '|' + (it.en || 0) + '|' + (it.bless === true ? 'B' : (it.bless ? 'C' : 0)) + '|' + (it.anc === true ? 'A' : (it.anc || 0)) + '|' + (it.attr || '') + '|' + (it.seteff || '') + (it.attrMagic ? '|' + it.attrMagic + (_ams > 1 ? '@' + _ams : '') : ''); }   // 🔮 屬性附加魔法採可選尾碼；1星沿用舊簽章，2/3星分開，避免合併時遺失星級
+function itemSig(it) { let _ams = Math.max(1, Math.min(3, Math.floor(Number(it.attrMagicStar) || 1))); return it.id + '|' + (it.en || 0) + '|' + (it.bless === true ? 'B' : (it.bless ? 'C' : 0)) + '|' + (it.anc === true ? 'A' : (it.anc || 0)) + '|' + (it.attr || '') + '|' + (it.seteff || '') + (it.attrMagic ? '|' + it.attrMagic + (_ams > 1 ? '@' + _ams : '') : ''); }   // 來源、uid、鎖定與廢品旗標不入鍵；同能力物品不論來源皆可疊加。
 function sameItemSig(a, b) { return itemSig(a) === itemSig(b); }
 // 🔒 v3.6.92 「退回背包」的堆疊合併單一真相（卸裝/換裝/箭矢同步/副手同步/舊檔遷移共 6 處呼叫）：
 //    ① 併入同簽章堆疊——含鎖定疊（現行不變量＝同簽章永遠只有一格；舊制刻意跳過鎖定疊會多開一格）。
@@ -784,10 +784,24 @@ function sameItemSig(a, b) { return itemSig(a) === itemSig(b); }
 //    ③ 保護狀態只會擴散、不會遺失：來源鎖定→整疊鎖定並清掉廢品標記
 //       （舊制沒有這步——鎖定的裝備卸下併入未鎖疊時，鎖定狀態會靜默消失）。
 //    ④ 巨靈願望戒指(gw)每只的願望各自獨立，而 itemSig 不含 gw → 兩側都要排除，否則併疊會吃掉一份願望。
-//    回傳 true＝已併入既有堆疊；false＝呼叫端需自行 player.inv.push(e)。
+function _invStackFind(e, includeJunk) {
+    if (!e || e.gw || !Array.isArray(player.inv)) return null;
+    return player.inv.find(i => !i.gw && (includeJunk || !i.junk) && sameItemSig(i, e));
+}
+// 新取得的物品統一入口：來源不影響疊加；鎖定只會擴散，不會因合併遺失。
+function invAddOrStack(e) {
+    if (!e) return null;
+    if (!Array.isArray(player.inv)) player.inv = [];
+    let ex = _invStackFind(e, true);
+    if (!ex) { player.inv.push(e); return e; }
+    ex.cnt = (ex.cnt || 1) + (e.cnt || 1);
+    if (e.lock) { ex.lock = true; ex.junk = false; }
+    return ex;
+}
+// 回傳 true＝已併入既有堆疊；false＝呼叫端需自行 player.inv.push(e)。
 function invMergeBack(e) {
     if (!e || e.gw) return false;
-    let ex = player.inv.find(i => !i.gw && !i.junk && sameItemSig(i, e));
+    let ex = _invStackFind(e, false);
     if (!ex) return false;
     ex.cnt = (ex.cnt || 1) + (e.cnt || 1);
     if (e.lock) { ex.lock = true; ex.junk = false; }
@@ -870,18 +884,18 @@ let _lootMobInfo = null;   // 🐾 擊殺掉落期間設 {n,lv,boss}＝掉落來
 const SHERINE_EFFECTS = ['紅獅','白鳥','鐵衛','麗人','疾風','月光','學徒','魔女','暗影','幻覺','龍血','狂怒'];   // ⚠️ 各名稱 slice(0,2) 須唯一（計件用）：幻覺/龍血/狂怒 與既有皆不撞
 // 套裝加成說明（資訊欄顯示用；計數=身上「不重複效果」數，同效果兩件只算 1）
 const SHERINE_SET_TEXT = {
-    '紅獅': ['2件：額外傷害+5、額外魔法點數+3', '3件：傷害減免+10', '5件：最終傷害+20%（普攻與技能皆適用）'],
-    '白鳥': ['2件：額外命中+5', '3件：魅力+10', '5件：一般攻擊命中時使目標「脆弱」3秒（受所有傷害+20%，重複觸發刷新）'],
-    '鐵衛': ['2件：AC-3、傷害減免+5', '3件：受到傷害減少20%', '5件：受到傷害時，額外對全體敵人造成一次必中的一般攻擊'],
-    '麗人': ['2件：近距離傷害+3、近距離命中+3', '3件：近距離爆擊率+3%', '5件：每觸發一次攻擊未命中，額外命中+10可堆疊，直到一次物理攻擊命中歸零'],
+    '紅獅': ['2件：額外傷害+5、額外魔法點數+3', '3件：傷害減免+10', '5件：最終傷害+10%（普攻與技能皆適用）'],
+    '白鳥': ['2件：額外命中+5', '3件：魅力+10', '5件：一般攻擊命中時使目標「脆弱」3秒（受所有來源傷害+10%，重複觸發刷新）'],
+    '鐵衛': ['2件：AC-3、傷害減免+5', '3件：受到傷害減少20%', '5件：一般攻擊命中附加嘲諷 3 秒，使目標優先攻擊自身；受嘲諷目標的一般攻擊傷害-10%'],
+    '麗人': ['2件：近距離傷害+3、近距離命中+3', '3件：近距離爆擊率+3%', '5件：裝備近距離武器時，攻擊速度+20%'],
     '疾風': ['2件：遠距離傷害+3、遠距離命中+3', '3件：遠距離爆擊率+3%', '5件：連射傷害由30%提升為80%'],
-    '月光': ['2件：額外傷害+2、額外命中+3', '3件：ER+5、MR+10', '5件：ER 也能迴避魔法攻擊（怪物必中技能改為先判定 ER）'],
+    '月光': ['2件：額外傷害+2、額外命中+3', '3件：ER+5、MR+10', '5件：一般攻擊或技能造成傷害時，使目標「碎裂」3秒（AC-10，最多1層，重複觸發刷新）'],
     '學徒': ['2件：MP自然恢復+5、額外魔法點數+6', '3件：魔法爆擊率+3%', '5件：MP 低於最大值30%時，所有技能 MP 消耗減半（MP回升超過30%即恢復）'],
     '魔女': ['2件：魔法傷害+3', '3件：水屬性抗性+10、額外魔法點數+5', '5件：每觸發 5 次共鳴，免費發動一次冰雪暴（無需學會）'],
-    '暗影': ['2件：額外傷害+7', '3件：觸發迴避時恢復 2% HP', '5件：雙擊觸發的額外一般攻擊傷害加倍'],
+    '暗影': ['2件：額外傷害+7', '3件：裝備鋼爪、雙刀時，雙擊觸發機率+20%', '5件：雙擊觸發的額外一般攻擊傷害加倍'],
     '幻覺': ['2件：立方、冰雪颶風／火牢持續傷害、魔爆及武器內建／免費觸發魔法每次發動並造成傷害時，恢復一次「等級/10」的MP（不因命中多名敵人重複恢復）', '3件：輔助技能消耗MP減少50%', '5件：上述魔法造成傷害時，再次造成額外相同傷害（不包含一般傷害法術、共鳴與反射；額外傷害不再觸發套裝效果）'],
     '龍血': ['2件：造成物理傷害時恢復1%該傷害的HP（自身HP低於50%時改為5%）', '3件：施放消耗HP的技能可獲得「龍裔」10秒，受到傷害減少15%', '5件：消耗HP技能造成傷害提高20%'],
-    '狂怒': ['2件：負重上限+500', '3件：最大HP+20%', '5件：HP每少10%，造成傷害+4%、受到傷害-4%（最多±20%，即HP低於50%時達上限）']
+    '狂怒': ['2件：負重上限+500', '3件：最大HP+20%', '5件：HP每少10%，造成傷害+3%、受到傷害-3%（最多±15%，即HP低於50%時達上限）']
 };
 // ===== 🦴 v3.1.68 席琳遺骸系統（單一真相表）＝套裝效果新載體 =====
 // 套裝詞綴「不再出現於裝備上」（gainItem 掉落/製作附加已停用）；現有裝備詞綴保留（名稱/資訊欄照舊）但不再計入套裝件數。
@@ -1100,10 +1114,10 @@ const DARK_CRYSTAL_DROPS = {
     '巴風特':     [['bk_dark_armorbreak',1]],
     '安塔瑞斯':   [['bk_dark_armorbreak',5]]
 };
-// 脆弱（白鳥5）：受所有主要傷害來源 +20%
+// 脆弱（白鳥5）：受所有來源傷害 +10%
 function fragileMult(t) {
     let m = 1;
-    if (t && t.st) { if (t.st.fragile > 0) m *= 1.2; if (t.st.armorbreak > 0) m *= 1.58; }
+    if (t && t.st) { if (t.st.fragile > 0) m *= 1.1; if (t.st.armorbreak > 0) m *= 1.58; }
     // 👑 精準目標：場上所有敵人受傷 +[1+(施放者等級/15)]%（🏅 血盟精通→/10）。v2.7.92 修稽核：王族「傭兵」施放的也生效——隊長優先、否則取第一個有此 buff 的傭兵（不疊加·單一來源）；v2.6.50 維持閘本就讓傭兵只在隊長沒開時補位＝互補
     let _pp = null;
     if (typeof player !== 'undefined' && player) {
@@ -1112,7 +1126,7 @@ function fragileMult(t) {
     }
     if (_pp) { let _div = (_pp.mastery === 'k_royal_pledge') ? 10 : 15; m *= (1 + (1 + (_pp.lv || 1) / _div) / 100); }
     return m;
-}   // 🔮 脆弱(白鳥5)+20%、🔧 破壞盔甲+58%；👑 精準目標（隊長或傭兵擇一）
+}   // 🔮 脆弱(白鳥5)+10%、🔧 破壞盔甲+58%；👑 精準目標（隊長或傭兵擇一）
 
 // ============================================================================
 // 🏅 職業精通系統（威頓村 NPC 漢，Lv50+）
@@ -2034,6 +2048,14 @@ Object.assign(ITEM_WEIGHTS, {"迷宮惡魔的瞥視":130,"盔甲內襯鎖鏈衣"
  ['墮落的司祭(四階)','relic_priest_robe'],['墮落的司祭(五階)','relic_priest_sandals'],['象牙塔鋼鐵高崙','relic_mageblade_knife'],
  ['卡魯塔','relic_ghost_teardrop'],['卡瑞','relic_true_dragonslayer'],['死亡騎士','relic_flame_dk_sword']].forEach(r => (MOB_DROPS[r[0]] = MOB_DROPS[r[0]] || []).push([r[1], 0.0001]));
 Object.assign(ITEM_WEIGHTS, {"高崙的生命印記":5,"無數鋸齒的邪惡利牙":30,"克特之盾":150,"隨從的護身斗篷":10,"灰燼巨獸的束鏈":50,"烈焰焚燒的巴風特盔甲":30,"司祭的無眼頭飾":20,"司祭的斷指護手":10,"司祭的鎖喉頸圈":5,"司祭的腐爛長袍":30,"司祭的殘破草鞋":15,"專精劍術的魔劍士之刀":40,"受困幽魂的淚滴":5,"真‧屠龍劍":150,"烈焰的死亡騎士之劍":150});   // 🏺 遺物重量（依名稱·v3.7.52 +15 件·規格書指定值）
+// 🔌 Shines v3.8.27 選配回移：天空之神的化身、死靈之書（各 0.0001%）
+[['底比斯 尼荷斯(藍)','relic_sky_god_avatar'],['死亡的司祭(思克巴)','relic_necro_book']]
+    .forEach(r => (MOB_DROPS[r[0]] = MOB_DROPS[r[0]] || []).push([r[1], 0.0001]));
+Object.assign(ITEM_WEIGHTS, {"天空之神的化身":50,"死靈之書":10});
+// 🔌 Shines v3.8.26 選配回移：五件遺物（各 0.0001%）
+[['混沌的司祭(飛翼)','relic_wing_chaos_blades'],['象牙塔果凍怪','relic_corrosive_jelly_skin'],['巴列斯','relic_goat_demon_feet'],['暗黑思克巴女皇','relic_succubus_queen_kiss'],['傲慢的潔尼斯女王','relic_spider_queen_footprints']]
+    .forEach(r => (MOB_DROPS[r[0]] = MOB_DROPS[r[0]] || []).push([r[1], 0.0001]));
+Object.assign(ITEM_WEIGHTS, {"飛翼的混沌雙刀":30,"腐蝕的果凍外皮":10,"山羊惡魔的雙足":10,"斯克巴女皇的魅惑之吻":5,"蜘蛛女王的足跡":15});
 Object.assign(ITEM_WEIGHTS, {"古代地龍鱗盔甲":250,"古代水龍鱗盔甲":250,"古代火龍鱗盔甲":250,"古代風龍鱗盔甲":250,"安塔瑞斯的力量":150,"安塔瑞斯的魅惑":50,"安塔瑞斯的泉源":100,"安塔瑞斯的霸氣":100,"地龍之魔眼":10,"深紅之弩":25});   // 🐉 安塔瑞斯副本裝備重量（依名稱·v3.7.57·規格書指定值）；🕸️ v3.7.75 深紅之弩重量 100→25（依新規格）
 // 🐉 v3.7.57 侵蝕的安塔瑞斯巢穴掉落（依規格書·%·全新怪鍵無覆蓋疑慮；中間兩階變身不死不掉落·只有最終階結算）
 Object.assign(MOB_DROPS, {

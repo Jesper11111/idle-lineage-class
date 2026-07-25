@@ -22,16 +22,19 @@
 const CASTLE_GUARD_BOOK = {
     kent:     { form: '藍色鯊魚', city: 'kent',     label: '肯特',
         hpPerLv: 16, dpsRatio: 0.50, aspdSec: 1.0,
+        hitBonus: 30,
         acBase: -10, acLvDiv: 4, mrBase: 10, mrLvDiv: 5,
         aggroWeight: 5, threat: 5,
         d: '肯特守衛隊長麾下的藍色鯊魚部隊：血厚耐打的前排護衛（受擊機率高、承受敵方火力）。' },
     windwood: { form: '暴風之刃', city: 'windwood', label: '風木',
         hpPerLv: 10, dpsRatio: 0.70, aspdSec: 0.5,
+        hitBonus: 35,
         acBase: -10, acLvDiv: 4, mrBase: 25, mrLvDiv: 2,
         aggroWeight: 3, threat: 1,
         d: '風木傭兵隊長麾下的暴風之刃部隊：攻速最快、輸出最高的突擊護衛（不易被鎖定）。' },
     heine:    { form: '毒蛇之牙', city: 'heine',    label: '海音',
         hpPerLv: 13, dpsRatio: 0.60, aspdSec: 0.7,
+        hitBonus: 33,
         acBase: -15, acLvDiv: 4, mrBase: 15, mrLvDiv: 2,
         aggroWeight: 4, threat: 3,
         d: '海音神官隊長麾下的毒蛇之牙部隊：攻守均衡的護衛（魔法防禦與迴避兼具）。' },
@@ -147,13 +150,14 @@ function _guardDobBaseDps(lv) {
     let mm = (typeof petMasteryDmgMult === 'function') ? (petMasteryDmgMult() || 1) : 1;
     return Math.max(1, perHit / mm);
 }
-function _guardHit(lv) {   // 命中沿用裸杜賓命中（剔除夥伴精通命中加成），維持與寵物同水準
+function _guardHit(lv, hitBonus) {   // 護衛命中＝自身等級＋部隊補強＋裸杜賓命中（剔除夥伴精通）
+    hitBonus = Math.max(0, Number(hitBonus) || 0);
     if (typeof petDerive === 'function' && typeof PET_BOOK !== 'undefined' && PET_BOOK['杜賓狗']) {
         let d = petDerive({ form: '杜賓狗', lv: Math.max(1, lv) });
         let hm = (typeof petMasteryHitMult === 'function') ? (petMasteryHitMult() || 1) : 1;
-        if (d) return Math.max(1, Math.round((d.hit || 0) / hm));
+        if (d) return Math.max(1, Math.round(lv + hitBonus + (d.hit || 0) / hm));
     }
-    return Math.max(1, Math.round(lv * 1.2));
+    return Math.max(1, Math.round(lv * 2.2 + hitBonus));
 }
 function guardDerive(g) {
     let spec = _guardSpecForForm(g.form); if (!spec) return { flat: 0, dice: 1, aspd: 10, hit: 1, ac: 10, dr: 0, mr: 0 };
@@ -165,7 +169,7 @@ function guardDerive(g) {
     return {
         flat: flat, dice: dice,
         aspd: Math.max(3, Math.round(spec.aspdSec * 10)),   // 秒 → ticks（10 tps）
-        hit: _guardHit(lv),
+        hit: _guardHit(lv, spec.hitBonus),
         ac: spec.acBase - Math.floor(lv / spec.acLvDiv),
         dr: Math.floor(lv / 12),
         mr: spec.mrBase + Math.floor(lv / spec.mrLvDiv),
@@ -290,6 +294,7 @@ function enemyAttackGuard(mob, s) {
     if (mob._grace) dmg = Math.floor(dmg * 1.5);
     dmg = Math.max(1, Math.floor(dmg * (typeof riftDamageMult === 'function' ? riftDamageMult() : 1)) - d.dr);
     dmg = Math.max(1, Math.floor(dmg * (typeof teamDmgReduceMult === 'function' ? teamDmgReduceMult(true) : 1)));
+    if (typeof ironGuardTauntWeakensAttack === 'function' && ironGuardTauntWeakensAttack(mob)) dmg = Math.floor(dmg * 0.9);   // 🔮 鐵衛 5/5：受嘲諷目標的一般攻擊傷害 -10%
     s.hp -= dmg;
     if (typeof _petAnimAct === 'function') _petAnimAct(s, 'hurt');
     logCombat(`<span class="${getMobColor(mob.lv)}">${mob.n}</span> 攻擊 <span class="text-cyan-300">${s.form}</span>，造成 ${dmg} 點傷害。`, 'enemy-attack', 'enemy');

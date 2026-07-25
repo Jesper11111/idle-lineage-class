@@ -1,0 +1,9 @@
+# rsync 路徑相對於 assets/；這些是核准自 Shines 回移、PP 尚未提供的必要資產。
+/icons/armors/天空之神的化身.png
+/icons/armors/死靈之書.png
+/icons/weapons/飛翼的混沌雙刀.png
+/icons/armors/腐蝕的果凍外皮.png
+/icons/armors/山羊惡魔的雙足.png
+/icons/armors/斯克巴女皇的魅惑之吻.png
+/icons/armors/蜘蛛女王的足跡.png
+/anim/骷髏召喚物/

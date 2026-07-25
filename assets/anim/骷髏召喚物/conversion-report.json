@@ -1,0 +1,18 @@
+{
+  "source": "C:/Users/User/Downloads/召喚怪物/骷髏",
+  "body": 30,
+  "shadow": 112,
+  "canvas": {
+    "w": 249,
+    "h": 140
+  },
+  "actions": {
+    "walk": 40,
+    "idle": 8,
+    "attack": 0,
+    "skill": 0,
+    "hurt": 16,
+    "death": 24
+  },
+  "copied": 392
+}

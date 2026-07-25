@@ -329,6 +329,7 @@ function killMob(idx) {
     let _svKillSrc = _combatSrc; _combatSrc = 'player';
     try {
     if (typeof pvpOnKillMob === 'function') pvpOnKillMob(mob);
+    if (typeof necroBookOnKill === 'function') necroBookOnKill(mob);   // 🏺 Shines v3.8.12：全隊 1% 回復＋骷髏復生（建築由函式內排除）
     if(typeof auditTrackKill === 'function') auditTrackKill(mob);   // 統計：累計經驗/擊殺
     // 🔧 轉場建築（往上層的樓梯 / 遺忘之島傳送門）：擊敗即進入下一層/島，不顯示「擊敗了…」戰鬥訊息（race 建築且 noAutoTeleport，排除攻城塔/城門）
     let _hideKillMsg = (mob.race === '建築' && mob.noAutoTeleport);

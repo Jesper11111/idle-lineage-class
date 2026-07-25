@@ -641,7 +641,7 @@ function petReleaseConfirm(uidv, yes) {
     let _gearBack = [];   // 放生退裝：身上的武器/防具退回背包
     if (p.eq) { for (let _k of ['wpn', 'arm']) { if (p.eq[_k]) _gearBack.push(p.eq[_k]); } }
     _petRoster = petRoster().filter(x => x.uid !== uidv);
-    _gearBack.forEach(g => player.inv.push(_petGearUnpack(g)));
+    _gearBack.forEach(g => { let _back = _petGearUnpack(g); if (!invMergeBack(_back)) player.inv.push(_back); });
     petMarkDirty();
     if (!_petCommitMutation(snap)) { if (_d) renderPetStorageNPC(_d); return; }
     _petReleasedUids[uidv] = true;   // 墓碑於成功後才標記（失敗回滾時寵物須能寫回桶）·補寫一次讓 _rm 立即持久化
@@ -782,7 +782,7 @@ function petGearEquip(uidv, key, invUid) {
         p.eq[key] = _petGearPack(item);
         player.inv.splice(idx, 1);
     }
-    if (old) player.inv.push(_petGearUnpack(old));
+    if (old) { let _back = _petGearUnpack(old); if (!invMergeBack(_back)) player.inv.push(_back); }
     p.eqV = _petNowStamp();   // 🕐 裝備版本戳＝最後變更（防別角色/自動存檔洗掉）
     petMarkDirty();
     if (!_petCommitMutation(snap)) return;   // 失敗＝背包與寵物一併還原
@@ -797,7 +797,7 @@ function petGearUnequip(uidv, key) {
     let snap = _petMutationSnapshot();
     let g = p.eq[key];
     p.eq[key] = null; delete p.eq[key];
-    player.inv.push(_petGearUnpack(g));
+    { let _back = _petGearUnpack(g); if (!invMergeBack(_back)) player.inv.push(_back); }
     p.eqV = _petNowStamp();   // 🕐 裝備版本戳＝最後變更（卸下也算）
     petMarkDirty();
     if (!_petCommitMutation(snap)) return;
@@ -1088,6 +1088,7 @@ function enemyAttackPet(mob, p) {
     if (mob._grace) dmg = Math.floor(dmg * 1.5);
     dmg -= (d.dr || 0) + petRandomPhysicalDr(p, d) + petHardenDr(p);
     dmg = Math.floor(Math.max(1, dmg) * (typeof teamDmgReduceMult === 'function' ? teamDmgReduceMult(true) : 1) * petMasteryTakenMult() * petArmorDmgReduceMult(p));   // 👑 夥伴精通：受到傷害 −50%；🏺 寵物專用盔甲：受傷 ×(1−petDmgReduce)
+    if (typeof ironGuardTauntWeakensAttack === 'function' && ironGuardTauntWeakensAttack(mob)) dmg = Math.floor(dmg * 0.9);   // 🔮 鐵衛 5/5：受嘲諷目標的一般攻擊傷害 -10%
     dmg = Math.max(1, Math.floor(dmg * riftDamageMult()));
     if (petDevotionGuardOn(p)) dmg = 0;   // 🏺 v3.6.44 珍愛夥伴的執念：復活後 8 秒受到傷害 −100%
     p.hp -= dmg;
@@ -1509,7 +1510,7 @@ function petMigrateLegacy() {
         if (player.eq && player.eq.pet) {
             let _pg = player.eq.pet;
             if (typeof _pg.cnt === 'undefined') _pg.cnt = 1;
-            player.inv.push(_pg);
+            if (!invMergeBack(_pg)) player.inv.push(_pg);
             player.eq.pet = null; delete player.eq.pet;
             logSys(`<span class="text-amber-200">寵物裝備改為每隻寵物個別穿戴：原「寵物裝備」欄上的 ${DB.items[_pg.id] ? DB.items[_pg.id].n : _pg.id}${(_pg.en || 0) > 0 ? '+' + _pg.en : ''} 已放回背包，請至寵物保管（亞丁 包武／古魯丁 奧斯丁）為寵物裝上。</span>`);
         }

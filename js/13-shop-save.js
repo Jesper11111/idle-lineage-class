@@ -1543,9 +1543,8 @@ function consolidateInventory() {
     let seen = {};
     let out = [];
     player.inv.forEach(it => {
-        if ((it.en || 0) !== 0) { out.push(it); return; }   // 強化品不合併
         if (it.gw) { out.push(it); return; }                // 巨靈願望戒指：逐只獨立
-        let key = itemSig(it);   // 🔧 架構#3：統一簽章（祝福/詛咒/遠古變體/屬性/en 全部入鍵）
+        let key = itemSig(it);   // 🔧 架構#3：統一簽章（祝福/詛咒/遠古變體/屬性/en 全部入鍵；不同來源不分堆）
         // 🔒 v3.6.92 鎖定狀態不再入鍵（取代 v3.6.57 的 `|lock` 分堆）：同簽章一律併成一格，任一方鎖定→整疊鎖定。
         //    這是「再次獲得直接合併同一格」的收尾——舊存檔留下的「鎖定一疊＋未鎖定一疊」載入時自動歸併，
         //    製作遞迴留下的中間物殘量（js/14 _lockMergeOff）也在此併回鎖定疊。
@@ -1566,7 +1565,7 @@ function consolidateInventory() {
 //   ——渲染時被 `if(!DB.items[id])` 守衛跳過（看不到卻仍佔背包格＋脹存檔）、無價格無法販售、無 eff/type 無法使用。
 //   載入時自動從「背包＋共用倉庫」移除並彙總一則訊息。⚠️保留舊項圈 ID（由 petMigrateLegacy 轉為寵物·勿當孤兒刪）。
 //   倉庫僅在「讀取成功」時寫回（沿用 saveWarehouse 的 _whLoadOk 防護·不覆蓋救得回的位元組）。
-function purgeOrphanItems() {
+function purgeOrphanItems(warehouse) {
     try {
         if (!player || typeof DB === 'undefined' || !DB.items) return 0;
         let _keepCollar = (typeof _PET_LEGACY_COLLARS !== 'undefined') ? _PET_LEGACY_COLLARS : {};
@@ -1579,7 +1578,7 @@ function purgeOrphanItems() {
         }
         try {
             if (typeof loadWarehouse === 'function' && typeof saveWarehouse === 'function') {
-                let wh = loadWarehouse();
+                let wh = warehouse && typeof warehouse === 'object' ? warehouse : loadWarehouse();
                 if (typeof _whLoadOk === 'undefined' || _whLoadOk !== false) {
                     let items = (wh && wh.items) || [];
                     let kept = items.filter(it => it && !isOrphan(it.id));
@@ -1665,7 +1664,10 @@ function loadGame() {
         if(player.allies === undefined || !Array.isArray(player.allies)) player.allies = [];   // 協力角色（其他存檔位）
         // 🐾 v3.2.17 夥伴系統 v2：舊項圈/肉/哨子/舊進化果實/舊 petStorage 一次性轉換與清除（項圈→新寵物入共用保管）
         try { if (typeof petMigrateLegacy === 'function') petMigrateLegacy(); } catch (e) { console.warn('petMigrateLegacy', e); }
-        try { purgeOrphanItems(); } catch (e) { console.warn('purgeOrphanItems', e); }   // 🧹 v3.2.62 清除已停用舊物品（DB 無定義的孤兒·背包+倉庫·排除待轉換的舊項圈）
+        // 🔌 Shines v3.8.27 選配回移：同次讀檔共用一次倉庫解析，避免大型舊存檔重複解壓。
+        let _loadWarehouse = null, _loadWarehouseReady = false;
+        try { if (typeof loadWarehouse === 'function') { _loadWarehouse = loadWarehouse(); _loadWarehouseReady = true; } } catch (e) {}
+        try { purgeOrphanItems(_loadWarehouseReady ? _loadWarehouse : undefined); } catch (e) { console.warn('purgeOrphanItems', e); }   // 🧹 v3.2.62 清除已停用舊物品（DB 無定義的孤兒·背包+倉庫·排除待轉換的舊項圈）
         // 相容舊存檔：返生術改為被動技能，清除先前施放殘留的無作用 buff；初始化復活卷軸冷卻
         if(player.buffs) player.buffs.sk_resurrection = 0;
         if(player.buffs && player.buffs.haste >= 999999) player.buffs.haste = 0;   // 修復舊版伊娃之盾殘留的永久加速（改由 _equipHaste 旗標處理）
@@ -1707,7 +1709,7 @@ function loadGame() {
             player.inv.forEach(_fixSet);
             for (let k in player.eq) _fixSet(player.eq[k]);
             (player.allies || []).forEach(a => { if (a && a.eq) { for (let k in a.eq) _fixSet(a.eq[k]); } if (a && a.inv) a.inv.forEach(_fixSet); });
-            try { let _w = loadWarehouse(); let _chg = false; _w.items.forEach(it => { if (it && it.seteff) { let dd = DB.items[it.id]; if (dd && dd.slot === 'amulet') { it.seteff = false; _chg = true; } } }); if (_chg) saveWarehouse(_w); } catch (e) {}
+            try { let _w = _loadWarehouseReady ? _loadWarehouse : loadWarehouse(); let _chg = false; _w.items.forEach(it => { if (it && it.seteff) { let dd = DB.items[it.id]; if (dd && dd.slot === 'amulet') { it.seteff = false; _chg = true; } } }); if (_chg) saveWarehouse(_w); } catch (e) {}
         }
         consolidateInventory();   // 相容舊存檔：合併修復前被拆分的相同卷軸/物品堆疊
         purgeCompletedElfWhisper();   // 🔥 載入時：若已交付完成精靈的私語階段，自動清除身上殘留的精靈的私語
@@ -1805,9 +1807,9 @@ function loadGame() {
         }
         if (typeof loadSharedCollections === 'function') loadSharedCollections();   // 🎴🗡️ 讀檔：載入同模式共用收集圖鑑（卡片/裝備·併入該角色既有資料）
         if (typeof ensureCardBook === 'function') ensureCardBook();   // 🎴 舊存檔遷移：移除道具欄的卡片收集冊本體（改由「收藏」面板開啟）
-        if (typeof ensureEquipBook === 'function') ensureEquipBook();   // 🗡️ 舊存檔遷移：移除裝備收集冊本體＋登錄現有(背包/已裝備)裝備
-        if (typeof ensureMiscDex === 'function') ensureMiscDex();   // 🧰 舊存檔遷移：登錄現有道具到道具收集冊
-        if (typeof ensureRelicDex === 'function') ensureRelicDex();   // 🏺 舊存檔遷移：登錄現有遺物到遺物收集冊
+        if (typeof ensureEquipBook === 'function') ensureEquipBook(_loadWarehouseReady ? _loadWarehouse : undefined);   // 🗡️ 舊存檔遷移：移除裝備收集冊本體＋登錄現有(背包/已裝備)裝備
+        if (typeof ensureMiscDex === 'function') ensureMiscDex(_loadWarehouseReady ? _loadWarehouse : undefined);   // 🧰 舊存檔遷移：登錄現有道具到道具收集冊
+        if (typeof ensureRelicDex === 'function') ensureRelicDex(_loadWarehouseReady ? _loadWarehouse : undefined);   // 🏺 舊存檔遷移：登錄現有遺物到遺物收集冊
 
         // 👇 正確的新版起點邏輯
         // 🔧 讀檔回「家」改走 getHomeTown()：血盟成員回盟主村莊（海音/歐瑞），否則回職業起始村，與回村按鈕邏輯一致

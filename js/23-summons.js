@@ -183,6 +183,184 @@ function _zmbDerive(s, owner) {
         dr: Math.floor(s.lv / 10)
     };
 }
+
+// ---------- 死靈之書：骷髏復生（Shines v3.8.12）----------
+// 執行期清單刻意不掛在 player 上，避免戰鬥實體進入角色存檔；切換角色時以物件參照自動清空。
+const NECRO_SKELETON_TIERS = [
+    { min: 24, max: 30, lv: 20, hp: 80,  ref: '哈柏哥布林', ratio: 1 },
+    { min: 31, max: 40, lv: 30, hp: 160, ref: '狂野毒牙', ratio: 1 },
+    { min: 41, max: 50, lv: 40, hp: 240, ref: '食人妖精', ratio: 1 },
+    { min: 51, max: 60, lv: 50, hp: 320, ref: '魔狼', ratio: 1 },
+    { min: 61, max: 70, lv: 60, hp: 400, ref: '地獄束縛犬', ratio: 1 / 3 },
+    { min: 71, max: Infinity, lv: 70, hp: 480, ref: '黑豹', ratio: 1 / 6 }
+];
+const NECRO_SKELETON_MAX = 6;
+const NECRO_SKELETON_ASPD = 10;
+const NECRO_SKELETON_HIT_BONUS = 5;
+let _necroSkeletonsV2 = [];
+let _necroPlayerRef = null;
+
+function _necroSyncPlayerRef() {
+    let cur = (typeof player !== 'undefined') ? player : null;
+    if (_necroPlayerRef !== cur) { _necroPlayerRef = cur; _necroSkeletonsV2 = []; }
+}
+function necroSkeletonList() {
+    _necroSyncPlayerRef();
+    return _necroSkeletonsV2;
+}
+function necroBookEquipped(owner) {
+    return !!(owner && owner.eq && owner.eq.shield && owner.eq.shield.id === 'relic_necro_book');
+}
+function _necroOwnerKey(owner) {
+    if (!owner || typeof player === 'undefined') return '';
+    if (owner === player) return 'player';
+    return owner._slot ? 'ally:' + owner._slot : '';
+}
+function _necroOwnerByKey(key) {
+    if (key === 'player') return player;
+    if (!key || !key.startsWith('ally:')) return null;
+    let slot = key.slice(5);
+    return (player.allies || []).find(a => a && String(a._slot) === slot) || null;
+}
+function _necroOwnerAlive(owner) {
+    if (!owner) return false;
+    if (owner === player) return !player.dead && (player.hp || 0) > 0;
+    return !owner._downed && (owner.curHp || 0) > 0;
+}
+function _necroKnows(owner) {
+    return !!(owner && (((owner.skills || []).includes('sk_zombie')) || ((owner.grantedSkills || []).includes('sk_zombie'))));
+}
+function _necroAutoEnabled(owner) {
+    if (!owner) return false;
+    if (owner === player) {
+        let chk = (typeof document !== 'undefined') ? document.getElementById('auto-sk-sk_zombie') : null;
+        if (chk) return !!chk.checked;
+        return !!(owner.config && owner.config.autoBuffSkills && owner.config.autoBuffSkills.sk_zombie);
+    }
+    return (typeof _mercAutoOn === 'function') ? _mercAutoOn(owner, 'sk_zombie') : !!(owner.config && owner.config.autoBuffSkills && owner.config.autoBuffSkills.sk_zombie);
+}
+function necroBookPassiveEnabled(owner) {
+    return _necroOwnerAlive(owner) && necroBookEquipped(owner) && _necroKnows(owner) && _necroAutoEnabled(owner);
+}
+function _necroTierForOwner(owner) {
+    let lv = Math.max(1, (owner && owner.lv) || 1);
+    return NECRO_SKELETON_TIERS.find(t => lv >= t.min && lv <= t.max) || null;
+}
+function _necroSkeletonDerive(s, owner) {
+    owner = owner || _necroOwnerByKey(s && s._necroOwnerKey) || player;
+    let tier = NECRO_SKELETON_TIERS.find(t => t.lv === (s && s.lv)) || _necroTierForOwner(owner) || NECRO_SKELETON_TIERS[0];
+    let ref = _sumDerive({ form: tier.ref, n: tier.ref }, owner);
+    let refMean = (ref.flat + (ref.dice + 1) / 2) * (ref.dmgMult || 1);
+    let dps = refMean * (10 / Math.max(1, ref.aspd || 10)) * tier.ratio;
+    let mean = Math.max(1, dps * (NECRO_SKELETON_ASPD / 10));
+    let flat = Math.round(mean * 0.55);
+    let dice = Math.max(1, Math.round((mean - flat) * 2 - 1));
+    let mastery = owner && owner.mastery === 'm_summon';
+    return {
+        flat: flat, dice: dice, aspd: NECRO_SKELETON_ASPD, dmgMult: 1,
+        hit: _sumScaledHit(tier.lv, Math.max(0, NECRO_SKELETON_TIERS.indexOf(tier)), mastery, owner) + NECRO_SKELETON_HIT_BONUS,
+        ac: 10 - Math.floor(tier.lv / 4), dr: Math.floor(tier.lv / 10)
+    };
+}
+function necroDismissOwner(owner) {
+    let key = _necroOwnerKey(owner);
+    if (!key) return;
+    let before = _necroSkeletonsV2.length;
+    _necroSkeletonsV2 = _necroSkeletonsV2.filter(s => s && s._necroOwnerKey !== key);
+    if (_necroSkeletonsV2.length !== before) renderSummonPanel(true);
+}
+function necroDismissAll() {
+    if (!_necroSkeletonsV2.length) return;
+    _necroSkeletonsV2 = [];
+    renderSummonPanel(true);
+}
+function _necroTeamHeal(holders) {
+    if (!holders.length || typeof healBeneficiaries !== 'function' || typeof _supHeal !== 'function' || typeof _supMhp !== 'function') return;
+    let pct = holders.reduce((m, owner) => {
+        let d = DB.items[owner.eq.shield.id] || {};
+        return Math.max(m, Number(d.killTeamHealPct) || 0);
+    }, 0);
+    if (!(pct > 0)) return;
+    let targets = healBeneficiaries().slice();
+    necroSkeletonList().forEach(s => { if (s && !s._downed && (s.hp || 0) > 0 && !targets.includes(s)) targets.push(s); });
+    targets.forEach(t => {
+        let maxHp = _supMhp(t);
+        _supHeal(t, Math.max(1, Math.floor(maxHp * pct / 100)));
+    });
+}
+function necroBookOnKill(mob) {
+    if (!mob || mob.race === '建築' || typeof player === 'undefined' || !player) return;
+    _necroSyncPlayerRef();
+    let holders = [];
+    if (_necroOwnerAlive(player) && necroBookEquipped(player)) holders.push(player);
+    (player.allies || []).forEach(a => { if (_necroOwnerAlive(a) && necroBookEquipped(a)) holders.push(a); });
+    if (!holders.length) return;
+    _necroTeamHeal(holders);
+
+    let changed = false;
+    let active = holders.filter(owner => necroBookPassiveEnabled(owner));
+    active.forEach(owner => {
+        let tier = _necroTierForOwner(owner);
+        let key = _necroOwnerKey(owner);
+        if (!tier || !key) return;
+        let live = _necroSkeletonsV2.filter(s => s && s._necroOwnerKey === key && !s._downed && (s.hp || 0) > 0);
+        live.forEach(s => {
+            if (s.lv === tier.lv && s.mhp === tier.hp) return;
+            let ratio = Math.max(0, Math.min(1, (s.hp || 0) / Math.max(1, s.mhp || 1)));
+            s.lv = tier.lv; s.mhp = tier.hp; s.hp = Math.max(1, Math.round(tier.hp * ratio));
+            changed = true;
+        });
+    });
+    let liveAll = _necroSkeletonsV2.filter(s => s && !s._downed && (s.hp || 0) > 0);
+    if (active.length && liveAll.length < NECRO_SKELETON_MAX) {
+        let owner = active.reduce((best, cur) => {
+            let curKey = _necroOwnerKey(cur), bestKey = _necroOwnerKey(best);
+            let curCount = liveAll.filter(s => s._necroOwnerKey === curKey).length;
+            let bestCount = liveAll.filter(s => s._necroOwnerKey === bestKey).length;
+            return curCount < bestCount ? cur : best;
+        });
+        let tier = _necroTierForOwner(owner), key = _necroOwnerKey(owner);
+        if (tier && key) {
+            _necroSkeletonsV2.push({
+                uid: uid(), skId: 'sk_zombie', form: '骷髏', formGfx: '骷髏召喚物',
+                lv: tier.lv, hp: tier.hp, mhp: tier.hp, _atkCd: 5,
+                _necroSkeleton: true, _noHeal: true, _necroOwnerKey: key
+            });
+            let ownerName = owner === player ? '你' : `協力·${owner._allyName}`;
+            logCombat(`${ownerName}的死靈之書喚起了 <span class="text-purple-300">骷髏 Lv.${tier.lv}</span>（${liveAll.length + 1}/${NECRO_SKELETON_MAX}）。`, 'magic', 'summon');
+            changed = true;
+        }
+    } else if (liveAll.length >= NECRO_SKELETON_MAX) {
+        let weakest = liveAll.reduce((a, b) => (a.hp || 0) <= (b.hp || 0) ? a : b);
+        if ((weakest.hp || 0) < (weakest.mhp || 0)) { weakest.hp = weakest.mhp; changed = true; }
+    }
+    if (changed) renderSummonPanel(true);
+}
+function necroSkeletonTick() {
+    _necroSyncPlayerRef();
+    if (!_necroSkeletonsV2.length) return;
+    if (!player || player.dead) { _necroSkeletonsV2 = []; renderSummonPanel(true); return; }
+    let now = Date.now(), changed = false;
+    _necroSkeletonsV2 = _necroSkeletonsV2.filter(s => {
+        if (!s) return false;
+        let owner = _necroOwnerByKey(s._necroOwnerKey);
+        if (!necroBookPassiveEnabled(owner)) { changed = true; return false; }
+        return !s._downed || (now - (s._diedAt || 0)) < 2200;
+    });
+    let alive = _necroSkeletonsV2.filter(s => !s._downed && (s.hp || 0) > 0);
+    for (const s of alive) {
+        let owner = _necroOwnerByKey(s._necroOwnerKey);
+        s._atkCd = (s._atkCd != null ? s._atkCd : 5) - 1;
+        if (s._atkCd > 0) continue;
+        let d = _necroSkeletonDerive(s, owner);
+        s._atkCd = d.aspd;
+        let t = (typeof _petPickTarget === 'function') ? _petPickTarget(s) : getTarget();
+        if (!t) continue;
+        if (typeof threatWrap === 'function') threatWrap(s, () => summonV2AttackOnce(s, d, t, owner));
+        else summonV2AttackOnce(s, d, t, owner);
+    }
+    if (changed) renderSummonPanel(true);
+}
 // 🧝 屬性精靈：v3.2.26 四屬性獨立表走 spiritAttackOnce（骰/縮放逐屬性·攻速 16~18 ticks 依 _spiritDerive）；HP/等級為實體設計值。
 // 👑 v3.2.25 精靈精通改版（用戶拍板）：不再增加數量（一律 1 隻）——有精靈精通時，
 //    「召喚強力屬性精靈」改為召喚更強大的「<屬性>精靈王」（SPIRIT_KING 獨立參數·使用原強力精靈的動態）；
@@ -230,10 +408,11 @@ function _spiritDerive(s) {
     };
 }
 // 依實體所屬技能分派衍生數值（攻速/防禦；召喚術另含傷害）
-function _sumDeriveAny(s) {
-    if (s.skId === 'sk_zombie') return _zmbDerive(s);
+function _sumDeriveAny(s, owner) {
+    if (s && s._necroSkeleton) return _necroSkeletonDerive(s, owner);
+    if (s.skId === 'sk_zombie') return _zmbDerive(s, owner);
     if (s.skId === 'sk_elf_summon' || s.skId === 'sk_elf_summon2') return _spiritDerive(s);
-    return _sumDerive(s);   // 🧙 v3.2.24 單價恆定＝基準/cap·與在場隻數無關（_squadSize 已停用）
+    return _sumDerive(s, owner);   // 🧙 v3.2.24 單價恆定＝基準/cap·與在場隻數無關（_squadSize 已停用）
 }
 const SUMMON_V2_SKILLS = ['sk_summon', 'sk_zombie', 'sk_elf_summon', 'sk_elf_summon2'];
 const SUMMON_V2_TITLES = { sk_summon: '召喚物', sk_zombie: '殭屍隨從', sk_elf_summon: '精靈', sk_elf_summon2: '精靈' };
@@ -255,7 +434,7 @@ function summonV2Knows(skId) { skId = skId || 'sk_summon'; return ((player.skill
 function summonRenderList() {   // 供 js/22 寵物圖層渲染（含死亡殘影 2 秒）
     if (typeof player === 'undefined' || !player || !player.cls) return [];
     const now = Date.now();
-    return summonV2List().filter(s => !s._downed || (now - (s._diedAt || 0)) < 2000);
+    return summonV2List().concat(necroSkeletonList()).filter(s => !s._downed || (now - (s._diedAt || 0)) < 2000);
 }
 function summonV2ActiveForm(owner) {   // 本次施放要召的怪（owner 預設玩家·傭兵召喚術傳 ally）
     owner = owner || player;
@@ -331,8 +510,17 @@ function summonV2Recast() {   // 隊伍面板「重新施放」鈕：走正規 c
 // ---------- 三、tick（js/03 召喚階段呼叫）----------
 function summonV2Tick() {
     if (typeof player === 'undefined' || !player || !player.cls) return;
+    necroSkeletonTick();
     const skId = summonV2ActiveSk();
-    const list = player.summonsV2 || [];
+    let list = player.summonsV2 || [];
+    // 死靈之書使造屍術改為擊殺觸發的骷髏復生：清掉換裝前殘留的人形殭屍，且不走耗 MP 自動重施。
+    if (necroBookPassiveEnabled(player) && list.some(s => s && s.skId === 'sk_zombie')) {
+        player.summonsV2 = [];
+        player._summonV2On = false;
+        player.buffs.sk_zombie = 0;
+        list = player.summonsV2;
+        renderSummonPanel(true);
+    }
     // 玩家死亡：召喚物全數消散（比照舊制 killPlayer 清 player.summon）
     if (player.dead) { if (list.length) { player.summonsV2 = []; renderSummonPanel(true); } return; }
     // 到期：全滅處理交由下方自動重施
@@ -343,7 +531,7 @@ function summonV2Tick() {
     }
     const alive = (player.summonsV2 || []).filter(s => !s._downed);
     // 自動重施：開關開啟＋已習得＋在狩獵區＋(全滅或到期)→每 2 秒嘗試一次（castSkill 內部把關 MP/沉默）
-    if (player._summonV2On && !alive.length && summonV2Knows(skId)
+    if (player._summonV2On && !alive.length && summonV2Knows(skId) && !(skId === 'sk_zombie' && necroBookPassiveEnabled(player))
         && (typeof _petInWild !== 'function' || _petInWild())
         && state.ticks >= (player._summonV2RecastCd || 0)) {
         player._summonV2RecastCd = state.ticks + 20;
@@ -482,6 +670,7 @@ function enemyAttackSummon(mob, s) {
     if (mob._grace) dmg = Math.floor(dmg * 1.5);
     dmg = Math.max(1, Math.floor(dmg * riftDamageMult()) - d.dr);
     dmg = Math.max(1, Math.floor(dmg * (typeof teamDmgReduceMult === 'function' ? teamDmgReduceMult(true) : 1)));   // 🔮 化身對寵物／召喚物保留受傷減免；鋼鐵防護只作用於施法者自身 AC
+    if (typeof ironGuardTauntWeakensAttack === 'function' && ironGuardTauntWeakensAttack(mob)) dmg = Math.floor(dmg * 0.9);   // 🔮 鐵衛 5/5：受嘲諷目標的一般攻擊傷害 -10%
     s.hp -= dmg;
     _petAnimAct(s, 'hurt');
     logCombat(`<span class="${getMobColor(mob.lv)}">${mob.n}</span> 攻擊 <span class="text-purple-300">${s.form}</span>，造成 ${dmg} 點傷害。`, 'enemy-attack', 'enemy');
@@ -516,17 +705,21 @@ let _sumPanelSig = '';
 function summonTeamSignature() {
     try {
         const list = summonV2List().filter(s => s && !s._downed && (s.hp || 0) > 0);
+        const necro = necroSkeletonList().filter(s => s && !s._downed && (s.hp || 0) > 0);
         const skId = summonV2ActiveSk();
         const remain = Math.max(0, Math.ceil((player && player.buffs && player.buffs[skId]) || 0));
         return list.map(s => [s.uid, s.form, s.lv || 1, Math.round((s.hp || 0) / Math.max(1, s.mhp || 1) * 20)].join(':')).join('|')
             + '#' + skId + '#' + (player && player._summonV2On ? 1 : 0) + '#' + remain   // v3.2.42 稽核修：倒數逐秒刷新（原 /10 分桶＝顯示最多滯後 10 秒）
+            + '#N:' + necro.map(s => [s.uid, s._necroOwnerKey, s.lv || 1, Math.round((s.hp || 0) / Math.max(1, s.mhp || 1) * 20)].join(':')).join('|')
             + '#M:' + ((typeof mercSummonList === 'function') ? mercSummonList().map(s => [s.uid, s.form, Math.round((s.hp || 0) / Math.max(1, s.mhp || 1) * 20)].join(':')).join('|') : '');   // 🧱 v3.4.51 傭兵召喚物血量(5%階)入簽章→掉血/死亡/重施 500ms 內刷新 team 分頁
     } catch (e) { return ''; }
 }
 
 function renderSummonTeamHTML() {
     try {
-        const list = summonV2List().filter(s => s && !s._downed && (s.hp || 0) > 0);
+        const regular = summonV2List().filter(s => s && !s._downed && (s.hp || 0) > 0);
+        const necro = necroSkeletonList().filter(s => s && !s._downed && (s.hp || 0) > 0);
+        const list = regular.concat(necro);
         const skId = summonV2ActiveSk();
         const show = list.length > 0 || !!(player && player._summonV2On && skId && summonV2Knows(skId));
         if (!show) return '';
@@ -534,20 +727,23 @@ function renderSummonTeamHTML() {
         const time = Math.floor(remain / 60) + ':' + String(remain % 60).padStart(2, '0');
         const rows = list.map(s => {
             const hpPct = Math.max(0, Math.min(100, Math.floor((s.hp || 0) / Math.max(1, s.mhp || 1) * 100)));
+            let owner = s._necroSkeleton ? _necroOwnerByKey(s._necroOwnerKey) : null;
+            let label = s._necroSkeleton && owner && owner !== player ? `${owner._allyName}·${s.form}` : s.form;
             return `<div class="bg-slate-800/80 border border-purple-800 rounded px-2 py-1 text-xs flex items-center gap-2">
-                <span class="text-purple-300 font-bold shrink-0 overflow-hidden text-ellipsis whitespace-nowrap" style="width:5.5rem;">${s.form}</span>
+                <span class="text-purple-300 font-bold shrink-0 overflow-hidden text-ellipsis whitespace-nowrap" style="width:7rem;" title="${label} Lv.${s.lv || 1}">${label}</span>
                 <div class="bar-bg flex-1 !h-3">
                     <div class="bar-fill bg-red-600" style="width:${hpPct}%;"></div>
                     <div class="bar-text text-white" style="font-size:10px;line-height:12px;">${s.hp || 0}/${s.mhp || 0}</div>
                 </div>
             </div>`;
         }).join('');
+        let title = regular.length ? (SUMMON_V2_TITLES[skId] || '召喚物') : '骷髏隨從';
         return `<div class="flex items-center justify-between gap-2 pt-1 border-t border-purple-900/70">
-                <span class="text-purple-300 font-bold text-xs">${SUMMON_V2_TITLES[skId] || '召喚物'}${list.length ? `（${list.length}）` : ''}</span>
+                <span class="text-purple-300 font-bold text-xs">${title}${list.length ? `（${list.length}）` : ''}</span>
                 <span class="text-slate-400 text-xs">${remain > 0 ? time : ''}</span>
             </div>
             ${rows || '<div class="bg-slate-800/80 border border-purple-900 rounded px-2 py-1 text-xs text-slate-400">等待重新召喚</div>'}
-            <button onclick="summonV2Recast()" class="btn w-full text-xs font-bold" style="padding:3px 0;background:linear-gradient(135deg,#4c1d95,#6d28d9);border:1px solid #7c3aed;color:#ddd6fe;border-radius:4px;">重新施放</button>`;
+            ${regular.length ? '<button onclick="summonV2Recast()" class="btn w-full text-xs font-bold" style="padding:3px 0;background:linear-gradient(135deg,#4c1d95,#6d28d9);border:1px solid #7c3aed;color:#ddd6fe;border-radius:4px;">重新施放</button>' : ''}`;
     } catch (e) { return ''; }
 }
 // 🧱 v3.4.51 傭兵召喚物 HP 卡（比照玩家召喚物呈現·接在其後）：v3.4.50 起傭兵召喚物無 sprite 但有血量·此為唯一血量可視化。

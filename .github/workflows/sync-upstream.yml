@@ -58,10 +58,10 @@ jobs:
           echo "ver=$VER" >> "$GITHUB_OUTPUT"
           echo "title=$TITLE" >> "$GITHUB_OUTPUT"
 
-      - name: 鏡像資產（assets / public，--delete 完整對齊）
+      - name: 鏡像資產（assets / public；保留核准的 Shines 回移資產）
         if: steps.chk.outputs.changed == 'true'
         run: |
-          rsync -a --delete /tmp/upstream/assets/ assets/
+          rsync -a --delete --exclude-from=scripts/shines-backport-assets.txt /tmp/upstream/assets/ assets/
           if [ -d /tmp/upstream/public ]; then rsync -a --delete /tmp/upstream/public/ public/; fi
 
       # smoke 需要 playwright；repo 刻意無 package.json（外掛是 vanilla JS），CI 臨時裝、commit 時用
@@ -85,7 +85,9 @@ jobs:
         if: steps.chk.outputs.changed == 'true' && steps.merge.outcome == 'success'
         id: smoke
         continue-on-error: true
-        run: node scripts/smoke-hooks.mjs
+        run: |
+          node scripts/smoke-hooks.mjs
+          node scripts/test-shines-backports.mjs
 
       - name: 建立上游同步 PR（全綠才建立；不直推 main）
         if: steps.chk.outputs.changed == 'true' && steps.merge.outcome == 'success' && steps.smoke.outcome == 'success'
@@ -96,7 +98,7 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           # 白名單 add：只收同步會動到的路徑（npm 產生的 package*.json / node_modules 不進版控）
-          git add -A -- index.html js/ css/ assets/ public/ ':(glob)afk-*.js' sw.js version.json anim-manifest.json assets-manifest.json upstream-checkpoint.json wiki-checkpoint.json
+          git add -A -- index.html js/ css/ assets/ public/ ':(glob)afk-*.js' sw.js version.json anim-manifest.json assets-manifest.json upstream-checkpoint.json wiki-checkpoint.json scripts/apply-shines-backports.mjs scripts/shines-backport-assets.txt
           if git diff --cached --quiet; then
             echo "同步後與現況一致，無需 commit。"
             echo "created=false" >> "$GITHUB_OUTPUT"

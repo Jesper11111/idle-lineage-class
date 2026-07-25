@@ -568,10 +568,7 @@ function useItem(u, silent = false, keepModal = false) {   // 🔌 加掛版補�
             item.cnt--; if (item.cnt <= 0) player.inv = player.inv.filter(i => i.uid !== item.uid);   // 消耗靈魂之球 ×1
             _wand.cnt--; if (_wand.cnt <= 0) player.inv = player.inv.filter(i => i.uid !== _wand.uid);   // 消耗失去魔力魔杖 ×1
             let _tEn = 0;   // 🏛️ v3.0.83 傳統模式已取消：重獲魔力的魔杖恆 +0（沿用手動強化）
-            let _probe = { id:resultId, en:_tEn, bless:false, anc:false, attr:false, seteff:_seteff };
-            let _ex = _tEn > 0 ? null : player.inv.find(i => (i.en||0)===0 && sameItemSig(i, _probe));   // 🏛️ 自帶強化(en>0)獨立成堆、不併入 +0（比照 gainItem）；🔒 v3.6.92 併入鎖定堆疊
-            if (_ex) _ex.cnt += 1;
-            else player.inv.push({ id:resultId, uid:uid(), cnt:1, en:_tEn, bless:false, anc:false, attr:false, seteff:_seteff, lock:false, junk:false });
+            invAddOrStack({ id:resultId, uid:uid(), cnt:1, en:_tEn, bless:false, anc:false, attr:false, seteff:_seteff, lock:false, junk:false });
             logSys(`<span class="c-legend font-bold">靈魂之球與${powerlessName}發出強烈的銀色光芒！</span><span class="text-amber-200">你獲得了 ${_tEn>0?('+'+_tEn+' '):''}${resultName}${_seteff ? `（<span class="c-sherine font-bold">${_seteff}</span>）` : ''}！</span>`);
             renderTabs(); updateUI(); saveGame();
             if (!document.getElementById('item-modal').classList.contains('hidden')) closeModal();
