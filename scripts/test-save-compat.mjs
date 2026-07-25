@@ -213,9 +213,12 @@ export async function testSaveFiles(paths) {
           version: GAME_VERSION,
           signedRoundtrip: true,
           partyCount: partyExpShareCount(),
-          expectedPartyCount: 1 + activeAllies,
+          expectedPartyCount: Math.min(8, 1 + activeAllies),
           rewardMult: partyRewardMult(),
+          dropMult: partyDropMult(),
+          expectedDropMult: 1 + Math.min(7, activeAllies) * 0.6,
           dropRate: partyDropRate(0.125),
+          expectedDropRate: Math.min(1, 0.125 * (1 + Math.min(7, activeAllies) * 0.6)),
           employmentKeys,
           safeAreaBlocked: mercenaryRoleBattleBlocked('dragon_valley', false),
           rehireCosts: [mercRehireCost(1), mercRehireCost(50), mercRehireCost(100)],
@@ -251,11 +254,15 @@ export async function testSaveFiles(paths) {
         if (got.loadWarehouseCalls !== 1) failures.push(`載入角色期間重複解析倉庫 ${got.loadWarehouseCalls} 次`);
         if (got.version !== 'v3.8.5') failures.push('核心版本不是 PP v3.8.5');
         if (got.partyCount !== got.expectedPartyCount) failures.push('傭兵經驗均分人數錯誤');
-        if (got.rewardMult !== 1 || Math.abs(got.dropRate - 0.125) > 1e-12) failures.push('金幣／掉落仍有隊伍人數加乘');
+        if (got.rewardMult !== 1) failures.push('金幣仍有隊伍人數加乘');
+        if (Math.abs(got.dropMult - got.expectedDropMult) > 1e-12 ||
+            Math.abs(got.dropRate - got.expectedDropRate) > 1e-12) {
+          failures.push(`傭兵掉寶倍率錯誤（${got.dropMult}/${got.dropRate}，預期 ${got.expectedDropMult}/${got.expectedDropRate}）`);
+        }
         if (got.employmentKeys.length) failures.push('仍寫入反向受僱登記');
         if (got.safeAreaBlocked !== false) failures.push('受僱角色仍被鎖在安全區');
         if (JSON.stringify(got.rehireCosts) !== JSON.stringify([0, 0, 0])) failures.push('免費更新快照費率錯誤');
-        if (got.legacyPolicy !== '3.7.61-hybrid-town-refresh-on-pp-v3.8.5') failures.push('傭兵混合政策層未啟動');
+        if (got.legacyPolicy !== '3.7.61-hybrid-drop60-town-refresh-on-pp-v3.8.5') failures.push('傭兵混合政策層未啟動');
         if (got.townRefresh !== true || got.paidManualRehire !== false || !got.townRefreshUsesCore) {
           failures.push('回城免費自動刷新快照政策未完整啟動：' + JSON.stringify({
             townRefresh: got.townRefresh,

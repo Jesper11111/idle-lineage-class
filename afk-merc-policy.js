@@ -6,7 +6,8 @@
  *   - 招募維持收費
  *   - 回村免費自動結算累積經驗並刷新戰力快照
  *   - 不建立反向受僱登記、不限制同一角色只能受僱一次、不鎖安全區
- * 經驗均分、金幣與掉落倍率在核心 js/05 由 apply-policy-patches.mjs 固定。
+ * 經驗均分、金幣固定 ×1、每名未倒地傭兵掉寶 +60%，
+ * 在核心 js/05 由 apply-policy-patches.mjs 固定。
  */
 (function () {
   'use strict';
@@ -202,8 +203,10 @@
   window.renderAllyNPC = renderAllyNPCLegacy;
 
   window.__legacyMercPolicy = Object.freeze({
-    version: '3.7.61-hybrid-town-refresh-on-pp-v3.8.5',
+    version: '3.7.61-hybrid-drop60-town-refresh-on-pp-v3.8.5',
     rewardShare: true,
+    dropPerMercPct: 60,
+    goldPartyMultiplier: false,
     paidRecruit: true,
     paidManualRehire: false,
     townRefresh: true,

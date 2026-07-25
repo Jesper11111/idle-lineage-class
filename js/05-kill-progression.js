@@ -242,14 +242,15 @@ setInterval(() => { try { renderAuditTab(); } catch(e) {} }, 2000);   // 開著�
 // ⚠️v3.0.85 用戶指示：經典模式「掉落率 ×1/10」懲罰移除（歷次：v3.0.82 經驗×0.5／金幣÷2 移除 → v3.0.85 掉落×1/10 移除）。
 //   classicDropMult 恆 1 保留為單一真相掛點（十餘個掉落判定點仍乘它·未來要恢復懲罰只改這裡）；trialItemDropMult（試煉道具豁免）同步恆 1。
 //   經典模式現存差異：死亡損失 5% 經驗（時空裂痕/攻城區除外）、隱藏祝福/精通/席琳、停用武器/盾/騎士特效。
-// 🔒 legacy-merc-policy: v3.7.61 均分經驗、金幣與掉落不按隊伍人數加乘。
+// 🔒 legacy-merc-policy: v3.7.61 經驗均分、金幣不加乘；掉寶每名未倒地傭兵 +60%。
 function classicDropMult() { return 1; }
 function trialItemDropMult(id) { return 1; }
 // 🤝 v3.7.62 有效隊伍人數＝主玩家＋未倒地傭兵，最高 8 人。寵物各拿完整經驗，但不佔掉落／金幣倍率名額。
 function partyActiveMemberCount() { return Math.min(8, 1 + ((player.allies || []).filter(a => a && !a._downed).length)); }
 function partyExpShareCount() { return partyActiveMemberCount(); }   // 🔒 舊傭兵政策：主玩家＋未倒地傭兵均分
-function partyRewardMult() { return 1; }   // 🔒 舊傭兵政策：金幣／掉落不按隊伍人數加乘
-function partyDropRate(rate) { return Math.min(1, Math.max(0, Number(rate) || 0)); }
+function partyRewardMult() { return 1; }   // 🔒 本地政策：金幣不按隊伍人數加乘
+function partyDropMult() { return 1 + Math.max(0, partyActiveMemberCount() - 1) * 0.6; }   // 🔒 本地政策：每名未倒地傭兵使掉寶率 +60%，王族 7 名時 ×5.2
+function partyDropRate(rate) { return Math.min(1, Math.max(0, Number(rate) || 0) * partyDropMult()); }
 // 🤝 組隊經驗加成保留：每名未倒地隊友使每位存活成員取得的完整怪物經驗再增加（王族隊長 8%／非王族 4%）。
 function partyExpBonusPct() {
     let _mates = (player.allies || []).filter(a => a && !a._downed).length;
@@ -369,7 +370,7 @@ function killMob(idx) {
         let g = _goldRange.min + Math.floor(Math.random() * (_goldRange.max - _goldRange.min + 1));
         g = Math.max(1, Math.floor(g * (0.9 + Math.random() * 0.2)));   // 💰 最終金額額外浮動 −10%～+10%
         // ⚠️v3.0.82 經典模式金幣÷2 已移除（一般＝經典；歷次：×1/10 → ×1/3 → ×1/2 → ×1）
-        g = Math.floor(g * (1 + dollFieldVal('goldBonus') / 100) * partyRewardMult());   // 🪆 娃娃加成後再乘有效隊伍人數（最高 ×8）
+        g = Math.floor(g * (1 + dollFieldVal('goldBonus') / 100) * partyRewardMult());   // 🪆 娃娃金幣加成後維持本地政策 ×1
         player.gold += g;
         // 🔧 金幣不再逐殺輸出於系統日誌；改由 gameLoop 累積、flushAwaySummary 以「掛機期間獲得總金幣」統一顯示。
 
@@ -448,7 +449,7 @@ function killMob(idx) {
     // === 怪物專屬掉落（依「怪物掉落資料.md」）：每樣物品各自獨立判定一次 ===
     let dropList = _kbNoReward ? [] : (MOB_DROPS[mob.n] || []);   // 🔧 魔獸軍王之室：除頭目外不掉落物品
     let _dropBase = (mob._grace ? 10 : (mob._sherine ? (mob._sherineMad ? 5 : 3) : 1));   // 🔮 席琳的世界 ×3（瘋狂×5）／恩賜怪 ×10
-    let _dropMult = _dropBase * classicDropMult() * partyRewardMult();   // 席琳／恩賜／模式倍率後再乘有效隊伍人數（最高 ×8）
+    let _dropMult = _dropBase * classicDropMult() * partyDropMult();   // 席琳／恩賜／模式倍率後再乘傭兵掉寶倍率（王族 7 名最高 ×5.2）
     dropList.forEach(entry => {
         let itemId = entry[0];
         let ratePct = entry[1];               // 機率(%)
@@ -504,7 +505,7 @@ function killMob(idx) {
     { let _drd = (typeof DRAGON_DROPS !== 'undefined') ? DRAGON_DROPS[mob.n] : null;   // 🐉 龍騎士掉落表改為全職可掉（書板/鎖鏈劍·就算不能裝備也掉）；妖魔搜索文件等試煉道具由 trialDropBlocked 限定 dragon＋接取制
       if (_drd && !_kbNoReward) _drd.forEach(e => { if (!DB.items[e[0]] || trialDropBlocked(e[0])) return;
           if (typeof trialForced100 === 'function' && trialForced100(e[0])) { gainItem(e[0], 1); return; }   // 🔥 v3.0.78 接取制試煉道具：100% 掉落
-          if (Math.random() < (e[1] * _dropBase * partyRewardMult() * trialItemDropMult(e[0])) / 100) gainItem(e[0], 1); }); }   // 🐉 龍騎士試煉道具（trialItemDropMult 恆 1）
+          if (Math.random() < (e[1] * _dropBase * partyDropMult() * trialItemDropMult(e[0])) / 100) gainItem(e[0], 1); }); }   // 🐉 龍騎士試煉道具（trialItemDropMult 恆 1）
     // === ⚔️ 戰士技能印記掉落（全職可掉·僅戰士可學）===
     { let _wrd = (typeof WARRIOR_DROPS !== 'undefined') ? WARRIOR_DROPS[mob.n] : null;
       if (_wrd && !_kbNoReward) _wrd.forEach(e => { if (!DB.items[e[0]] || trialDropBlocked(e[0])) return;   // 🔥 v3.0.78 戰士試煉道具（若列於此表）同樣吃接取制閘門
