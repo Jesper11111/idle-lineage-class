@@ -221,6 +221,47 @@ const offlineEngineProblems = await page.evaluate(() => {
     if (typeof blocked !== 'function' || !blocked(id)) bad.push(`攻城 V2 暫態地圖未禁止離線：${id}`);
   }
   if (typeof blocked === 'function' && blocked('dragon_valley')) bad.push('一般狩獵圖被誤判為禁止離線');
+  if (!window.__afk || __afk.offStatsSchema !== 2 ||
+      __afk.offStatsRuleset !== 'pp-v3.8.5+shines-v3.8.27-content-r1' ||
+      typeof __afk.offStatsSignature !== 'function') {
+    bad.push('離線 _offStats v5 完整簽章契約未啟動');
+  } else {
+    // 純記憶體測試，不呼叫 saveGame：配點/自動設定、套裝詞綴與傭兵任一變動都必須使快取失效。
+    const oldConfig = player.config;
+    const oldAllies = player.allies;
+    const oldArmor = player.eq && player.eq.armor;
+    try {
+      const base = __afk.offStatsSignature();
+      player.config = Object.assign({}, oldConfig || {}, { __sigProbeAutoSkill: true });
+      const configChanged = __afk.offStatsSignature();
+      player.config = oldConfig;
+      if (configChanged === base) bad.push('離線快取簽章未涵蓋自動技能／設定');
+
+      if (!player.eq) player.eq = {};
+      player.eq.armor = { id: '__sig_probe_armor', en: 0, seteff: '白鳥', attrMagic: 'fire', attrMagicStar: 3 };
+      const affixA = __afk.offStatsSignature();
+      player.eq.armor.seteff = '紅獅';
+      const affixB = __afk.offStatsSignature();
+      player.eq.armor = oldArmor;
+      if (affixA === affixB) bad.push('離線快取簽章未涵蓋套裝／隨機詞綴');
+
+      player.allies = (oldAllies || []).concat([{
+        _slot:'__sig_probe', cls:'mage', lv:80, base:{ int:60 }, d:{ int:80, sp:30 },
+        skills:['sk_fireball'], config:{ autoBuffSkills:{ sk_fireball:true } },
+        eq:{ shield:{ id:'relic_necro_book', en:0 } }
+      }]);
+      const allyChanged = __afk.offStatsSignature();
+      player.allies = oldAllies;
+      if (allyChanged === base) bad.push('離線快取簽章未涵蓋傭兵戰力／技能／裝備');
+    } catch (e) {
+      bad.push('離線快取簽章測試例外：' + e.message);
+    } finally {
+      player.config = oldConfig;
+      player.allies = oldAllies;
+      if (!player.eq) player.eq = {};
+      player.eq.armor = oldArmor;
+    }
+  }
   return bad;
 });
 
