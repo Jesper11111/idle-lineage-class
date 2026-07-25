@@ -31,13 +31,15 @@ function registerRelicObtained(id) {   // gainItem 呼叫：獲得任何遺物�
     if (RELIC_ITEM_CAT[id] && !player.relicDex[id]) { player.relicDex[id] = true; if (typeof saveRelicDex === 'function') saveRelicDex(); }
 }
 // ---- 創角/讀檔保底：把現有(背包+已裝備+倉庫)遺物補登錄 ----
-function ensureRelicDex() {
+function ensureRelicDex(warehouse) {
     if (!player || !Array.isArray(player.inv)) return;
-    if (!player.relicDex) player.relicDex = {};
-    player.inv.forEach(i => { if (RELIC_ITEM_CAT[i.id]) player.relicDex[i.id] = true; });
-    if (player.eq) for (let s in player.eq) { let e = player.eq[s]; if (e && e.id && RELIC_ITEM_CAT[e.id]) player.relicDex[e.id] = true; }
-    try { if (typeof loadWarehouse === 'function') { let _w = loadWarehouse(); if (_w && Array.isArray(_w.items)) _w.items.forEach(i => { if (i && i.id && RELIC_ITEM_CAT[i.id]) player.relicDex[i.id] = true; }); } } catch (e) {}
-    if (typeof saveRelicDex === 'function') saveRelicDex();
+    let changed = false;
+    if (!player.relicDex) { player.relicDex = {}; changed = true; }
+    let register = i => { if (i && i.id && RELIC_ITEM_CAT[i.id] && !player.relicDex[i.id]) { player.relicDex[i.id] = true; changed = true; } };
+    player.inv.forEach(register);
+    if (player.eq) for (let s in player.eq) register(player.eq[s]);
+    try { let _w = warehouse || (typeof loadWarehouse === 'function' ? loadWarehouse() : null); if (_w && Array.isArray(_w.items)) _w.items.forEach(register); } catch (e) {}
+    if (changed && typeof saveRelicDex === 'function') saveRelicDex();
 }
 
 // ===== 全螢幕書頁 UI =====

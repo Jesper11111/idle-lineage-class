@@ -28,6 +28,35 @@ function writePatched(file, source, label) {
   console.log(`[backport] ${label}（${file}）`);
 }
 
+function patchNamedFunction(file, source, name, transform) {
+  const token = `function ${name}(`;
+  const start = source.indexOf(token);
+  if (start < 0 || source.indexOf(token, start + token.length) >= 0) {
+    throw new Error(`[${file}] ${name} 函式錨點不存在或不唯一。`);
+  }
+  const open = source.indexOf('{', start);
+  if (open < 0) throw new Error(`[${file}] ${name} 找不到函式開頭。`);
+  let depth = 0;
+  let close = -1;
+  for (let index = open; index < source.length; index++) {
+    if (source[index] === '{') depth++;
+    if (source[index] === '}') {
+      depth--;
+      if (depth === 0) {
+        close = index;
+        break;
+      }
+    }
+  }
+  if (close < 0) throw new Error(`[${file}] ${name} 找不到函式結尾。`);
+  const before = source.slice(start, close + 1);
+  const usesCrlf = before.includes('\r\n');
+  const normalized = before.replace(/\r\n/g, '\n');
+  const transformed = transform(normalized);
+  const after = usesCrlf ? transformed.replace(/\n/g, '\r\n') : transformed;
+  return source.slice(0, start) + after + source.slice(close + 1);
+}
+
 // ── 回移 1：天空之神的化身（Shines v3.8.12）────────────────────
 // PP v3.8.5 已有 wearerEle 的完整能力與傷害框架，因此只補物品、掉落、重量與圖示。
 function patchSkyGodAvatar() {
@@ -144,9 +173,198 @@ function patchCastleGuardAccuracy() {
   writePatched(file, source, '城堡護衛命中補強');
 }
 
+// ── 回移 3：舊網頁存檔載入優化（Shines v3.8.16）───────────────
+// 同次 loadGame 共用一份倉庫解析，三本圖鑑只有內容真的新增時才寫回。
+// 不改存檔格式、簽章、地圖落點、傭兵或離線結算。
+function patchOldSaveLoadOptimization() {
+  const saveFile = 'js/13-shop-save.js';
+  let save = readFileSync(saveFile, 'utf8');
+  const saveContracts = [
+    'function purgeOrphanItems(warehouse) {',
+    "let wh = warehouse && typeof warehouse === 'object' ? warehouse : loadWarehouse();",
+    'let _loadWarehouse = null, _loadWarehouseReady = false;',
+    'purgeOrphanItems(_loadWarehouseReady ? _loadWarehouse : undefined);',
+    'let _w = _loadWarehouseReady ? _loadWarehouse : loadWarehouse();',
+    'ensureEquipBook(_loadWarehouseReady ? _loadWarehouse : undefined);',
+    'ensureMiscDex(_loadWarehouseReady ? _loadWarehouse : undefined);',
+    'ensureRelicDex(_loadWarehouseReady ? _loadWarehouse : undefined);',
+  ];
+  if (!saveContracts.every(contract => save.includes(contract))) {
+    if (save.includes('_loadWarehouseReady') || save.includes('function purgeOrphanItems(warehouse)')) {
+      throw new Error(`[${saveFile}] 舊存檔載入優化只套用了一部分，拒絕猜測合併。`);
+    }
+    const nl = save.includes('\r\n') ? '\r\n' : '\n';
+    save = patchNamedFunction(saveFile, save, 'purgeOrphanItems', block => {
+      let next = replaceOnce(
+        saveFile,
+        block,
+        'function purgeOrphanItems() {',
+        'function purgeOrphanItems(warehouse) {',
+        '孤兒物品清理函式簽名'
+      );
+      next = replaceOnce(
+        saveFile,
+        next,
+        '                let wh = loadWarehouse();',
+        "                let wh = warehouse && typeof warehouse === 'object' ? warehouse : loadWarehouse();",
+        '孤兒物品共用倉庫'
+      );
+      return next;
+    });
+
+    const purgeCall = "        try { purgeOrphanItems(); } catch (e) { console.warn('purgeOrphanItems', e); }   // 🧹 v3.2.62 清除已停用舊物品（DB 無定義的孤兒·背包+倉庫·排除待轉換的舊項圈）";
+    const cachedPurge = [
+      '        // 🔌 Shines v3.8.27 選配回移：同次讀檔共用一次倉庫解析，避免大型舊存檔重複解壓。',
+      '        let _loadWarehouse = null, _loadWarehouseReady = false;',
+      "        try { if (typeof loadWarehouse === 'function') { _loadWarehouse = loadWarehouse(); _loadWarehouseReady = true; } } catch (e) {}",
+      "        try { purgeOrphanItems(_loadWarehouseReady ? _loadWarehouse : undefined); } catch (e) { console.warn('purgeOrphanItems', e); }   // 🧹 v3.2.62 清除已停用舊物品（DB 無定義的孤兒·背包+倉庫·排除待轉換的舊項圈）",
+    ].join(nl);
+    save = replaceOnce(saveFile, save, purgeCall, cachedPurge, '讀檔倉庫快取初始化');
+    save = replaceOnce(
+      saveFile,
+      save,
+      '            try { let _w = loadWarehouse(); let _chg = false;',
+      '            try { let _w = _loadWarehouseReady ? _loadWarehouse : loadWarehouse(); let _chg = false;',
+      '套裝遷移共用倉庫'
+    );
+    save = replaceOnce(
+      saveFile,
+      save,
+      "        if (typeof ensureEquipBook === 'function') ensureEquipBook();   // 🗡️ 舊存檔遷移",
+      "        if (typeof ensureEquipBook === 'function') ensureEquipBook(_loadWarehouseReady ? _loadWarehouse : undefined);   // 🗡️ 舊存檔遷移",
+      '裝備圖鑑共用倉庫'
+    );
+    save = replaceOnce(
+      saveFile,
+      save,
+      "        if (typeof ensureMiscDex === 'function') ensureMiscDex();   // 🧰 舊存檔遷移",
+      "        if (typeof ensureMiscDex === 'function') ensureMiscDex(_loadWarehouseReady ? _loadWarehouse : undefined);   // 🧰 舊存檔遷移",
+      '道具圖鑑共用倉庫'
+    );
+    save = replaceOnce(
+      saveFile,
+      save,
+      "        if (typeof ensureRelicDex === 'function') ensureRelicDex();   // 🏺 舊存檔遷移",
+      "        if (typeof ensureRelicDex === 'function') ensureRelicDex(_loadWarehouseReady ? _loadWarehouse : undefined);   // 🏺 舊存檔遷移",
+      '遺物圖鑑共用倉庫'
+    );
+    if (!saveContracts.every(contract => save.includes(contract))) {
+      throw new Error(`[${saveFile}] 舊存檔載入優化完成後契約仍不完整。`);
+    }
+    writePatched(saveFile, save, '舊存檔單次倉庫解析');
+  } else {
+    already++;
+  }
+
+  const equipFile = 'js/16-equip-book.js';
+  let equip = readFileSync(equipFile, 'utf8');
+  const equipContracts = [
+    'function ensureEquipBook(warehouse) {',
+    '    let changed = false;',
+    '    let register = i =>',
+    "let _w = warehouse || (typeof loadWarehouse === 'function' ? loadWarehouse() : null);",
+    "if (changed && typeof saveEquipDex === 'function') saveEquipDex();",
+  ];
+  if (!equipContracts.every(contract => equip.includes(contract))) {
+    if (equip.includes('function ensureEquipBook(warehouse)')) {
+      throw new Error(`[${equipFile}] ensureEquipBook 優化內容不完整。`);
+    }
+    equip = patchNamedFunction(equipFile, equip, 'ensureEquipBook', block => {
+      let next = replaceOnce(equipFile, block, 'function ensureEquipBook() {', 'function ensureEquipBook(warehouse) {', '裝備圖鑑函式簽名');
+      next = replaceOnce(equipFile, next, '    if (!player.equipDex) player.equipDex = {};', '    let changed = false;\n    if (!player.equipDex) { player.equipDex = {}; changed = true; }', '裝備圖鑑變更追蹤');
+      next = replaceOnce(equipFile, next, "    if (player.inv.some(i => i.id === 'item_equip_book')) player.inv = player.inv.filter(i => i.id !== 'item_equip_book');", "    if (player.inv.some(i => i.id === 'item_equip_book')) { player.inv = player.inv.filter(i => i.id !== 'item_equip_book'); changed = true; }", '舊圖鑑本體移除追蹤');
+      next = replaceOnce(
+        equipFile,
+        next,
+        '    player.inv.forEach(i => { if (EQUIP_ITEM_CAT[i.id]) player.equipDex[i.id] = true; });\n    if (player.eq) for (let s in player.eq) { let e = player.eq[s]; if (e && e.id && EQUIP_ITEM_CAT[e.id]) player.equipDex[e.id] = true; }',
+        '    let register = i => { if (i && i.id && EQUIP_ITEM_CAT[i.id] && !player.equipDex[i.id]) { player.equipDex[i.id] = true; changed = true; } };\n    player.inv.forEach(register);\n    if (player.eq) for (let s in player.eq) register(player.eq[s]);',
+        '裝備圖鑑登錄器'
+      );
+      next = replaceOnce(
+        equipFile,
+        next,
+        "    try { if (typeof loadWarehouse === 'function') { let _w = loadWarehouse(); if (_w && Array.isArray(_w.items)) _w.items.forEach(i => { if (i && i.id && EQUIP_ITEM_CAT[i.id]) player.equipDex[i.id] = true; }); } } catch (e) {}",
+        "    try { let _w = warehouse || (typeof loadWarehouse === 'function' ? loadWarehouse() : null); if (_w && Array.isArray(_w.items)) _w.items.forEach(register); } catch (e) {}",
+        '裝備圖鑑共用倉庫參數'
+      );
+      return replaceOnce(
+        equipFile,
+        next,
+        "    if (typeof saveEquipDex === 'function') saveEquipDex();   // 🗡️ 補登錄後回寫共用桶（把該角色現有裝備併入共用收集）",
+        "    if (changed && typeof saveEquipDex === 'function') saveEquipDex();   // 🗡️ 僅首次補登錄才回寫共用桶，避免每次載入重複序列化完整圖鑑",
+        '裝備圖鑑條件寫回'
+      );
+    });
+    if (!equipContracts.every(contract => equip.includes(contract))) throw new Error(`[${equipFile}] 優化後契約不完整。`);
+    writePatched(equipFile, equip, '裝備圖鑑按需寫回');
+  } else {
+    already++;
+  }
+
+  const miscFile = 'js/18-misc-book.js';
+  let misc = readFileSync(miscFile, 'utf8');
+  const miscContracts = [
+    'function ensureMiscDex(warehouse) {',
+    "var _w = warehouse || (typeof loadWarehouse === 'function' ? loadWarehouse() : null);",
+  ];
+  if (!miscContracts.every(contract => misc.includes(contract))) {
+    if (misc.includes('function ensureMiscDex(warehouse)')) throw new Error(`[${miscFile}] ensureMiscDex 優化內容不完整。`);
+    misc = patchNamedFunction(miscFile, misc, 'ensureMiscDex', block => {
+      let next = replaceOnce(miscFile, block, 'function ensureMiscDex() {', 'function ensureMiscDex(warehouse) {', '道具圖鑑函式簽名');
+      return replaceOnce(
+        miscFile,
+        next,
+        "    try { if (typeof loadWarehouse === 'function') { var _w = loadWarehouse(); if (_w && Array.isArray(_w.items)) _w.items.forEach(reg); } } catch (e) {}",
+        "    try { var _w = warehouse || (typeof loadWarehouse === 'function' ? loadWarehouse() : null); if (_w && Array.isArray(_w.items)) _w.items.forEach(reg); } catch (e) {}",
+        '道具圖鑑共用倉庫參數'
+      );
+    });
+    if (!miscContracts.every(contract => misc.includes(contract))) throw new Error(`[${miscFile}] 優化後契約不完整。`);
+    writePatched(miscFile, misc, '道具圖鑑共用倉庫');
+  } else {
+    already++;
+  }
+
+  const relicFile = 'js/21-relic-book.js';
+  let relic = readFileSync(relicFile, 'utf8');
+  const relicContracts = [
+    'function ensureRelicDex(warehouse) {',
+    '    let changed = false;',
+    '    let register = i =>',
+    "let _w = warehouse || (typeof loadWarehouse === 'function' ? loadWarehouse() : null);",
+    "if (changed && typeof saveRelicDex === 'function') saveRelicDex();",
+  ];
+  if (!relicContracts.every(contract => relic.includes(contract))) {
+    if (relic.includes('function ensureRelicDex(warehouse)')) throw new Error(`[${relicFile}] ensureRelicDex 優化內容不完整。`);
+    relic = patchNamedFunction(relicFile, relic, 'ensureRelicDex', block => {
+      let next = replaceOnce(relicFile, block, 'function ensureRelicDex() {', 'function ensureRelicDex(warehouse) {', '遺物圖鑑函式簽名');
+      next = replaceOnce(
+        relicFile,
+        next,
+        '    if (!player.relicDex) player.relicDex = {};\n    player.inv.forEach(i => { if (RELIC_ITEM_CAT[i.id]) player.relicDex[i.id] = true; });\n    if (player.eq) for (let s in player.eq) { let e = player.eq[s]; if (e && e.id && RELIC_ITEM_CAT[e.id]) player.relicDex[e.id] = true; }',
+        '    let changed = false;\n    if (!player.relicDex) { player.relicDex = {}; changed = true; }\n    let register = i => { if (i && i.id && RELIC_ITEM_CAT[i.id] && !player.relicDex[i.id]) { player.relicDex[i.id] = true; changed = true; } };\n    player.inv.forEach(register);\n    if (player.eq) for (let s in player.eq) register(player.eq[s]);',
+        '遺物圖鑑登錄器'
+      );
+      next = replaceOnce(
+        relicFile,
+        next,
+        "    try { if (typeof loadWarehouse === 'function') { let _w = loadWarehouse(); if (_w && Array.isArray(_w.items)) _w.items.forEach(i => { if (i && i.id && RELIC_ITEM_CAT[i.id]) player.relicDex[i.id] = true; }); } } catch (e) {}",
+        "    try { let _w = warehouse || (typeof loadWarehouse === 'function' ? loadWarehouse() : null); if (_w && Array.isArray(_w.items)) _w.items.forEach(register); } catch (e) {}",
+        '遺物圖鑑共用倉庫參數'
+      );
+      return replaceOnce(relicFile, next, "    if (typeof saveRelicDex === 'function') saveRelicDex();", "    if (changed && typeof saveRelicDex === 'function') saveRelicDex();", '遺物圖鑑條件寫回');
+    });
+    if (!relicContracts.every(contract => relic.includes(contract))) throw new Error(`[${relicFile}] 優化後契約不完整。`);
+    writePatched(relicFile, relic, '遺物圖鑑按需寫回');
+  } else {
+    already++;
+  }
+}
+
 const PATCHES = [
   patchSkyGodAvatar,
   patchCastleGuardAccuracy,
+  patchOldSaveLoadOptimization,
 ];
 
 try {
