@@ -13,6 +13,9 @@ import { patchNecromancyBook } from './backports/necro-book.mjs';
 import { patchRelicBatch25 } from './backports/relic-batch-25.mjs';
 import { patchSherineSetRework } from './backports/sherine-set-rework.mjs';
 import { patchItemStacking } from './backports/item-stacking.mjs';
+import { patchMercSpellVfx } from './backports/merc-spell-vfx.mjs';
+import { patchBackportWikiDocs } from './backports/wiki-backport-docs.mjs';
+import { patchPowderArrowIcon } from './backports/powder-arrow-icon.mjs';
 
 const CHECK = process.argv.includes('--check');
 let changed = 0;
@@ -393,6 +396,22 @@ const PATCHES = [
     replaceOnce,
     writePatched,
     patchNamedFunction,
+    markAlready: () => { already++; },
+  }),
+  () => patchMercSpellVfx({
+    replaceOnce,
+    writePatched,
+    patchNamedFunction,
+    markAlready: () => { already++; },
+  }),
+  () => patchBackportWikiDocs({
+    replaceOnce,
+    writePatched,
+    markAlready: () => { already++; },
+  }),
+  () => patchPowderArrowIcon({
+    replaceOnce,
+    writePatched,
     markAlready: () => { already++; },
   }),
 ];

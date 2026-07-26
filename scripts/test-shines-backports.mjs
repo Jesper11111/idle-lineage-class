@@ -15,9 +15,10 @@ const MIME = {
 };
 
 const [
-  configSource, statsSource, coreSource, attackSource, allySource, skillSource, vfxSource, threatSource,
-  equipSource, worldSource, warehouseSource, saveSource, craftSource, petSource,
+  dataSource, configSource, statsSource, coreSource, attackSource, allySource, skillSource, vfxSource, threatSource,
+  equipSource, worldSource, warehouseSource, saveSource, craftSource, petSource, wikiSource, manifestSource,
 ] = await Promise.all([
+  readFile(join(ROOT, 'js/00-data.js'), 'utf8'),
   readFile(join(ROOT, 'js/01-drops-config.js'), 'utf8'),
   readFile(join(ROOT, 'js/02-stats-recompute.js'), 'utf8'),
   readFile(join(ROOT, 'js/03-combat-core.js'), 'utf8'),
@@ -32,6 +33,8 @@ const [
   readFile(join(ROOT, 'js/13-shop-save.js'), 'utf8'),
   readFile(join(ROOT, 'js/14-craft-pandora.js'), 'utf8'),
   readFile(join(ROOT, 'js/22-pets.js'), 'utf8'),
+  readFile(join(ROOT, 'afk-wiki.js'), 'utf8'),
+  readFile(join(ROOT, 'assets-manifest.json'), 'utf8'),
 ]);
 assert.ok(statsSource.includes('ed.bossEncounterPct') && statsSource.includes('ed.corrosiveJellySkin') && statsSource.includes('ed.charmOnHit'), '五件遺物能力未接入 stats 重算');
 assert.ok(coreSource.includes('Math.random() < _normalBossChance'), '山羊惡魔雙足未接入一般地圖頭目率');
@@ -50,6 +53,12 @@ assert.equal((attackSource.match(/moonShatterOnDamage\(/g) || []).length, 5, '�
 assert.equal((allySource.match(/moonShatterOnDamage\(/g) || []).length, 10, '傭兵月光碎裂掛點數量錯誤');
 assert.equal((skillSource.match(/moonShatterOnDamage\(/g) || []).length, 9, '玩家技能月光碎裂掛點數量錯誤');
 assert.ok(vfxSource.includes("'fragile','shatter','armorbreak'"), '碎裂狀態未接入戰場顯示');
+assert.ok(vfxSource.includes('function playSpellFx(skn, mob, caster)') && vfxSource.includes("'|' + _casterKey"), '法術特效未按施法者分流');
+assert.ok(vfxSource.includes("_partyMemberRect(caster)") && vfxSource.includes("_pmCasterRect() : null"), '法術特效未保留傭兵／玩家座標退路');
+assert.ok((allySource.match(/playSpellFx\(sk\.n, t, ally\)/g) || []).length === 2 &&
+  allySource.includes('playSpellFx(sp.skn, t, ally)') &&
+  allySource.includes("playSpellFx(sp.skn || '冰裂術', t, ally)") &&
+  allySource.includes("playSpellFx(_pd.skn || '熾焰地裂術', _dt, ally)"), '傭兵施法路徑未完整傳入施法者');
 assert.ok(threatSource.includes('const IRON_GUARD_TAUNT_TICKS = 30;') && threatSource.includes('return 1000000000;'), '鐵衛嘲諷狀態或仇恨鎖定未就位');
 assert.ok(configSource.includes('function invAddOrStack(e)') && configSource.includes('let ex = _invStackFind(e, false);'), '背包統一堆疊入口未就位');
 assert.ok(attackSource.includes('invAddOrStack({ id: id, uid: uid(), cnt: 1, en: en'), '血盟掉落未接入統一堆疊');
@@ -60,6 +69,20 @@ assert.ok(!saveSource.includes('if ((it.en || 0) !== 0) { out.push(it); return; 
 assert.equal((craftSource.match(/    invAddOrStack\(inst\);/g) || []).length, 2, '兩個客製製作入口未完整接入統一堆疊');
 assert.equal((petSource.match(/invMergeBack\(_back\)/g) || []).length, 3, '寵物放生／換裝／卸裝退回堆疊掛點不完整');
 assert.ok(petSource.includes('if (!invMergeBack(_pg)) player.inv.push(_pg);'), '舊寵物裝備遷移未接入退回堆疊');
+assert.ok(wikiSource.includes('紅獅5件＝物理攻擊×1.1') &&
+  wikiSource.includes("['碎裂', '怪防禦變差（AC −10）") &&
+  wikiSource.includes('狂怒5件依失血最多 −15%'), '小百科戰鬥機制仍是舊套裝規則');
+assert.ok(wikiSource.includes('麗人3件近戰+3%、疾風3件遠程+3%') &&
+  wikiSource.includes('裝備近距離武器時攻擊速度 +20%') &&
+  !wikiSource.includes('月光5件才連魔法/必中技能') &&
+  !wikiSource.includes('狂怒 5/5 最多 −20%'), '小百科其他段落仍殘留舊套裝效果');
+assert.ok(wikiSource.includes('裝備遺物<b>死靈之書</b>') && wikiSource.includes('骷髏復生'), '小百科缺少死靈之書說明');
+assert.ok(wikiSource.includes('每名未倒地傭兵讓每件物品的掉落機率增加 <b>60%</b>') &&
+  wikiSource.includes('×2.8') && wikiSource.includes('×5.2') &&
+  !wikiSource.includes('帶滿 7 名傭兵＝<b>×8</b>'), '小百科傭兵獎勵政策被上游規則覆蓋');
+assert.ok(existsSync(join(ROOT, 'assets/icons/items/無限火藥爆裂矢.png')), '無限火藥爆裂矢圖示檔缺失');
+assert.ok(JSON.parse(manifestSource).some(row => row[0] === 'assets/icons/items/無限火藥爆裂矢.png'), '無限火藥爆裂矢未進資源清單');
+assert.ok(dataSource.includes('img: "assets/icons/items/無限火藥爆裂矢.png"'), '無限火藥爆裂矢仍會被武器類型導向錯誤圖示路徑');
 
 const server = createServer(async (req, res) => {
   try {
@@ -428,8 +451,117 @@ try {
   });
 
   assert.deepEqual(itemStacking, [], itemStacking.join('\n'));
+
+  const powderArrowIcon = await page.evaluate(async () => {
+    const item = DB.items.relic_powder_arrow;
+    const url = item && getIconUrl(item);
+    if (url !== 'assets/icons/items/無限火藥爆裂矢.png') return { url, loaded: false };
+    const image = new Image();
+    image.src = url;
+    try {
+      await image.decode();
+      return { url, loaded: image.naturalWidth > 0 && image.naturalHeight > 0 };
+    } catch {
+      return { url, loaded: false };
+    }
+  });
+  assert.deepEqual(powderArrowIcon, {
+    url: 'assets/icons/items/無限火藥爆裂矢.png',
+    loaded: true,
+  }, '無限火藥爆裂矢圖示路徑或圖片解碼失敗');
+
+  const mercSpellVfx = await page.evaluate(() => {
+    const bad = [];
+    const expect = (condition, message) => { if (!condition) bad.push(message); };
+    const rect = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height });
+    const mobList = document.getElementById('mob-list');
+    const battleView = document.getElementById('battle-view');
+    if (!mobList || !battleView) return ['找不到戰鬥畫面測試節點'];
+
+    mobList.innerHTML = '<div class="mob-target" data-uid="merc-vfx-target"><div class="mob-img-inner"><img alt=""></div></div>';
+    mobList.getBoundingClientRect = () => rect(0, 0, 700, 242);
+    battleView.getBoundingClientRect = () => rect(0, 0, 700, 500);
+    const targetBox = mobList.querySelector('.mob-img-inner');
+    targetBox.getBoundingClientRect = () => rect(320, 60, 100, 112);
+
+    const ally1 = { _slot: 'vfx-a' };
+    const ally2 = { _slot: 'vfx-b' };
+    const oldPartyRect = _partyMemberRect;
+    const oldPlayerRect = _pmCasterRect;
+    try {
+      _partyMemberRect = who => who === ally1 ? rect(80, 360, 50, 80) : who === ally2 ? rect(260, 360, 50, 80) : rect(500, 360, 50, 80);
+      _pmCasterRect = () => rect(500, 360, 50, 80);
+      window.__vfxOff = false;
+      state.ff = false;
+      _vfxClearAll();
+      Object.keys(_spellFxActive).forEach(key => delete _spellFxActive[key]);
+
+      const mob = { uid: 'merc-vfx-target', e: 'none' };
+      playSpellFx('光箭', mob, ally1);
+      playSpellFx('光箭', mob, ally2);
+      playSpellFx('光箭', mob);
+      const spells = Array.from(document.querySelectorAll('#vfx-layer .vfx-spell'));
+      const keys = spells.map(el => el.dataset.fxkey);
+      expect(spells.length === 3, `同技能同目標的兩名傭兵與玩家應同時顯示 3 個特效，實際 ${spells.length}`);
+      expect(keys.some(key => key.endsWith('|ally:vfx-a')), '第一名傭兵特效去重鍵缺失');
+      expect(keys.some(key => key.endsWith('|ally:vfx-b')), '第二名傭兵特效去重鍵缺失');
+      expect(keys.some(key => key.endsWith('|player')), '玩家特效去重鍵缺失');
+      const origins = spells.map(el => Number.parseFloat(el.style.left)).filter(Number.isFinite);
+      expect(origins.length === 3 && new Set(origins.map(Math.round)).size === 3, '玩家與兩名傭兵的投射物起點沒有分開');
+      const beforeDuplicate = spells.length;
+      playSpellFx('光箭', mob, ally1);
+      expect(document.querySelectorAll('#vfx-layer .vfx-spell').length === beforeDuplicate, '同一傭兵的同一法術未正確去重');
+    } finally {
+      _partyMemberRect = oldPartyRect;
+      _pmCasterRect = oldPlayerRect;
+      _vfxClearAll();
+      Object.keys(_spellFxActive).forEach(key => delete _spellFxActive[key]);
+    }
+    return bad;
+  });
+  assert.deepEqual(mercSpellVfx, [], mercSpellVfx.join('\n'));
+
+  const wikiPage = await browser.newPage();
+  const wikiErrors = [];
+  wikiPage.on('pageerror', error => wikiErrors.push(error.message));
+  try {
+    async function wikiText(tab, cls) {
+      const url = `http://127.0.0.1:${address.port}/index.html?view=wiki&tab=${tab}${cls ? `&cls=${cls}` : ''}`;
+      await wikiPage.goto(url, { waitUntil: 'domcontentloaded' });
+      await wikiPage.waitForSelector('#m-wiki-body');
+      return wikiPage.locator('#m-wiki-body').innerText();
+    }
+    const combatText = await wikiText('combat');
+    assert.ok(combatText.includes('紅獅5件＝物理攻擊×1.1') &&
+      combatText.includes('脆弱') && combatText.includes('+10%') &&
+      combatText.includes('碎裂') && combatText.includes('AC −10') &&
+      combatText.includes('麗人3件近戰+3%') &&
+      combatText.includes('裝備近距離武器時攻擊速度 +20%') &&
+      !combatText.includes('月光5件才連魔法/必中技能'), '戰鬥機制頁未完整渲染新版套裝規則');
+
+    const sherineText = await wikiText('sherine');
+    assert.ok(sherineText.includes('最終傷害+10%') &&
+      sherineText.includes('攻擊速度+20%') &&
+      sherineText.includes('雙擊觸發機率+20%') &&
+      sherineText.includes('最多±15%'), '席琳頁未渲染新版七套規則');
+
+    const magicText = await wikiText('magic', 'mage');
+    assert.ok(magicText.includes('死靈之書') &&
+      magicText.includes('骷髏復生') &&
+      magicText.includes('不耗 MP') &&
+      magicText.includes('最多 6 隻'), '職業魔法頁未渲染死靈之書機制');
+
+    const allyText = await wikiText('ally');
+    assert.ok(allyText.includes('60%') && allyText.includes('×2.8') &&
+      allyText.includes('×5.2') && allyText.includes('金幣不加乘') &&
+      !allyText.includes('×8'), '傭兵頁未保留本站獎勵政策');
+    assert.deepEqual(wikiErrors, [], `小百科頁面執行錯誤：\n${wikiErrors.join('\n')}`);
+  } finally {
+    await wikiPage.close();
+  }
+
   assert.deepEqual(pageErrors, [], `頁面執行錯誤：\n${pageErrors.join('\n')}`);
-  console.log('✅ Shines backports：死靈之書、五件遺物、七套席琳套裝與物品堆疊契約通過');
+  console.log('✅ Shines backports：傭兵法術動畫、小百科、圖示、死靈之書、五件遺物、七套席琳套裝與物品堆疊契約通過');
 } finally {
   await browser.close();
   await new Promise(resolve => server.close(resolve));
