@@ -498,7 +498,7 @@
   // 快取必須隨真正影響戰力的資料失效。舊簽章只有地圖/等級/裝備 id+強化，會漏掉
   // 配點、自動技能、套裝詞綴、傭兵與寵物；內容更新後甚至可能沿用舊版殺速與 BOSS 結果。
   var OFFSTATS_SCHEMA = 2;
-  var OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r1';
+  var OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r2-bossring';
   function offStatsStable(v) {
     if (v == null || typeof v === 'number' || typeof v === 'boolean' || typeof v === 'string') return v;
     if (Array.isArray(v)) return v.map(offStatsStable);
@@ -546,6 +546,24 @@
     for (var i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); }
     return (h >>> 0).toString(36);
   }
+  // 🔒 Jesper offline boss hunt settlement bridge v1
+  function offlineBossHuntApi() {
+    try { return window.AFK_BOSSRING || null; } catch (e) { return null; }
+  }
+  function offlineBossHuntActive() {
+    var api = offlineBossHuntApi();
+    try { return !!(api && typeof api.huntActive === 'function' && api.huntActive()); } catch (e) { return false; }
+  }
+  function offlineBossHuntStep(remainingTicks) {
+    var api = offlineBossHuntApi();
+    try { return (api && typeof api.offlineStep === 'function') ? api.offlineStep(remainingTicks) : 'unavailable'; }
+    catch (e) { console.warn('[AFK] 離線自動找 BOSS 步驟失敗，本次略過：', e); return 'error'; }
+  }
+  function offlineBossHuntSignature() {
+    var api = offlineBossHuntApi();
+    try { return (api && typeof api.signature === 'function') ? api.signature() : { on:false, ring:false, unavailable:true }; }
+    catch (e) { return { on:false, ring:false, error:true }; }
+  }
   function offStatsSig() {
     var pets = [];
     try { if (typeof petsOutList === 'function') pets = petsOutList().map(offStatsPet); } catch (e) {}
@@ -553,6 +571,7 @@
       schema:OFFSTATS_SCHEMA, ruleset:OFFSTATS_RULESET,
       game:(typeof GAME_VERSION !== 'undefined' ? GAME_VERSION : ''), map:mapState.current,
       modes:[!!player.sherineWorld, !!player.sherineMad, !!player.classicMode, !!player.traditionalMode],
+      bossring:offlineBossHuntSignature(),
       player:offStatsActor(player), allies:(player.allies || []).map(offStatsActor), pets:pets
     };
     return 'v5|' + offStatsHash(JSON.stringify(offStatsStable(payload)));
@@ -742,6 +761,8 @@
         var d = DB.items[k]; if (!d) continue;
         // 只認消耗品(藥水/卷軸/箭/肉):避免把「掉落的裝備被自動賣廢品」誤判成消耗
         if (!(d.type === 'pot' || d.type === 'scroll' || d.isArrow)) continue;
+        // 自動找王每次都由 offlineStep 精確呼叫 useItem 扣 1 張；不可再按取樣耗率重複扣帳。
+        if (k === 'scroll_teleport' && offlineBossHuntActive()) continue;
         var used = (sampleCnt0[k] || 0) + ((gainTally[k] || 0) - (sampleGain0[k] || 0)) - (cnt1[k] || 0);
         if (used > 0) consumePerTick[k] = used / winTicks;   // 每「拍」速率:消耗跟時間走(BOSS 一場耗時長、耗得多,按殺算會低估)
       }
@@ -843,6 +864,7 @@
     }
     function fastTeleportAwayBoss(m) {   // 🌀 快速段模擬「遇 BOSS 自動瞬移逃離」:1:1 重放線上 autoActions 的瞬移分支;成功甩掉回 true
       try {
+        if (offlineBossHuntActive()) return false;   // 自動找王啟用時王是目標，不可召來後又自動逃離
         var tChk = document.getElementById('set-teleport');
         if (!(tChk && tChk.checked)) return false;                                   // 未勾選自動瞬移 → 照打
         if (!m || !m.boss || m.noAutoTeleport) return false;                         // 非 BOSS、或 noAutoTeleport(卡瑞/樓梯/傳送門)→ 不瞬移
@@ -901,6 +923,7 @@
     }
     function fastEventStep() {   // ⚡ 事件驅動快速段的一步:原作排程出怪 → 殺「最早出生」那隻(或推進到下一個出怪時點);回 false = 退回全模擬
       try {
+        offlineBossHuntStep(totalTicks - done);   // 快速段不跑 autoActions／真實 timer，依虛擬事件主動召王
         maybeSpawnMobs();   // 核心 js/03 與 tick() 同一份排程:空格排 delay、到時 spawnMob——出怪延遲/長老之室節流/後排格/加速效果全照原作
         var ti = fastAliveIdx();
         if (ti < 0) {   // 空場:時間直接跳到「最近的出怪時點」,下一輪由排程出怪
@@ -1054,6 +1077,7 @@
               tick();
               settleDeadMobs();
               done++; _realSimTicks++;
+              if (state.ticks % 10 === 0) offlineBossHuntStep(totalTicks - done);
               var _hpB = (player.mhp > 0) ? (player.hp / player.mhp) : 1;
               if (_hpB < fastBossMinHp) fastBossMinHp = _hpB;
               var _bAlive = mapState.mobs.some(function (x) { return x && x.uid === fastBossUid && !x._dead; });   // 事件驅動:BOSS 可能在任一格位,依 uid 掃全場
@@ -1105,6 +1129,7 @@
           tick();
           settleDeadMobs();
           done++; _realSimTicks++;
+          if (state.ticks % 10 === 0) offlineBossHuntStep(totalTicks - done);
           if (fastEligible && !fastOff) {   // 取樣段:記錄最低血量+「場上有怪」拍數(純戰鬥耗時)+死亡事件數(AOE 同拍多殺=1 事件),窗滿就評估要不要切快速
             if (mapState.mobs.some(function (m) { return m && !m._dead; })) busyTicks++;
             var _ks = tallySum(killTally);
