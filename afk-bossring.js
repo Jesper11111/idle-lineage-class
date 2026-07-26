@@ -8,7 +8,7 @@
  *   - 遊戲內有一個勾選框「傳送控制戒指自動找BOSS」(比照舊 main 的 #set-teleport-boss)，勾了才自動。
  *     插在設定面板「藥水不足自動買」(#set-auto-buy-pot) 下方；狀態**依存檔位(角色)分開**存
  *     localStorage afk_bossring_on_<slot>(沒設定過時沿用舊的全域鍵 afk_bossring_on，預設開)。
- *   - 只在「線上前景遊玩」跑（離線快速結算 state.ff 期間不套用；跟遇 BOSS 自動逃離互斥＝有王就不瞬移）。
+ *   - 線上前景與本站離線掛機都適用；離線由結算引擎按虛擬時間主動呼叫，跟遇 BOSS 自動逃離互斥＝有王就不瞬移。
  *   - 持有傳送控制戒指、場上無 BOSS、非排除地圖（軍王之室/攻城/時空裂痕/排名攀登/遺忘之島）、手動瞬移抑制期外，
  *     且背包有瞬移卷軸 → 自動 useItem(卷軸, 非silent) → 上游的 hasTeleportRing() 讓下一次生怪必定 BOSS。
  *   - mapState.forceBoss 已排定必出 BOSS 時等它生出來，不重複瞬移（不浪費卷軸）。
@@ -79,7 +79,7 @@
         }
         var lbl = document.createElement('label');
         lbl.className = 'cursor-pointer flex items-center gap-2';
-        lbl.innerHTML = '<input type="checkbox" id="set-teleport-boss" class="w-4 h-4"><span class="text-rose-300">傳送控制戒指自動找BOSS</span><span class="text-xs text-slate-500">需帶戒指·離線不套用·每角色分開</span>';
+        lbl.innerHTML = '<input type="checkbox" id="set-teleport-boss" class="w-4 h-4"><span class="text-rose-300">傳送控制戒指自動找BOSS</span><span class="text-xs text-slate-500">需帶戒指·線上/離線皆適用·每角色分開</span>';
         var barrier = document.getElementById('set-auto-buy-magicbarrier');
         var abBox = barrier && barrier.closest('#afk-autobuy-box');
         if (abBox) {
@@ -124,13 +124,38 @@
     }
     // 「自動找 BOSS 進行中」:核心「迴避頭目(瞬移卷軸)」以此互斥(找BOSS開著就抑制逃離,
     // 否則剛召來的王立刻被逃離瞬移走;比照 main 版核心的 _huntBoss 旗標)。
+    // 🔒 Jesper offline boss hunt bridge v1
+    // 只有本站 afk-offline 的真實離線結算可在 state.ff 下啟用；背景分頁補跑仍維持線上規則。
+    function offlineCatchupActive() {
+        try {
+            return typeof state !== 'undefined' && state && state.ff
+                && window.__afk && typeof window.__afk.isCatchingUp === 'function'
+                && window.__afk.isCatchingUp();
+        } catch (e) { return false; }
+    }
     function huntActive() {
         try {
-            return isOn() && typeof state !== 'undefined' && state && state.running && !state.ff
+            return isOn() && typeof state !== 'undefined' && state && state.running
+                && (!state.ff || offlineCatchupActive())
                 && hasTeleportRing() && !excludedMap() && mapHasBossPool();
         } catch (e) { return false; }
     }
-    window.AFK_BOSSRING = { huntActive: huntActive };
+    function signature() {
+        try { return { on: !!isOn(), ring: !!hasTeleportRing() }; }
+        catch (e) { return { on: false, ring: false, error: true }; }
+    }
+    function offlineStep(remainingTicks) {
+        if (!offlineCatchupActive()) return 'inactive';
+        // 結算尾端不再開新一輪：落點會重建地圖，否則卷軸已扣但 BOSS 還沒出生就被清掉。
+        if (Number.isFinite(remainingTicks) && remainingTicks < WAIT_SPAWN_TICKS) return 'ending';
+        return tick(true);
+    }
+    window.AFK_BOSSRING = {
+        huntActive: huntActive,
+        offlineCatchupActive: offlineCatchupActive,
+        offlineStep: offlineStep,
+        signature: signature
+    };
 
     var WAIT_SPAWN_TICKS = 100;      // 瞬移後等 BOSS 生成(10 秒),不連續空瞬移
     var WAIT_BLOCKED_TICKS = 3000;   // 卷軸沒被消耗=這張圖禁傳送 → 退避 5 分鐘再試
@@ -141,20 +166,24 @@
         try { return player.inv.reduce(function (s, i) { return s + ((i && i.id === 'scroll_teleport') ? (i.cnt || 1) : 0); }, 0); } catch (e) { return -1; }
     }
 
-    var _waitUntil = 0;   // 瞬移後「等 BOSS 生成」期限(比照 main 的 _autoBossHuntUntil);逾時容許重試
-    function tick() {
+    var _waitUntilBySlot = {};   // 各存檔位分開，避免切角色後沿用上一隻角色的等待期限
+    function waitKey() { return validSlot() ? String(currentSlot) : '_global'; }
+    function readWaitUntil() { return _waitUntilBySlot[waitKey()] || 0; }
+    function writeWaitUntil(v) { _waitUntilBySlot[waitKey()] = Math.max(0, Number(v) || 0); }
+    function tick(allowOffline) {
         try {
-            if (!isOn()) return;                         // 勾選框沒勾 → 不自動
-            if (typeof state === 'undefined' || !state || !state.running || state.ff) return;   // 只線上前景
-            if (typeof mapState === 'undefined' || !mapState || !mapState.mobs) return;
-            if (typeof player === 'undefined' || !player || !player.inv) return;
-            if (!hasTeleportRing()) return;              // 沒戒指
-            if (anyBoss()) { _waitUntil = 0; return; }   // 場上有王 → 打它，不瞬移（與自動逃離互斥）
-            if (mapState.forceBoss) return;              // 已排定必出 BOSS → 等它生出來
-            if ((state.ticks || 0) < _waitUntil) return; // 剛瞬移過:BOSS 生成要幾秒,等滿再重試
-            if (excludedMap()) return;                   // 排除地圖
-            if (!mapHasBossPool()) return;               // 無 BOSS 池的圖不動作(防無限燒卷軸)
-            if (state._manualTpUntil && (state.ticks || 0) < state._manualTpUntil) return;   // 手動瞬移後抑制期
+            if (!isOn()) return 'off';                         // 勾選框沒勾 → 不自動
+            if (typeof state === 'undefined' || !state || !state.running) return 'inactive';
+            if (state.ff && !allowOffline) return 'inactive';  // 一般 timer 不介入補跑；離線只由 offlineStep 主動驅動
+            if (typeof mapState === 'undefined' || !mapState || !mapState.mobs) return 'inactive';
+            if (typeof player === 'undefined' || !player || !player.inv) return 'inactive';
+            if (!hasTeleportRing()) return 'no-ring';          // 沒戒指
+            if (anyBoss()) { writeWaitUntil(0); return 'boss'; } // 場上有王 → 打它，不瞬移（與自動逃離互斥）
+            if (mapState.forceBoss) return 'waiting';          // 已排定必出 BOSS → 等它生出來
+            if ((state.ticks || 0) < readWaitUntil()) return 'waiting';
+            if (excludedMap()) return 'excluded';              // 排除地圖
+            if (!mapHasBossPool()) return 'no-pool';           // 無 BOSS 池的圖不動作(防無限燒卷軸)
+            if (state._manualTpUntil && (state.ticks || 0) < state._manualTpUntil) return 'manual-wait';
             var sc = player.inv.find(function (i) { return i && i.id === 'scroll_teleport' && (i.cnt || 1) >= 1; });
             if (!sc) {
                 // 缺瞬移卷軸→比照上游「迴避頭目」自動購買一張(勾了功能=同意買;金幣不夠才作罷)
@@ -167,14 +196,15 @@
                     }
                 } catch (e) {}
             }
-            if (!sc) return;                             // 買不起也沒存貨 → 不動
+            if (!sc) return 'no-scroll';                       // 買不起也沒存貨 → 不動
             var before = scrollCount();
-            useItem(sc.uid, false, true);                // 非 silent=戒指 forceBoss;keepModal=自動觸發別關玩家開著的視窗
+            useItem(sc.uid, false, true);                      // 非 silent=戒指 forceBoss;keepModal=自動觸發別關玩家開著的視窗
             var blocked = (before >= 0 && scrollCount() === before);
-            _waitUntil = (state.ticks || 0) + (blocked ? WAIT_BLOCKED_TICKS : WAIT_SPAWN_TICKS);
-        } catch (e) {}
+            writeWaitUntil((state.ticks || 0) + (blocked ? WAIT_BLOCKED_TICKS : WAIT_SPAWN_TICKS));
+            return blocked ? 'blocked' : 'used';
+        } catch (e) { return 'error'; }
     }
-    setInterval(tick, 1000);
+    setInterval(function () { tick(false); }, 1000);
 
     try { console.log('[AFK-bossring] hooks OK — 傳送控制戒指自動找 BOSS 已啟用。'); } catch (e) {}
 })();

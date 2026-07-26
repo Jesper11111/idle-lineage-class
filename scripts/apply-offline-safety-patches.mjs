@@ -14,15 +14,186 @@ import { readFileSync, writeFileSync } from 'node:fs';
 const CHECK = process.argv.includes('--check');
 const OFFLINE_FILE = 'afk-offline.js';
 const SLOTINFO_FILE = 'afk-slotinfo.js';
+const BOSSRING_FILE = 'afk-bossring.js';
+const TOGGLES_FILE = 'afk-toggles.js';
 const MARKER = '// 🔒 Jesper offline safety policy v4';
 const SLOTINFO_MARKER = '// 🔒 Jesper offline migration visibility guard';
 const OFFSTATS_MARKER = '// 🔒 Jesper offline cache contract v5';
+const BOSSRING_MARKER = '// 🔒 Jesper offline boss hunt bridge v1';
+const OFFLINE_BOSSRING_MARKER = '// 🔒 Jesper offline boss hunt settlement bridge v1';
 
 function replaceOne(src, from, to, file, label) {
   const at = src.indexOf(from);
   if (at < 0) throw new Error(`[${file}] 找不到「${label}」錨點；PP 可能改寫了離線流程，拒絕不確定替換。`);
   if (src.indexOf(from, at + from.length) >= 0) throw new Error(`[${file}] 「${label}」錨點出現不只一次，拒絕不確定替換。`);
   return src.slice(0, at) + to + src.slice(at + from.length);
+}
+
+function patchBossring() {
+  let src = readFileSync(BOSSRING_FILE, 'utf8').replace(/\r\n/g, '\n');
+  if (!src.includes(BOSSRING_MARKER)) {
+    src = replaceOne(
+      src,
+      ' *   - 只在「線上前景遊玩」跑（離線快速結算 state.ff 期間不套用；跟遇 BOSS 自動逃離互斥＝有王就不瞬移）。',
+      ' *   - 線上前景與本站離線掛機都適用；離線由結算引擎按虛擬時間主動呼叫，跟遇 BOSS 自動逃離互斥＝有王就不瞬移。',
+      BOSSRING_FILE,
+      '檔頭適用範圍說明'
+    );
+
+    src = replaceOne(
+      src,
+      '<span class="text-xs text-slate-500">需帶戒指·離線不套用·每角色分開</span>',
+      '<span class="text-xs text-slate-500">需帶戒指·線上/離線皆適用·每角色分開</span>',
+      BOSSRING_FILE,
+      '玩家介面適用範圍說明'
+    );
+
+    src = replaceOne(
+      src,
+      "    function huntActive() {\n" +
+      "        try {\n" +
+      "            return isOn() && typeof state !== 'undefined' && state && state.running && !state.ff\n" +
+      "                && hasTeleportRing() && !excludedMap() && mapHasBossPool();\n" +
+      "        } catch (e) { return false; }\n" +
+      "    }\n" +
+      "    window.AFK_BOSSRING = { huntActive: huntActive };",
+      "    " + BOSSRING_MARKER + "\n" +
+      "    // 只有本站 afk-offline 的真實離線結算可在 state.ff 下啟用；背景分頁補跑仍維持線上規則。\n" +
+      "    function offlineCatchupActive() {\n" +
+      "        try {\n" +
+      "            return typeof state !== 'undefined' && state && state.ff\n" +
+      "                && window.__afk && typeof window.__afk.isCatchingUp === 'function'\n" +
+      "                && window.__afk.isCatchingUp();\n" +
+      "        } catch (e) { return false; }\n" +
+      "    }\n" +
+      "    function huntActive() {\n" +
+      "        try {\n" +
+      "            return isOn() && typeof state !== 'undefined' && state && state.running\n" +
+      "                && (!state.ff || offlineCatchupActive())\n" +
+      "                && hasTeleportRing() && !excludedMap() && mapHasBossPool();\n" +
+      "        } catch (e) { return false; }\n" +
+      "    }\n" +
+      "    function signature() {\n" +
+      "        try { return { on: !!isOn(), ring: !!hasTeleportRing() }; }\n" +
+      "        catch (e) { return { on: false, ring: false, error: true }; }\n" +
+      "    }\n" +
+      "    function offlineStep(remainingTicks) {\n" +
+      "        if (!offlineCatchupActive()) return 'inactive';\n" +
+      "        // 結算尾端不再開新一輪：落點會重建地圖，否則卷軸已扣但 BOSS 還沒出生就被清掉。\n" +
+      "        if (Number.isFinite(remainingTicks) && remainingTicks < WAIT_SPAWN_TICKS) return 'ending';\n" +
+      "        return tick(true);\n" +
+      "    }\n" +
+      "    window.AFK_BOSSRING = {\n" +
+      "        huntActive: huntActive,\n" +
+      "        offlineCatchupActive: offlineCatchupActive,\n" +
+      "        offlineStep: offlineStep,\n" +
+      "        signature: signature\n" +
+      "    };",
+      BOSSRING_FILE,
+      '離線結算公開介面'
+    );
+
+    src = replaceOne(
+      src,
+      "    var _waitUntil = 0;   // 瞬移後「等 BOSS 生成」期限(比照 main 的 _autoBossHuntUntil);逾時容許重試\n" +
+      "    function tick() {\n" +
+      "        try {\n" +
+      "            if (!isOn()) return;                         // 勾選框沒勾 → 不自動\n" +
+      "            if (typeof state === 'undefined' || !state || !state.running || state.ff) return;   // 只線上前景\n" +
+      "            if (typeof mapState === 'undefined' || !mapState || !mapState.mobs) return;\n" +
+      "            if (typeof player === 'undefined' || !player || !player.inv) return;\n" +
+      "            if (!hasTeleportRing()) return;              // 沒戒指\n" +
+      "            if (anyBoss()) { _waitUntil = 0; return; }   // 場上有王 → 打它，不瞬移（與自動逃離互斥）\n" +
+      "            if (mapState.forceBoss) return;              // 已排定必出 BOSS → 等它生出來\n" +
+      "            if ((state.ticks || 0) < _waitUntil) return; // 剛瞬移過:BOSS 生成要幾秒,等滿再重試\n" +
+      "            if (excludedMap()) return;                   // 排除地圖\n" +
+      "            if (!mapHasBossPool()) return;               // 無 BOSS 池的圖不動作(防無限燒卷軸)\n" +
+      "            if (state._manualTpUntil && (state.ticks || 0) < state._manualTpUntil) return;   // 手動瞬移後抑制期\n" +
+      "            var sc = player.inv.find(function (i) { return i && i.id === 'scroll_teleport' && (i.cnt || 1) >= 1; });\n" +
+      "            if (!sc) {\n" +
+      "                // 缺瞬移卷軸→比照上游「迴避頭目」自動購買一張(勾了功能=同意買;金幣不夠才作罷)\n" +
+      "                try {\n" +
+      "                    var cost = shopPrice(DB.items.scroll_teleport.p);\n" +
+      "                    if (player.gold >= cost) {\n" +
+      "                        player.gold -= cost;\n" +
+      "                        gainItem('scroll_teleport', 1, true, true);\n" +
+      "                        sc = player.inv.find(function (i) { return i && i.id === 'scroll_teleport' && (i.cnt || 1) >= 1; });\n" +
+      "                    }\n" +
+      "                } catch (e) {}\n" +
+      "            }\n" +
+      "            if (!sc) return;                             // 買不起也沒存貨 → 不動\n" +
+      "            var before = scrollCount();\n" +
+      "            useItem(sc.uid, false, true);                // 非 silent=戒指 forceBoss;keepModal=自動觸發別關玩家開著的視窗\n" +
+      "            var blocked = (before >= 0 && scrollCount() === before);\n" +
+      "            _waitUntil = (state.ticks || 0) + (blocked ? WAIT_BLOCKED_TICKS : WAIT_SPAWN_TICKS);\n" +
+      "        } catch (e) {}\n" +
+      "    }\n" +
+      "    setInterval(tick, 1000);",
+      "    var _waitUntilBySlot = {};   // 各存檔位分開，避免切角色後沿用上一隻角色的等待期限\n" +
+      "    function waitKey() { return validSlot() ? String(currentSlot) : '_global'; }\n" +
+      "    function readWaitUntil() { return _waitUntilBySlot[waitKey()] || 0; }\n" +
+      "    function writeWaitUntil(v) { _waitUntilBySlot[waitKey()] = Math.max(0, Number(v) || 0); }\n" +
+      "    function tick(allowOffline) {\n" +
+      "        try {\n" +
+      "            if (!isOn()) return 'off';                         // 勾選框沒勾 → 不自動\n" +
+      "            if (typeof state === 'undefined' || !state || !state.running) return 'inactive';\n" +
+      "            if (state.ff && !allowOffline) return 'inactive';  // 一般 timer 不介入補跑；離線只由 offlineStep 主動驅動\n" +
+      "            if (typeof mapState === 'undefined' || !mapState || !mapState.mobs) return 'inactive';\n" +
+      "            if (typeof player === 'undefined' || !player || !player.inv) return 'inactive';\n" +
+      "            if (!hasTeleportRing()) return 'no-ring';          // 沒戒指\n" +
+      "            if (anyBoss()) { writeWaitUntil(0); return 'boss'; } // 場上有王 → 打它，不瞬移（與自動逃離互斥）\n" +
+      "            if (mapState.forceBoss) return 'waiting';          // 已排定必出 BOSS → 等它生出來\n" +
+      "            if ((state.ticks || 0) < readWaitUntil()) return 'waiting';\n" +
+      "            if (excludedMap()) return 'excluded';              // 排除地圖\n" +
+      "            if (!mapHasBossPool()) return 'no-pool';           // 無 BOSS 池的圖不動作(防無限燒卷軸)\n" +
+      "            if (state._manualTpUntil && (state.ticks || 0) < state._manualTpUntil) return 'manual-wait';\n" +
+      "            var sc = player.inv.find(function (i) { return i && i.id === 'scroll_teleport' && (i.cnt || 1) >= 1; });\n" +
+      "            if (!sc) {\n" +
+      "                // 缺瞬移卷軸→比照上游「迴避頭目」自動購買一張(勾了功能=同意買;金幣不夠才作罷)\n" +
+      "                try {\n" +
+      "                    var cost = shopPrice(DB.items.scroll_teleport.p);\n" +
+      "                    if (player.gold >= cost) {\n" +
+      "                        player.gold -= cost;\n" +
+      "                        gainItem('scroll_teleport', 1, true, true);\n" +
+      "                        sc = player.inv.find(function (i) { return i && i.id === 'scroll_teleport' && (i.cnt || 1) >= 1; });\n" +
+      "                    }\n" +
+      "                } catch (e) {}\n" +
+      "            }\n" +
+      "            if (!sc) return 'no-scroll';                       // 買不起也沒存貨 → 不動\n" +
+      "            var before = scrollCount();\n" +
+      "            useItem(sc.uid, false, true);                      // 非 silent=戒指 forceBoss;keepModal=自動觸發別關玩家開著的視窗\n" +
+      "            var blocked = (before >= 0 && scrollCount() === before);\n" +
+      "            writeWaitUntil((state.ticks || 0) + (blocked ? WAIT_BLOCKED_TICKS : WAIT_SPAWN_TICKS));\n" +
+      "            return blocked ? 'blocked' : 'used';\n" +
+      "        } catch (e) { return 'error'; }\n" +
+      "    }\n" +
+      "    setInterval(function () { tick(false); }, 1000);",
+      BOSSRING_FILE,
+      '線上與離線共用召王步驟'
+    );
+  }
+
+  const required = [
+    BOSSRING_MARKER,
+    '線上/離線皆適用',
+    'function offlineCatchupActive()',
+    'offlineStep: offlineStep',
+    'signature: signature',
+    'var _waitUntilBySlot = {}',
+    'if (state.ff && !allowOffline)',
+    "return blocked ? 'blocked' : 'used'",
+    'setInterval(function () { tick(false); }, 1000)'
+  ];
+  const missing = required.filter(x => !src.includes(x));
+  if (missing.length) throw new Error(`[${BOSSRING_FILE}] 離線召王補丁驗證失敗：${missing.join(' | ')}`);
+  if (!CHECK) writeFileSync(BOSSRING_FILE, src);
+
+  let toggles = readFileSync(TOGGLES_FILE, 'utf8').replace(/\r\n/g, '\n');
+  const oldDesc = "desc: '持傳送控制戒指時，場上無 BOSS 自動用瞬移卷軸召來（線上前景；排名/裂痕/軍王/攻城不套用）'";
+  const newDesc = "desc: '持傳送控制戒指時，場上無 BOSS 自動用瞬移卷軸召來（線上/離線；排名/裂痕/軍王/攻城不套用）'";
+  if (toggles.includes(oldDesc)) toggles = replaceOne(toggles, oldDesc, newDesc, TOGGLES_FILE, '外掛說明');
+  if (!toggles.includes(newDesc)) throw new Error(`[${TOGGLES_FILE}] 找不到離線召王外掛說明。`);
+  if (!CHECK) writeFileSync(TOGGLES_FILE, toggles);
 }
 
 function patchOffline() {
@@ -141,7 +312,7 @@ function patchOffline() {
       "  // 快取必須隨真正影響戰力的資料失效。舊簽章只有地圖/等級/裝備 id+強化，會漏掉\n" +
       "  // 配點、自動技能、套裝詞綴、傭兵與寵物；內容更新後甚至可能沿用舊版殺速與 BOSS 結果。\n" +
       "  var OFFSTATS_SCHEMA = 2;\n" +
-      "  var OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r1';\n" +
+      "  var OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r2-bossring';\n" +
       "  function offStatsStable(v) {\n" +
       "    if (v == null || typeof v === 'number' || typeof v === 'boolean' || typeof v === 'string') return v;\n" +
       "    if (Array.isArray(v)) return v.map(offStatsStable);\n" +
@@ -249,13 +420,135 @@ function patchOffline() {
     );
   }
 
+  if (!src.includes(OFFLINE_BOSSRING_MARKER)) {
+    if (src.includes("OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r1'")) {
+      src = replaceOne(
+        src,
+        "OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r1'",
+        "OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r2-bossring'",
+        OFFLINE_FILE,
+        '離線快取規則版'
+      );
+    }
+
+    src = replaceOne(
+      src,
+      "  function offStatsSig() {\n",
+      "  " + OFFLINE_BOSSRING_MARKER + "\n" +
+      "  function offlineBossHuntApi() {\n" +
+      "    try { return window.AFK_BOSSRING || null; } catch (e) { return null; }\n" +
+      "  }\n" +
+      "  function offlineBossHuntActive() {\n" +
+      "    var api = offlineBossHuntApi();\n" +
+      "    try { return !!(api && typeof api.huntActive === 'function' && api.huntActive()); } catch (e) { return false; }\n" +
+      "  }\n" +
+      "  function offlineBossHuntStep(remainingTicks) {\n" +
+      "    var api = offlineBossHuntApi();\n" +
+      "    try { return (api && typeof api.offlineStep === 'function') ? api.offlineStep(remainingTicks) : 'unavailable'; }\n" +
+      "    catch (e) { console.warn('[AFK] 離線自動找 BOSS 步驟失敗，本次略過：', e); return 'error'; }\n" +
+      "  }\n" +
+      "  function offlineBossHuntSignature() {\n" +
+      "    var api = offlineBossHuntApi();\n" +
+      "    try { return (api && typeof api.signature === 'function') ? api.signature() : { on:false, ring:false, unavailable:true }; }\n" +
+      "    catch (e) { return { on:false, ring:false, error:true }; }\n" +
+      "  }\n" +
+      "  function offStatsSig() {\n",
+      OFFLINE_FILE,
+      '離線召王橋接 helper'
+    );
+
+    src = replaceOne(
+      src,
+      "      modes:[!!player.sherineWorld, !!player.sherineMad, !!player.classicMode, !!player.traditionalMode],\n" +
+      "      player:offStatsActor(player), allies:(player.allies || []).map(offStatsActor), pets:pets",
+      "      modes:[!!player.sherineWorld, !!player.sherineMad, !!player.classicMode, !!player.traditionalMode],\n" +
+      "      bossring:offlineBossHuntSignature(),\n" +
+      "      player:offStatsActor(player), allies:(player.allies || []).map(offStatsActor), pets:pets",
+      OFFLINE_FILE,
+      '離線快取納入召王設定與戒指'
+    );
+
+    src = replaceOne(
+      src,
+      "        if (!(d.type === 'pot' || d.type === 'scroll' || d.isArrow)) continue;\n" +
+      "        var used =",
+      "        if (!(d.type === 'pot' || d.type === 'scroll' || d.isArrow)) continue;\n" +
+      "        // 自動找王每次都由 offlineStep 精確呼叫 useItem 扣 1 張；不可再按取樣耗率重複扣帳。\n" +
+      "        if (k === 'scroll_teleport' && offlineBossHuntActive()) continue;\n" +
+      "        var used =",
+      OFFLINE_FILE,
+      '召王卷軸避免雙重扣帳'
+    );
+
+    src = replaceOne(
+      src,
+      "    function fastTeleportAwayBoss(m) {   // 🌀 快速段模擬「遇 BOSS 自動瞬移逃離」:1:1 重放線上 autoActions 的瞬移分支;成功甩掉回 true\n" +
+      "      try {\n" +
+      "        var tChk",
+      "    function fastTeleportAwayBoss(m) {   // 🌀 快速段模擬「遇 BOSS 自動瞬移逃離」:1:1 重放線上 autoActions 的瞬移分支;成功甩掉回 true\n" +
+      "      try {\n" +
+      "        if (offlineBossHuntActive()) return false;   // 自動找王啟用時王是目標，不可召來後又自動逃離\n" +
+      "        var tChk",
+      OFFLINE_FILE,
+      '快速段召王與避王互斥'
+    );
+
+    src = replaceOne(
+      src,
+      "    function fastEventStep() {   // ⚡ 事件驅動快速段的一步:原作排程出怪 → 殺「最早出生」那隻(或推進到下一個出怪時點);回 false = 退回全模擬\n" +
+      "      try {\n" +
+      "        maybeSpawnMobs();",
+      "    function fastEventStep() {   // ⚡ 事件驅動快速段的一步:原作排程出怪 → 殺「最早出生」那隻(或推進到下一個出怪時點);回 false = 退回全模擬\n" +
+      "      try {\n" +
+      "        offlineBossHuntStep(totalTicks - done);   // 快速段不跑 autoActions／真實 timer，依虛擬事件主動召王\n" +
+      "        maybeSpawnMobs();",
+      OFFLINE_FILE,
+      '快速段驅動離線召王'
+    );
+
+    src = replaceOne(
+      src,
+      "              tick();\n" +
+      "              settleDeadMobs();\n" +
+      "              done++; _realSimTicks++;\n" +
+      "              var _hpB",
+      "              tick();\n" +
+      "              settleDeadMobs();\n" +
+      "              done++; _realSimTicks++;\n" +
+      "              if (state.ticks % 10 === 0) offlineBossHuntStep(totalTicks - done);\n" +
+      "              var _hpB",
+      OFFLINE_FILE,
+      'BOSS 真打段驅動離線召王'
+    );
+
+    src = replaceOne(
+      src,
+      "          tick();\n" +
+      "          settleDeadMobs();\n" +
+      "          done++; _realSimTicks++;\n" +
+      "          if (fastEligible",
+      "          tick();\n" +
+      "          settleDeadMobs();\n" +
+      "          done++; _realSimTicks++;\n" +
+      "          if (state.ticks % 10 === 0) offlineBossHuntStep(totalTicks - done);\n" +
+      "          if (fastEligible",
+      OFFLINE_FILE,
+      '全模擬與取樣段驅動離線召王'
+    );
+  }
+
   const required = [
     MARKER,
     "MIGRATION_PREFIX = 'afk_offline_legacy_migrated_v'",
     OFFSTATS_MARKER,
+    OFFLINE_BOSSRING_MARKER,
     "OFFSTATS_SCHEMA = 2",
-    "OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r1'",
+    "OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r2-bossring'",
     "return 'v5|' + offStatsHash",
+    'bossring:offlineBossHuntSignature()',
+    "if (k === 'scroll_teleport' && offlineBossHuntActive()) continue",
+    'if (offlineBossHuntActive()) return false',
+    'offlineBossHuntStep(totalTicks - done)',
     'player._offStats = { v: OFFSTATS_SCHEMA',
     'player._offStats.v === OFFSTATS_SCHEMA',
     'function blockedInstanceMap(map)',
@@ -316,6 +609,7 @@ function patchSlotInfo() {
 }
 
 try {
+  patchBossring();
   patchOffline();
   patchSlotInfo();
   console.log(CHECK ? '✅ --check：離線安全政策均已就位。' : '✅ 已套用 Jesper 離線安全政策。');

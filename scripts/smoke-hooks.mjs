@@ -222,7 +222,7 @@ const offlineEngineProblems = await page.evaluate(() => {
   }
   if (typeof blocked === 'function' && blocked('dragon_valley')) bad.push('一般狩獵圖被誤判為禁止離線');
   if (!window.__afk || __afk.offStatsSchema !== 2 ||
-      __afk.offStatsRuleset !== 'pp-v3.8.5+shines-v3.8.27-content-r1' ||
+      __afk.offStatsRuleset !== 'pp-v3.8.5+shines-v3.8.27-content-r2-bossring' ||
       typeof __afk.offStatsSignature !== 'function') {
     bad.push('離線 _offStats v5 完整簽章契約未啟動');
   } else {
@@ -253,6 +253,44 @@ const offlineEngineProblems = await page.evaluate(() => {
       const allyChanged = __afk.offStatsSignature();
       player.allies = oldAllies;
       if (allyChanged === base) bad.push('離線快取簽章未涵蓋傭兵戰力／技能／裝備');
+
+      if (!window.AFK_BOSSRING || typeof AFK_BOSSRING.offlineStep !== 'function' ||
+          typeof AFK_BOSSRING.offlineCatchupActive !== 'function' ||
+          typeof AFK_BOSSRING.signature !== 'function') {
+        bad.push('自動找 BOSS 未暴露離線結算橋接介面');
+      } else {
+        const bossCb = document.getElementById('set-teleport-boss');
+        if (!bossCb) {
+          bad.push('自動找 BOSS 勾選框未注入');
+        } else {
+          const oldBossOn = bossCb.checked;
+          bossCb.checked = !oldBossOn;
+          bossCb.dispatchEvent(new Event('change'));
+          const bossSettingChanged = __afk.offStatsSignature();
+          bossCb.checked = oldBossOn;
+          bossCb.dispatchEvent(new Event('change'));
+          if (bossSettingChanged === base) bad.push('離線快取簽章未涵蓋自動找 BOSS 開關');
+        }
+
+        const oldInv = player.inv;
+        const oldRings = {};
+        for (const slot of ['ring1', 'ring2', 'ring3', 'ring4']) {
+          oldRings[slot] = player.eq && player.eq[slot];
+          if (player.eq) player.eq[slot] = null;
+        }
+        try {
+          player.inv = (oldInv || []).filter((item) => item && item.id !== 'acc_116');
+          const noBackpackRing = __afk.offStatsSignature();
+          player.inv = player.inv.concat([{ id:'acc_116', uid:'__sig_probe_bossring', cnt:1 }]);
+          const withBackpackRing = __afk.offStatsSignature();
+          if (withBackpackRing === noBackpackRing) bad.push('離線快取簽章未涵蓋背包內傳送控制戒指');
+        } finally {
+          player.inv = oldInv;
+          for (const slot of ['ring1', 'ring2', 'ring3', 'ring4']) {
+            if (player.eq) player.eq[slot] = oldRings[slot];
+          }
+        }
+      }
     } catch (e) {
       bad.push('離線快取簽章測試例外：' + e.message);
     } finally {
