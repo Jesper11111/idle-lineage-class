@@ -152,13 +152,14 @@ function _preloadDeathFx(name, n) {
 //    WAAPI onfinish 暫停、保險 setTimeout 被 Chrome 節流到每分鐘 1 次 → 特效元素「只進不出」越積越多。
 //    隱藏時本來就看不見，跳過生成對特效表現零影響；配合檔尾 visibilitychange→_vfxClearAll() 立即釋放已存在的。
 function _vfxMute() { return !!(window.__vfxOff || (typeof document !== 'undefined' && document.hidden) || (typeof state !== 'undefined' && state.ff)); }
-function playSpellFx(skn, mob) {
+function playSpellFx(skn, mob, caster) {
     try {
         if (_vfxMute() || !mob) return;
         let cfg = SPELL_FX[skn]; if (!cfg) return;
         // 🔮 v2.7.44 屬性變體(cfg.byEle)：依「目標怪屬性 mob.e」選對應幀組(如能量感測 火/水/地/風)·目標無對應屬性(none等)→靜默不播
         if (cfg.byEle) { let _v = cfg.byEle[mob.e]; if (!_v) return; cfg = Object.assign({}, cfg, _v); }
-        let fxKey = skn + '|' + mob.uid;
+        let _casterKey = caster && caster !== player ? ('ally:' + String(caster._slot || caster.enSeed || 'unknown')) : 'player';
+        let fxKey = skn + '|' + mob.uid + '|' + _casterKey;
         if (_spellFxActive[fxKey]) return;   // 🔒 該目標的此特效還在播 → 不疊第二個
         let ml = document.getElementById('mob-list');
         let slot = ml && ml.querySelector('.mob-target[data-uid="' + mob.uid + '"]');
@@ -177,7 +178,7 @@ function playSpellFx(skn, mob) {
         let _effPrefix = cfg.prefix, _flipX = false, _shadowPrefix = cfg.shadowPrefix;
         if (cfg.dirs && cfg.dirPrefix) {
             let _bv0 = document.getElementById('battle-view'); let _br0 = _bv0 && _bv0.getBoundingClientRect();
-            let _pr0 = (typeof _pmCasterRect === 'function') ? _pmCasterRect() : null;
+            let _pr0 = (caster && typeof _partyMemberRect === 'function') ? _partyMemberRect(caster) : ((typeof _pmCasterRect === 'function') ? _pmCasterRect() : null);
             let _ox0 = _pr0 ? (_pr0.left + _pr0.width * 0.5) : (_br0 ? (_br0.left + _br0.width * 0.5) : ax);
             let _oy0 = _pr0 ? (_pr0.top + _pr0.height * 0.35) : (_br0 ? (_br0.top + _br0.height * 0.98) : (ay + 120));
             let _deg = (Math.atan2(ax - _ox0, -(ay - _oy0)) * 180 / Math.PI + 360) % 360;   // 0=正上·順時針
@@ -221,7 +222,7 @@ function playSpellFx(skn, mob) {
         if (cfg.proj) {
             let bv = document.getElementById('battle-view');
             let br = bv && bv.getBoundingClientRect();
-            let pr = (typeof _pmCasterRect === 'function') ? _pmCasterRect() : null;   // 🧝 v3.0.49 玩家變身 sprite 顯示中→由 sprite 身上(胸口高度)發射
+            let pr = (caster && typeof _partyMemberRect === 'function') ? _partyMemberRect(caster) : ((typeof _pmCasterRect === 'function') ? _pmCasterRect() : null);   // 傭兵施法時由傭兵 sprite 發射；未傳施法者時維持玩家座標
             let ox = pr ? (pr.left + pr.width * 0.5) : (br ? (br.left + br.width * 0.5) : ax);                       // 施法者水平＝變身 sprite 中央·退回戰鬥區中央
             let oy = pr ? (pr.top + pr.height * 0.35) : (br ? (br.top + br.height * 0.98) : (ay + (fxH || 40) * 3));  // 施法者垂直＝sprite 胸口·退回戰鬥區底部(玩家視角)
             let axf = (cfg.ax != null ? cfg.ax : 0.5), ayf = (cfg.ay != null ? cfg.ay : 0.5);   // 投射物錨點(哪一點沿路徑走)

@@ -1187,6 +1187,7 @@ function allyCastMagic(ally, sk) {
         t._spellHurt = true;   // 🎬 v3.0.14 傭兵法術傷害→hurt(含頭目)
         if (t.st && t.st.mrhalf > 0) t.st.mrhalf = 0;
         mobWake(t);
+        if (typeof playSpellFx === 'function') { try { playSpellFx(sk.n, t, ally); } catch (e) {} }   // 🎬 傭兵傷害法術：以傭兵 sprite 作為特效施法者
         if (typeof reflectWallOnDamage === 'function') reflectWallOnDamage(t, totalDmg, 'magic', ally);   // 🌑 v3.4.14 血壁空間：傭兵傷害魔法技能（單體/全體）＝魔法反射（鏡像玩家 js/07 傷害魔法分支）
         if (sk.lifesteal && totalDmg > 0) { let h = Math.min(totalDmg, (ally.mhp || 0) - (ally.curHp || 0)); if (h > 0) { ally.curHp = Math.min(ally.mhp || 1, (ally.curHp || 0) + h); logCombat(`<span class="text-emerald-300 font-bold">【協力·${ally._allyName}】</span>吸取了 ${h} 點生命。`, 'heal', 'mercenary'); } }   // 🩸 v2.6.18 #中：吸血魔法（寒冷戰慄/吸血鬼之吻 lifesteal）回復戰鬥HP(curHp)，比照玩家 castSkill 624；上限本次傷害或缺血較小者
         // 🔮 白鳥 5/5：傭兵「施放傷害魔法技能」不觸發脆弱（2026-06 用戶要求：只有一般攻擊/基礎普攻才觸發）；基礎普攻(法師光箭/幻術士奇古獸/物理 on-hit)仍於各自路徑套用脆弱
@@ -1597,7 +1598,7 @@ function _allyProcWeaponSpellHit(ally, t, sp, en, illusionRecoverMp) {
              : '#d8b4fe;text-shadow:0 0 6px #a855f7';
     let counterTxt = (_cm > 1) ? ' <span class="text-emerald-300 font-bold">(剋屬性!)</span>' : (_cm < 1 ? ' <span class="text-rose-400 font-bold">(被剋!)</span>' : '');
     logCombat(`<span class="font-bold" style="color:${glow};">【協力·${ally._allyName}·${sp.skn}】</span>武器之力爆發，對 <span class="${getMobColor(t.lv)}">${t.n}</span> 造成 ${dd} 點${ELE_CN[sp.ele] || ''}屬性魔法傷害！${counterTxt}`, 'player-special');
-    if (typeof playSpellFx === 'function') { try { playSpellFx(sp.skn, t); } catch (e) {} }
+    if (typeof playSpellFx === 'function') { try { playSpellFx(sp.skn, t, ally); } catch (e) {} }
     _allyDamageMob(ally, t, dd, (sp.ele && sp.ele !== 'none') ? sp.ele : 'magic', 'magic');
     // ⚡ 固定機率附加異常狀態（與玩家版一致；force 繞過魔抗命中判定，BOSS 免疫仍生效）
     if (t.curHp > 0 && sp.status && Math.random() * 100 < sp.status.pct) applyMobStatus(t, { kind: sp.status.kind, dur: sp.status.dur || 4, force: true }, sp.skn);
@@ -1632,7 +1633,7 @@ function allyProcFreeMagicSkill(ally, t, skId, en, areaHit, sourceItem, illusion
     if (sk.instakill && typeof tryInstakill === 'function') {
         let _ik = sk.instakill;
         let _ikOk = !t.boss && (!_ik.tag || (typeof mobHasTag === 'function' && mobHasTag(t, _ik.tag)));
-        if (_ikOk && typeof playSpellFx === 'function') { try { playSpellFx(sk.n, t); } catch (e) {} }
+        if (_ikOk && typeof playSpellFx === 'function') { try { playSpellFx(sk.n, t, ally); } catch (e) {} }
         let _ikIdx = mapState.mobs.findIndex(m => m && m.uid === t.uid);
         let _ikDone = false;
         if (_ikIdx !== -1) { let _sv = player; player = ally; try { _ikDone = tryInstakill(t, _ik, sk.n, _ikIdx, true); } finally { player = _sv; } }
@@ -1693,7 +1694,7 @@ function allyLaiaWandHitProc(ally, t) {
     dd = Math.max(1, Math.floor(dd * enhanceWpnFinalMult(en, w)));   // 🔧 武器強化 +11~+20：最終傷害倍率（取代舊 (1+強化/10)）
     dd = Math.max(1, Math.floor(dd * elementCounterMult(sp.ele, t.e)));   // ⚔️ 屬性剋制倍率（取代舊 +6 固定加值）
     if (t.st && t.st.mrhalf > 0) t.st.mrhalf = 0;
-    if (typeof playSpellFx === 'function') { try { playSpellFx(sp.skn || '冰裂術', t); } catch (e) {} }   // ❄️ v3.7.43 鏡像玩家側(js/04)：傭兵觸發也要疊法術特效（未註冊者自動略過）
+    if (typeof playSpellFx === 'function') { try { playSpellFx(sp.skn || '冰裂術', t, ally); } catch (e) {} }   // ❄️ v3.7.43 鏡像玩家側(js/04)：傭兵觸發也要疊法術特效（未註冊者自動略過）
     logCombat(`<span class="font-bold" style="color:#93c5fd;text-shadow:0 0 6px #2563eb;">【協力·${ally._allyName}·${sp.skn || '冰裂術'}】</span>對 <span class="${getMobColor(t.lv)}">${t.n}</span> 造成 ${dd} 點水屬性魔法傷害${wasFrozen ? '（冰碎!）' : ''}。`, 'player-special');
     _allyDamageMob(ally, t, dd, sp.ele, 'magic');
     if (t.curHp > 0) applyMobStatus(t, { kind: 'freeze', pbase: sp.freezePbase, dur: 6 }, sp.skn || '冰裂術');   // 機率冰凍
@@ -1787,7 +1788,7 @@ function allyWeaponProcs(ally, target, hitInfo, instOverride) {
                 _dd = Math.max(1, Math.floor(_dd * elementCounterMult(pt[2] || 'none', _dt.e)));
                 _tot += _dd;
             });
-            if (typeof playSpellFx === 'function') { try { playSpellFx(_pd.skn || '熾焰地裂術', _dt); } catch (e) {} }   // 🔥 v3.7.44 鏡像玩家側(js/04)：傭兵觸發也要疊法術特效
+            if (typeof playSpellFx === 'function') { try { playSpellFx(_pd.skn || '熾焰地裂術', _dt, ally); } catch (e) {} }   // 🔥 v3.7.44 鏡像玩家側(js/04)：傭兵觸發也要疊法術特效
             logCombat(`<span class="font-bold" style="color:#fb923c;text-shadow:0 0 6px #ea580c;">【協力·${ally._allyName}·${_pd.skn}】</span>地火同崩，對 <span class="${getMobColor(_dt.lv)}">${_dt.n}</span> 造成 ${_tot} 點傷害。`, 'player');
             _allyDamageMob(ally, _dt, _tot, 'fire');
         }
