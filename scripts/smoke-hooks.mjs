@@ -101,6 +101,23 @@ mpage.on('console', (m) => logs.push(m.text()));
 await mpage.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'domcontentloaded' });
 const _mDeadline = Date.now() + 20000;
 while (Date.now() < _mDeadline && !seen(needMobileOnly)) await mpage.waitForTimeout(200);
+const mobileBottomScrollProblems = await mpage.evaluate(() => {
+  const bad = [];
+  const right = document.getElementById('col-right');
+  if (!right) return ['手機右欄不存在'];
+  document.documentElement.style.setProperty('--m-nav-h', '39px');
+  document.body.classList.add('m-mobile', 'mview-right');
+  const spacer = getComputedStyle(right, '::after');
+  const flexBasis = parseFloat(spacer.flexBasis) || 0;
+  if (spacer.content === 'none' || spacer.display === 'none' || flexBasis < 39) {
+    bad.push(`隱藏橫幅後右欄尾端捲動緩衝不足（display=${spacer.display}, flex-basis=${spacer.flexBasis}）`);
+  }
+  const game = document.getElementById('game-screen');
+  if (!game || !getComputedStyle(game).touchAction.includes('pan-y')) {
+    bad.push('手機主畫面未明確允許垂直觸控捲動');
+  }
+  return bad;
+});
 
 // --- 第三輪:手機 + 「手機版面」外掛關閉 ---
 //   為什麼要驗這個:玩家可以逐支關外掛,但 afk-toggles 的逃生門按鈕與各外掛入口「不可以跟著消失」——
@@ -409,6 +426,12 @@ if (toggleOffProblems.length) {
   console.error('冒煙測試失敗:全裝置橫幅隱藏或關閉「手機版面」後的逃生門/入口不正確:');
   for (const p of toggleOffProblems) console.error('  ' + p);
   console.error('  判準:不可停用的基礎設施不能依賴可被關掉的外掛提供的 CSS 變數 / body class。');
+  process.exit(1);
+}
+
+if (mobileBottomScrollProblems.length) {
+  console.error('冒煙測試失敗:隱藏來源橫幅後，手機右欄短內容可能被底部導覽蓋住且無法起捲:');
+  for (const p of mobileBottomScrollProblems) console.error('  ' + p);
   process.exit(1);
 }
 

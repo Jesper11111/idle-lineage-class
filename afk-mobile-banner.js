@@ -4,6 +4,7 @@
  * 只處理顯示政策：
  *   - 手機、平板與桌機一律隱藏 #_orig_pbar，不保留垂直空間。
  *   - 保留原 DOM 作為 PP 的已建立標記，避免核心反覆插入同一橫幅。
+ *   - 手機右欄補回底部導覽高度的尾端捲動緩衝，避免短內容剛好被導覽列蓋住後無法起捲。
  *   - 不依賴任何可停用的版面外掛。
  */
 (function () {
@@ -16,7 +17,12 @@
     if (document.getElementById(STYLE_ID)) return;
     var style = document.createElement('style');
     style.id = STYLE_ID;
-    style.textContent = 'html.' + ROOT_CLASS + ' #_orig_pbar{display:none !important;}';
+    style.textContent =
+      'html.' + ROOT_CLASS + ' #_orig_pbar{display:none !important;}\n'
+      + '@media (max-width:768px),(max-height:520px) and (pointer:coarse){\n'
+      + '  html.' + ROOT_CLASS + ' body.m-mobile #game-screen{touch-action:pan-y pinch-zoom;}\n'
+      + '  html.' + ROOT_CLASS + ' body.m-mobile.mview-right #col-right::after{content:"";display:block;width:100%;flex:0 0 var(--m-nav-h,0px);pointer-events:none;}\n'
+      + '}\n';
     (document.head || document.documentElement).appendChild(style);
   }
 
@@ -35,7 +41,7 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', sync);
 
   window.AFK_MOBILE_BANNER = Object.freeze({
-    version: '2.0.0',
+    version: '2.1.0',
     hiddenOnThisDevice: function () { return true; },
     sync: sync
   });
