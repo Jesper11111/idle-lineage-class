@@ -48,6 +48,7 @@ const localAfkFiles = new Set([
   'afk-mobile-banner.js',
   'afk-offline-owner.js',
   'afk-merc-policy.js',
+  'afk-mobile-memory.js',
   'afk-powersave-inventory.js'
 ]);
 const ppAfkFiles = readdirSync(UP).filter(f => /^afk-.+\.js$/.test(f) && !localAfkFiles.has(f));
