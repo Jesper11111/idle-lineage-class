@@ -4,8 +4,10 @@ import vm from 'node:vm';
 
 const plugin = await readFile(new URL('../afk-mobile-memory.js', import.meta.url), 'utf8');
 const core = await readFile(new URL('../js/13-shop-save.js', import.meta.url), 'utf8');
+const vfxCore = await readFile(new URL('../js/09-vfx-render.js', import.meta.url), 'utf8');
 const sync = await readFile(new URL('./sync-upstream.mjs', import.meta.url), 'utf8');
 const policyBlock = await readFile(new URL('./local-policy-block.html', import.meta.url), 'utf8');
+const assetExcludes = await readFile(new URL('./shines-backport-assets.txt', import.meta.url), 'utf8');
 
 function createHarness({ mobile = true, noanim = true, lowfps = true } = {}) {
   const values = new Map([
@@ -69,6 +71,10 @@ assert.equal(lite.areaCalls(), 0, '簡化模式不得先呼叫原函式，否則
 assert.match(lite.window._townMapBg('town_aden'), /^linear-gradient/, '城鎮也應改用 CSS 漸層');
 assert.equal(lite.townCalls(), 0, '簡化模式不得解析城鎮 1920 圖');
 assert.ok(lite.logs.some((line) => line.includes('[AFK-mobile-memory]') && line.includes('hooks OK')));
+const liteMob = lite.window.__afkMobileMobStill('巨大骷髏');
+assert.match(liteMob.src, /^assets\/mobile-mobs\/.+\.png$/, '雙省電怪物必須在原圖解碼前改走縮圖');
+assert.equal(JSON.stringify(liteMob.fb), JSON.stringify(['assets/mobile-mobs/_fallback.svg']),
+  '縮圖缺漏時只能退共用輕量圖，不得退原尺寸動畫幀');
 
 lite.values.set('afk_ps_lowfps', '0');
 assert.equal(lite.window.__afkMobileMemoryLite(), false, '任一省電選項關閉就應恢復原背景');
@@ -76,15 +82,23 @@ lite.window.applyAreaBackground();
 assert.equal(lite.areaCalls(), 1, '非簡化模式必須完整交回原背景函式');
 assert.equal(lite.window._townMapBg('town_aden'), 'url("assets/area/1920x1080/town.jpg")');
 assert.equal(lite.townCalls(), 1);
+assert.equal(lite.window.__afkMobileMobStill('巨大骷髏'), null,
+  '任一省電選項關閉時，怪物也必須完整交回原渲染');
 
 const desktop = createHarness({ mobile: false });
 assert.equal(desktop.window.__afkMobileMemoryLite(), false, '桌機不可套用手機記憶體政策');
+assert.equal(desktop.window.__afkMobileMobStill('巨大骷髏'), null, '桌機怪物渲染必須維持原圖層');
 desktop.window.applyAreaBackground();
 assert.equal(desktop.areaCalls(), 1);
 
 assert.equal((core.match(/__afkMobileMemoryLite/g) || []).length, 6,
   '角色選擇、創角預載、創角逐幀三處閘門必須完整存在');
+assert.equal((vfxCore.match(/__afkMobileMobStill/g) || []).length, 2,
+  '戰鬥渲染必須在原尺寸怪物 URL 進 DOM 前讀取雙省電縮圖 hook');
+assert.match(vfxCore, /_fullMobLayers && MOB_ANIM_NAMES\.has\(m\.n\)/,
+  '雙省電縮圖啟用時必須阻止影子與武器原尺寸圖層進 DOM');
 assert.match(sync, /'afk-mobile-memory\.js'/, '上游同步必須保留本地政策檔');
 assert.match(policyBlock, /afk-mobile-memory\.js/, '同步後 index 必須重新注入政策檔');
+assert.match(assetExcludes, /\/mobile-mobs\//, '上游 assets rsync --delete 必須保留手機怪物縮圖');
 
-console.log('✅ 手機圖片記憶體上限：地圖 A/B、角色預覽閘門與上游同步保護全部通過。');
+console.log('✅ 手機圖片記憶體上限：地圖、角色預覽、怪物縮圖閘門與上游同步保護全部通過。');

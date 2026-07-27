@@ -7,3 +7,5 @@
 /icons/armors/斯克巴女皇的魅惑之吻.png
 /icons/armors/蜘蛛女王的足跡.png
 /anim/骷髏召喚物/
+# Jesper 手機雙省電怪物縮圖；上游 assets rsync --delete 時必須保留。
+/mobile-mobs/

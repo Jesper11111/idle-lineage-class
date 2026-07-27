@@ -1,12 +1,14 @@
 /**
  * afk-mobile-memory.js — 手機省電模式的圖片解碼記憶體上限。
  *
- * iOS 白屏重載的第二個已確認來源：換地圖會逐張解碼 1920×1080 場景圖。JS heap / DOM
- * 沒有增長，但瀏覽器程序私有記憶體會持續攀升。手機同時開啟「關動畫＋低更新率」時，
- * 狩獵區與城鎮改用 CSS 漸層，不再把新場景圖送進圖片解碼／合成快取。
+ * iOS 白屏重載的圖片來源：
+ *   1. 換地圖會逐張解碼 1920×1080 場景圖。
+ *   2. 關動畫後，戰鬥渲染仍會逐怪解碼原尺寸 spawn/idle 本體、影子與武器圖層。
+ * 兩條路徑的 JS heap / DOM 都沒有增長，但瀏覽器程序私有記憶體會持續攀升。手機同時
+ * 開啟「關動畫＋低更新率」時，場景改用 CSS 漸層；怪物改用 96×96 單層辨識縮圖。
  *
- * 此檔是 Jesper 本地政策層，由 sync-upstream.mjs 明確保留；核心角色預覽動畫則只讀
- * __afkMobileMemoryLite() 掛點，讓上游同步後的錨點補丁可重套。
+ * 此檔是 Jesper 本地政策層，由 sync-upstream.mjs 明確保留；核心角色預覽與怪物渲染
+ * 只讀本檔掛點，讓上游同步後的錨點補丁可重套。
  */
 (function () {
     'use strict';
@@ -32,6 +34,21 @@
     window.__afkMobileMemoryLite = lite;
 
     var LITE_BG = 'linear-gradient(135deg, #172033 0%, #101827 48%, #080d18 100%)';
+    var LITE_MOB_FALLBACK = 'assets/mobile-mobs/_fallback.svg';
+
+    // js/09 的核心錨點會在產生任何 <img> 前詢問此 hook。必須在原圖 URL 進 DOM 前改寫，
+    // 事後 display:none / 換 src 都太晚，Safari 已開始解碼原尺寸圖片。
+    window.__afkMobileMobStill = function (name) {
+        if (!lite()) return null;
+        var dir = String(name || '');
+        try {
+            if (typeof window._animDir === 'function') dir = window._animDir(dir);
+        } catch (e) {}
+        return {
+            src: 'assets/mobile-mobs/' + encodeURIComponent(dir) + '.png',
+            fb: [LITE_MOB_FALLBACK]
+        };
+    };
 
     if (typeof window.applyAreaBackground === 'function' && !window.applyAreaBackground.__afkMobileMemory) {
         var originalAreaBackground = window.applyAreaBackground;
@@ -91,6 +108,6 @@
     }, false);
 
     try {
-        console.log('[AFK-mobile-memory] hooks OK — 手機雙省電啟用時限制地圖／角色預覽圖片解碼。');
+        console.log('[AFK-mobile-memory] hooks OK — 手機雙省電啟用時限制地圖／角色預覽／怪物圖片解碼。');
     } catch (e) {}
 })();
