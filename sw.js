@@ -1,7 +1,7 @@
 /* ============================================================================
  * sw.js — PWA Service Worker：程式桶 / 圖桶「分離快取」
  *
- * 兩個快取桶,刻意分開,這樣「改程式不會害人重載 30MB 圖」：
+ * 程式與圖片快取刻意分開，程式改版不會清掉所有圖片：
  *   ● 程式桶 CODE_CACHE：index.html + 所有外掛 js + 遊戲 js/css(含 tailwind-built.css) + manifest + PWA 圖示 + 外部 CDN(placehold)。
  *       桶名固定(比照圖桶),「不」隨版本換名:程式檔已用 ?v=(逐檔內容 sha)定址,換版即換 URL,
  *       cache-first 自然抓新版;沒改到的檔 URL 沒變、快取直接續用 → 一次更新只重新下載真的有改的那幾個檔。
@@ -14,12 +14,10 @@
  *       ▸ 「導覽文件」(index.html / 目錄 '/')走 network-first：線上一律抓最新「殼」,根除 cache-first 把舊版釘死、
  *         又得靠 SW 換版才更新得了的老問題(iOS 換版尤其不穩);離線/網路慢退快取,離線遊玩照常(見 navFirst)。
  *       ▸ js / manifest / 圖示走 cache-first：它們帶 ?v= 版本號,換版即換 URL,撲空就抓新、不會被釘舊版,故維持 cache-first(秒開、省流量)。
- *   ● 圖桶 IMG_CACHE：assets/ 全部圖。cache-first＋連網補抓(on-demand)——用到才抓、不預抓整包。
- *       桶名 IMG_VERSION 是「固定不變」的快取名(不再隨改版 bump、不整桶倒掉)。
- *       失效改走「逐張對帳」：assets-manifest.json 每張圖帶一個 git blob sha,SW 記下「自己快取的是哪個 sha」;
- *       頁面(afk-pwa)每次載入送來最新 manifest → SW 比對 → 只刪掉 sha 對不上的那幾張(reconcileImages),
- *       不碰其餘的圖 → 作者換一張圖只重抓那一張,不會害人重載整包 30MB。
- *       沒記過 sha 的舊快取(本機制上線前就存在的)→ 用實際 bytes 算 sha 補對帳,相符就補記、不符才清。
+ *   ● 資產桶 asset-<group>-<manifest hash>：assets/ 全部採 cache-first、按需下載。
+ *       一般資產按第一層目錄分桶；anim/classanim/morphanim 依資料夾穩定分成 8 片。
+ *       manifest 內容改變時只更換受影響的桶名；activate 只列桶名並整桶淘汰舊分片，
+ *       不抓 24k 筆清單、不逐項 cache.match，也不對圖片桶呼叫 cache.keys()。
  *
  * 更新控制：
  *   - 導覽走 network-first → 線上開頁本來就是最新程式碼,SW 何時換版不影響使用者看到的畫面。
@@ -27,18 +25,37 @@
  *     原因見 activate 前的說明——強行交接會和頁面的常駐請求互等死鎖,把更新後的第一次重整/登出卡住幾十秒)。
  *     導覽 network-first＋js/css 以 ?v= 定址 → 舊 SW 服務新內容零差異,晚點接手沒有任何代價。
  *
- * 圖桶失效走 reconcileImages 逐張對帳(見上);不再背景預抓——圖片一律 on-demand 用到才抓、不主動下載整包。
+ * 圖片失效走 manifest 版本分片；不背景預抓，圖片一律 on-demand 用到才抓。
  * ========================================================================== */
-const CODE_VERSION = 'code-6038864cb50c';   // ← scripts/stamp-sw-version.mjs 自動覆寫,勿手改(只用來讓 sw.js 內容變動→觸發更新偵測,不是桶名)
-const BUILD_ID     = '0726-2207'; // ← stamp 在 CODE_VERSION 變動時一起更新成台灣時間 MMDD-HHMM(僅供畫面辨識版本)
-const IMG_VERSION  = 'img-v3';    // 固定桶名,不再 bump(失效改走逐張對帳,見 reconcileImages)
+const CODE_VERSION = 'code-93e2e568b2b8';   // ← scripts/stamp-sw-version.mjs 自動覆寫,勿手改(只用來讓 sw.js 內容變動→觸發更新偵測,不是桶名)
+const BUILD_ID     = '0727-1637'; // ← stamp 在 CODE_VERSION 變動時一起更新成台灣時間 MMDD-HHMM(僅供畫面辨識版本)
 const CODE_CACHE = 'code-v1';     // 固定桶名,不隨版本換(檔案以 ?v= 定址;殘留由 reconcileCode 對帳清掉)
-const IMG_CACHE  = IMG_VERSION;
-
-// 圖桶內一個合成 entry,存「path → 已快取版本的 git blob sha」對照表,供逐張對帳判斷哪張該重抓。
-const IMG_HASH_KEY = '/__afk-img-hashes__';
-// 圖桶內另一個合成 entry,存「assets/anim/<怪>資料夾 → 已快取版本的合併 sha」,供動畫幀逐「怪」對帳(見 reconcileAnim)。
-const ANIM_HASH_KEY = '/__afk-anim-hashes__';
+const ASSET_CACHE_SHARDS = 8;
+const ASSET_CACHE_VERSIONS = {"anim-0":"2f5b5c6f252c","anim-1":"4858ad5b2533","anim-2":"bc3c1005171c","anim-3":"bf777ed949e1","anim-4":"e65ba062c4f1","anim-5":"0b8378d8d549","anim-6":"203dd4c427e7","anim-7":"b04e6965fb22","classanim-0":"e802b4c65971","classanim-1":"f015b366f013","classanim-2":"86739aea8907","classanim-3":"79ff6a39a4f3","classanim-4":"0dad9a2995f1","classanim-5":"f70d2957ee8c","classanim-6":"cb8087e0a04d","classanim-7":"5f725d3c82fd","morphanim-0":"f0231121399b","morphanim-1":"dd349185539a","morphanim-2":"043662bb252a","morphanim-3":"adc27903335f","morphanim-4":"0722943b7133","morphanim-5":"f32752e0764e","morphanim-6":"8f30735ea61e","morphanim-7":"a2e25974ce28","static-area":"06583a4b0351","static-background":"07470874d83e","static-bgm":"a6f629ab6444","static-character":"7bad733b5b38","static-doll":"a630b8dda443","static-favicon.png":"e3683fd5062f","static-fx":"b520680f1b01","static-icons":"19deb166c3d1","static-login":"023f1a2bac5d","static-logo":"600c79b6eca2","static-morph":"36c302230d6e","static-npc":"d9427f6e4626","static-sfx":"d45a7e2c9be4","static-start":"52b9c96c006f","static-state-icons":"81d05d72a970","static-ui":"5db9c3dde31b"};
+function _assetCacheShard(value) {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) hash = Math.imul(hash ^ value.charCodeAt(i), 16777619);
+  return (hash >>> 0) % ASSET_CACHE_SHARDS;
+}
+function _assetCacheGroup(pathname) {
+  let clean = String(pathname || '');
+  try { clean = decodeURIComponent(clean); } catch (err) {}
+  clean = clean.replace(/^\/+/, '').replace(/^public\//, '');
+  const assetsAt = clean.indexOf('assets/');
+  if (assetsAt > 0) clean = clean.slice(assetsAt); // GitHub Pages 專案站：/<repo>/assets/...
+  const animated = clean.match(/^assets\/(anim|classanim|morphanim)\/([^/]+)/);
+  if (animated) return animated[1] + '-' + _assetCacheShard(animated[1] + '/' + animated[2]);
+  const regular = clean.match(/^assets\/([^/]+)/);
+  return regular ? 'static-' + regular[1] : null;
+}
+function _assetCacheName(pathname) {
+  const group = _assetCacheGroup(pathname);
+  const version = group && ASSET_CACHE_VERSIONS[group];
+  return version ? 'asset-' + group + '-' + version : null;
+}
+const ASSET_CACHE_NAMES = new Set(Object.keys(ASSET_CACHE_VERSIONS)
+  .map((group) => 'asset-' + group + '-' + ASSET_CACHE_VERSIONS[group]));
+// 🔌 AFK_VERSIONED_ASSET_CACHES：只列桶名淘汰舊分片，禁止列舉任何圖片桶 entry。
 
 // 外部 CDN：離線也要能用,用 cache-first 收進程式桶(opaque 也存)。
 //   placehold.co=怪物圖載入失敗的備援圖。(Tailwind 已由作者改成本機 css/tailwind-built.css,
@@ -67,11 +84,15 @@ self.addEventListener('activate', (e) => {
     //    skipWaiting 的交接會被拖到不知何時,activate 的執行時機完全不可控——實測過會卡住。)
     //   其餘不明桶照舊清掉。
     await Promise.all(keys
-      .filter((k) => k !== CODE_CACHE && k !== IMG_CACHE && !/^code-/.test(k))
+      .filter((k) => k !== CODE_CACHE && !ASSET_CACHE_NAMES.has(k) && !/^code-/.test(k))
       .map((k) => caches.delete(k)));
     await self.clients.claim();
   })());
 });
+
+function _replyVersionedAssetCache(client, type) {
+  if (client) client.postMessage({ type, evicted: 0, skipped: 'versioned-asset-caches' });
+}
 
 self.addEventListener('message', (e) => {
   const d = e.data || {};
@@ -123,137 +144,12 @@ async function reconcileCode(keep) {
   }
 }
 
-// manifest 每筆可能是 [path, sha](新格式)或純 path 字串(舊格式/降級)→ 統一成 {path, sha}。
-function manifestEntries(manifest) {
-  return (manifest || []).map((e) => (Array.isArray(e) ? { path: e[0], sha: e[1] } : { path: e, sha: null }));
-}
-
-// git blob sha(跟 GitHub 樹狀 API 同演算法):sha1("blob "+len+"\0"+bytes)。
-async function gitBlobSha(buf) {
-  const bytes = new Uint8Array(buf);
-  const header = new TextEncoder().encode('blob ' + bytes.length + '\x00');
-  const all = new Uint8Array(header.length + bytes.length);
-  all.set(header, 0);
-  all.set(bytes, header.length);
-  const digest = await crypto.subtle.digest('SHA-1', all);
-  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-async function readImgHashes(cache) {
-  try {
-    const res = await cache.match(IMG_HASH_KEY);
-    if (res) return await res.json();
-  } catch (err) { /* 壞了當空表重建 */ }
-  return {};
-}
-async function writeImgHashes(cache, map) {
-  await cache.put(IMG_HASH_KEY, new Response(JSON.stringify(map), { headers: { 'content-type': 'application/json' } }));
-}
-
-// 逐張對帳:比對「快取記錄的 sha」與「最新 manifest 的 sha」,只清掉對不上的那幾張(下次 on-demand/預抓再抓新的)。
-//   - 記錄相符 → 一定是最新,跳過(快路徑,不讀 bytes)。
-//   - 沒記過 sha 的舊快取 → 用實際 bytes 算 sha:相符就補記、不符才清(讓本機制上線前的舊快取也能被healed)。
-//   - 作者已移除的圖(不在 manifest)→ 連快取帶記錄一起清掉。
-//   - 內容對不上(作者換過該圖)→ 清掉舊圖,下次 on-demand 用到才抓新版。
+// 舊頁面仍可能送 reconciliation 訊息；新 SW 直接回覆完成，不讀 manifest、不開圖桶。
 async function reconcileImages(manifest, client) {
-  const entries = manifestEntries(manifest);
-  const cache = await caches.open(IMG_CACHE);
-  const hashes = await readImgHashes(cache);
-  const manifestPaths = new Set(entries.map((en) => en.path));
-  let evicted = 0;
-  for (const en of entries) {
-    if (!en.sha) continue;                          // manifest 沒帶 sha 無從比對
-    if (hashes[en.path] === en.sha) continue;       // 記錄相符 → 最新
-    const cached = await cache.match(en.path);
-    if (!cached) { if (en.path in hashes) delete hashes[en.path]; continue; }  // 沒快取 → 之後抓的就是新的
-    if (hashes[en.path] === undefined) {
-      let actual = null;
-      try { actual = await gitBlobSha(await cached.clone().arrayBuffer()); } catch (err) { /* 算不出當作要清 */ }
-      if (actual === en.sha) { hashes[en.path] = en.sha; continue; }   // 舊快取內容其實是最新 → 補記、免重抓
-    }
-    await cache.delete(en.path);                    // 內容對不上 → 清掉舊圖
-    delete hashes[en.path];
-    evicted++;
-  }
-  for (const path of Object.keys(hashes)) {         // 作者移除的圖 → 清快取與記錄
-    if (!manifestPaths.has(path)) { await cache.delete(path); delete hashes[path]; evicted++; }
-  }
-  await writeImgHashes(cache, hashes);
-  if (client) client.postMessage({ type: 'reconcile-done', evicted });
+  _replyVersionedAssetCache(client, 'reconcile-done');
 }
-
-async function readAnimHashes(cache) {
-  try {
-    const res = await cache.match(ANIM_HASH_KEY);
-    if (res) return await res.json();
-  } catch (err) { /* 壞了當空表重建 */ }
-  return {};
-}
-// 回傳「有沒有寫進去」而不是往外拋:失敗往外拋會把整支 reconcileAnim 帶走(其餘 4 個 cache.put 一律掛 catch,
-//   這支原本漏了)。呼叫端要靠這個布林決定「敢不敢清圖」——記不住就不能清,見 reconcileAnim。
-async function writeAnimHashes(cache, map) {
-  try {
-    await cache.put(ANIM_HASH_KEY, new Response(JSON.stringify(map), { headers: { 'content-type': 'application/json' } }));
-    return true;
-  } catch (err) { return false; }
-}
-
-// 怪物動畫幀逐「怪」對帳:anim/ 幀太多不進逐張 manifest(見檔頭),改用 anim-manifest.json——
-//   每個 assets/anim/<怪>/ 資料夾一個「合併 sha」(幀有增/刪/換該 sha 就變)。SW 記下「自己快取的某怪是哪個 sha」,
-//   比對後只把「sha 對不上的那一隻怪」整包快取清掉(下次看到該怪時 on-demand 抓新版),不碰其他怪、不重載整包 62MB。
-//   ▸ 首次上線(還沒記過任何 anim 雜湊):對「已快取過的怪」一律先清一次再記(因無從得知舊快取是否過期)——
-//     這正是修掉「換過的動畫幀卡舊快取」的一次性代價,清掉的只在玩家下次看到該怪時才 on-demand 重抓。
-//   ▸ 沒快取過的怪:只記雜湊、不動作,日後該怪被換才會觸發清除。
-//   ▸ 作者移除的怪(不在 manifest):連快取帶記錄一起清掉。
 async function reconcileAnim(folders, client) {
-  const wanted = new Map(folders.filter((e) => Array.isArray(e) && e[1]).map((e) => [e[0], e[1]]));
-  const cache = await caches.open(IMG_CACHE);
-  const recorded = await readAnimHashes(cache);
-
-  // 走訪一次圖桶,把已快取的動畫幀依「資料夾」分組,避免每個資料夾各掃一次全桶。anim=怪物幀、classanim=職業戰鬥幀(v3.0.67),同走一資料夾一雜湊。
-  // ⚠️ cache.keys() 在「筆數夠多」的桶上會拋 Operation too large(玩家實機:圖桶塞滿動畫幀後必炸,
-  //    而同一 SW 的 reconcileImages 不用 keys() 故安然無恙——「圖片有記錄、怪物無記錄」就是這支死掉的鐵證)。
-  //    列舉不到 = 不知道哪些幀在快取裡,此時「清掉」與「採信」都是瞎猜 → 什麼都不做,維持現狀。
-  let entries;
-  try { entries = await cache.keys(); }
-  catch (err) {
-    if (client) client.postMessage({ type: 'reconcile-anim-done', evicted: 0, skipped: 'keys: ' + (err && err.message || err) });
-    return;
-  }
-  const byFolder = new Map();
-  for (const req of entries) {
-    let path; try { path = decodeURIComponent(new URL(req.url).pathname); } catch (err) { continue; }  // 中文資料夾名在 URL 是 %XX,要 decode 才對得上 manifest 的原始名
-    const m = path.match(/\/(assets\/(?:anim|classanim)\/[^/]+)\//);
-    if (!m) continue;
-    if (!byFolder.has(m[1])) byFolder.set(m[1], []);
-    byFolder.get(m[1]).push(req);
-  }
-  async function evictFolder(folder) {
-    const reqs = byFolder.get(folder);
-    if (!reqs) return 0;
-    for (const r of reqs) await cache.delete(r);
-    return reqs.length;
-  }
-
-  // 動手清之前,先確認這台機器「記得住」:拿現有記錄試寫一次,寫不進去就一張都別清。
-  //   原本是「先清光 → 再寫記錄」,寫入一失敗記錄就永遠是空的 → 下次載入每隻怪又全部對不上 → 再清一次
-  //   → 無限重抓(玩家回報「每次更新怪物圖都要重載」的成因之一)。清得掉卻記不住,比不清還糟。
-  if (!(await writeAnimHashes(cache, recorded))) {
-    if (client) client.postMessage({ type: 'reconcile-anim-done', evicted: 0, skipped: '記錄寫不進去,不敢清' });
-    return;
-  }
-
-  let evicted = 0;
-  for (const [folder, sha] of wanted) {
-    if (recorded[folder] === sha) continue;   // 記錄相符 → 該怪是最新,跳過
-    evicted += await evictFolder(folder);     // 換過 / 首次未記過且有快取 → 清該怪快取(下次 on-demand 抓新)
-    recorded[folder] = sha;                    // 記成最新(沒快取的怪也記,日後才偵測得到變動)
-  }
-  for (const folder of Object.keys(recorded)) {  // 作者移除的怪 → 清快取與記錄
-    if (!wanted.has(folder)) { evicted += await evictFolder(folder); delete recorded[folder]; }
-  }
-  await writeAnimHashes(cache, recorded);
-  if (client) client.postMessage({ type: 'reconcile-anim-done', evicted });
+  _replyVersionedAssetCache(client, 'reconcile-anim-done');
 }
 
 // cache-first + 連網補存。只存 status 200 或 opaque(跨網域);206(Range 部分回應,如 <audio> 串流音檔)
@@ -329,7 +225,8 @@ self.addEventListener('fetch', (e) => {
 
   // 圖桶:同源 assets 圖
   if (sameOrigin && url.pathname.includes('/assets/')) {
-    e.respondWith(cacheFirst(req, IMG_CACHE));
+    const assetCache = _assetCacheName(url.pathname);
+    if (assetCache) e.respondWith(cacheFirst(req, assetCache));
     return;
   }
 

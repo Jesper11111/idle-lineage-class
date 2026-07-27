@@ -14,6 +14,8 @@
  *   8. 舊版離線引擎獨占 — 若上游仍載入 js/27，就在第一個全域掛鉤前退出；若像 v3.8.1
  *      已不載入新版離線模組，則驗證載入中的核心沒有偷偷安裝原生離線鉤子。實際獨占標記
  *      由 afk-offline-owner.js 在執行期確認後授權，避免同步／快取混搭時兩套引擎同時結算。
+ *   9. PWA 圖片快取分片版本化 — 禁止每次啟動逐筆掃圖桶或 cache.keys()；由 manifest 內容
+ *      產生類別／動畫分片快取名，上游更新只淘汰真的變動的分片。
  *
  * 用法：node scripts/apply-core-patches.mjs        （--check 只驗證是否已全部補上、不寫檔）
  */
@@ -291,7 +293,189 @@ function patchLegacyOfflineOwnership() {
   }
 }
 
-const PATCHES = [patchMaybeSpawnMobs, patchTradEnHook, patch16Slots, patchPetAnimTicker, patchBossHuntEscape, patchUseItemKeepModal, patchSellNowNoForce, patchLegacyOfflineOwnership];
+// ── 補丁 9：PWA 圖片快取改為類別／動畫分片版本桶 ─────────────────
+//   舊制每次啟動都把 24k 筆 assets manifest 送進 SW，逐筆 cache.match；動畫另對整個圖桶
+//   cache.keys()。iOS 上工作量隨歷史快取變大，會把 WebContent 推到系統終止後白屏重載。
+//   新制由 stamp-sw-version 依 manifest 產生 ASSET_CACHE_VERSIONS：
+//   - 一般圖按 assets 第一層目錄分桶。
+//   - anim/classanim/morphanim 按資料夾穩定分成 8 片。
+//   - activate 只列「快取桶名稱」淘汰舊分片，永不列舉圖桶內數萬 entry。
+//   sw.js / afk-pwa.js 都會被 PP 同步覆蓋，因此此補丁必須錨點式重套；錨點失效就讓同步紅燈。
+function patchVersionedAssetCaches() {
+  const PWA_FILE = 'afk-pwa.js';
+  const SW_FILE = 'sw.js';
+  const MARKER = 'AFK_VERSIONED_ASSET_CACHES';
+  let pwa = readFileSync(PWA_FILE, 'utf8');
+  let sw = readFileSync(SW_FILE, 'utf8');
+  let touched = false;
+
+  if (!pwa.includes(MARKER)) {
+    const imageLine = /^([ \t]*)reconcileImages\(\);[^\r\n]*(?:\r?\n)?/m;
+    const animLine = /^([ \t]*)reconcileAnim\(\);[^\r\n]*(?:\r?\n)?/m;
+    if (!imageLine.test(pwa) || !animLine.test(pwa)) {
+      throw new Error(`[${PWA_FILE}] 找不到 reconcileImages/reconcileAnim 啟動錨點——上游可能改寫 PWA 更新流程，請人工確認不再每次載入全量掃圖。`);
+    }
+    pwa = pwa.replace(imageLine,
+      '$1// 🔌 AFK_VERSIONED_ASSET_CACHES：圖片失效改由 SW 的 manifest 版本分片桶處理；載入時不再抓／傳 24k 筆清單。\n');
+    pwa = pwa.replace(animLine, '');
+    const pwaLegacyStart = pwa.indexOf('  // ----- 圖桶對帳');
+    const pwaLegacyEnd = pwa.indexOf('  // 程式桶對帳:', pwaLegacyStart);
+    if (pwaLegacyStart < 0 || pwaLegacyEnd < 0) {
+      throw new Error(`[${PWA_FILE}] 找不到舊圖桶對帳 helper 區塊——拒絕留下可被誤呼叫的全量 reconciliation。`);
+    }
+    pwa = pwa.slice(0, pwaLegacyStart) +
+      `  // 首次安裝尚未接管（無 controller）時，等接管後再做小型程式桶清理。
+  function whenController(fn) {
+    var ctrl = navigator.serviceWorker.controller;
+    if (ctrl) { fn(ctrl); return; }
+    navigator.serviceWorker.addEventListener('controllerchange', function once() {
+      navigator.serviceWorker.removeEventListener('controllerchange', once);
+      whenController(fn);
+    });
+  }
+
+` + pwa.slice(pwaLegacyEnd);
+    pwa = pwa.replace(
+      '  // ----- SW 觀察:nudge 重抓 sw.js 比對 + 圖桶對帳(更新接管交給瀏覽器,本檔不主導)-----------',
+      '  // ----- SW 觀察：nudge 重抓 sw.js；圖片版本由 SW 分片桶自行處理 ----------------'
+    ).replace(
+      "    console.log('[AFK-pwa] hooks OK — PWA 安裝/圖桶對帳已就緒(不預抓,圖片用到才抓)。');",
+      "    console.log('[AFK-pwa] hooks OK — PWA 安裝/資產版本分片已就緒(不預抓,圖片用到才抓)。');"
+    );
+    touched = true;
+  }
+
+  if (!sw.includes(MARKER)) {
+    const docStart = sw.indexOf(' *   ● 圖桶 IMG_CACHE：');
+    const docEnd = sw.indexOf(' * 更新控制：', docStart);
+    if (docStart < 0 || docEnd < 0) {
+      throw new Error(`[${SW_FILE}] 找不到舊圖桶說明錨點。`);
+    }
+    sw = sw.replace(
+      ' * 兩個快取桶,刻意分開,這樣「改程式不會害人重載 30MB 圖」：',
+      ' * 程式與圖片快取刻意分開，程式改版不會清掉所有圖片：'
+    );
+    sw = sw.slice(0, docStart) +
+      ` *   ● 資產桶 asset-<group>-<manifest hash>：assets/ 全部採 cache-first、按需下載。
+ *       一般資產按第一層目錄分桶；anim/classanim/morphanim 依資料夾穩定分成 8 片。
+ *       manifest 內容改變時只更換受影響的桶名；activate 只列桶名並整桶淘汰舊分片，
+ *       不抓 24k 筆清單、不逐項 cache.match，也不對圖片桶呼叫 cache.keys()。
+ *
+` + sw.slice(docEnd);
+    sw = sw.replace(
+      ' * 圖桶失效走 reconcileImages 逐張對帳(見上);不再背景預抓——圖片一律 on-demand 用到才抓、不主動下載整包。',
+      ' * 圖片失效走 manifest 版本分片；不背景預抓，圖片一律 on-demand 用到才抓。'
+    );
+
+    const CACHE_ANCHOR = 'const IMG_CACHE  = IMG_VERSION;';
+    if (!sw.includes(CACHE_ANCHOR)) {
+      throw new Error(`[${SW_FILE}] 找不到 IMG_CACHE 宣告錨點——上游可能改寫圖桶策略。`);
+    }
+    const CACHE_BLOCK = `const ASSET_CACHE_SHARDS = 8;
+const ASSET_CACHE_VERSIONS = {};
+function _assetCacheShard(value) {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) hash = Math.imul(hash ^ value.charCodeAt(i), 16777619);
+  return (hash >>> 0) % ASSET_CACHE_SHARDS;
+}
+function _assetCacheGroup(pathname) {
+  let clean = String(pathname || '');
+  try { clean = decodeURIComponent(clean); } catch (err) {}
+  clean = clean.replace(/^\\/+/, '').replace(/^public\\//, '');
+  const assetsAt = clean.indexOf('assets/');
+  if (assetsAt > 0) clean = clean.slice(assetsAt); // GitHub Pages 專案站：/<repo>/assets/...
+  const animated = clean.match(/^assets\\/(anim|classanim|morphanim)\\/([^/]+)/);
+  if (animated) return animated[1] + '-' + _assetCacheShard(animated[1] + '/' + animated[2]);
+  const regular = clean.match(/^assets\\/([^/]+)/);
+  return regular ? 'static-' + regular[1] : null;
+}
+function _assetCacheName(pathname) {
+  const group = _assetCacheGroup(pathname);
+  const version = group && ASSET_CACHE_VERSIONS[group];
+  return version ? 'asset-' + group + '-' + version : null;
+}
+const ASSET_CACHE_NAMES = new Set(Object.keys(ASSET_CACHE_VERSIONS)
+  .map((group) => 'asset-' + group + '-' + ASSET_CACHE_VERSIONS[group]));
+// 🔌 AFK_VERSIONED_ASSET_CACHES：只列桶名淘汰舊分片，禁止列舉任何圖片桶 entry。`;
+    sw = sw.replace(CACHE_ANCHOR, CACHE_BLOCK);
+    const imgVersionLine = /^const IMG_VERSION[^\r\n]*(?:\r?\n)?/m;
+    if (!imgVersionLine.test(sw)) {
+      throw new Error(`[${SW_FILE}] 找不到舊 IMG_VERSION 宣告。`);
+    }
+    sw = sw.replace(imgVersionLine, '');
+    const metadataStart = sw.indexOf('// 圖桶內一個合成 entry');
+    const metadataEnd = sw.indexOf('// 外部 CDN：', metadataStart);
+    if (metadataStart < 0 || metadataEnd < 0) {
+      throw new Error(`[${SW_FILE}] 找不到舊圖片 hash metadata 宣告。`);
+    }
+    sw = sw.slice(0, metadataStart) + sw.slice(metadataEnd);
+
+    const ACTIVATE_ANCHOR = ".filter((k) => k !== CODE_CACHE && k !== IMG_CACHE && !/^code-/.test(k))";
+    if (!sw.includes(ACTIVATE_ANCHOR)) {
+      throw new Error(`[${SW_FILE}] 找不到 activate 保留桶錨點——拒絕冒險清錯快取。`);
+    }
+    sw = sw.replace(ACTIVATE_ANCHOR,
+      ".filter((k) => k !== CODE_CACHE && !ASSET_CACHE_NAMES.has(k) && !/^code-/.test(k))");
+
+    const MESSAGE_ANCHOR = "self.addEventListener('message', (e) => {";
+    if (!sw.includes(MESSAGE_ANCHOR)) {
+      throw new Error(`[${SW_FILE}] 找不到 message handler 錨點。`);
+    }
+    sw = sw.replace(MESSAGE_ANCHOR,
+      `function _replyVersionedAssetCache(client, type) {
+  if (client) client.postMessage({ type, evicted: 0, skipped: 'versioned-asset-caches' });
+}
+
+${MESSAGE_ANCHOR}`);
+
+    function replaceAsyncBody(source, signature, body) {
+      const start = source.indexOf(signature);
+      if (start < 0) throw new Error(`[${SW_FILE}] 找不到 ${signature} 錨點。`);
+      const open = source.indexOf('{', start + signature.length);
+      if (open < 0) throw new Error(`[${SW_FILE}] ${signature} 找不到函式開頭。`);
+      const close = matchBrace(source, open);
+      return source.slice(0, open + 1) + '\n' + body + '\n' + source.slice(close);
+    }
+    sw = replaceAsyncBody(sw, 'async function reconcileImages(manifest, client)',
+      "  _replyVersionedAssetCache(client, 'reconcile-done');");
+    sw = replaceAsyncBody(sw, 'async function reconcileAnim(folders, client)',
+      "  _replyVersionedAssetCache(client, 'reconcile-anim-done');");
+    const swLegacyStart = sw.indexOf('// manifest 每筆可能');
+    const swLegacyEnd = sw.indexOf('// cache-first + 連網補存。', swLegacyStart);
+    if (swLegacyStart < 0 || swLegacyEnd < 0) {
+      throw new Error(`[${SW_FILE}] 找不到舊圖片 reconciliation helper 區塊。`);
+    }
+    sw = sw.slice(0, swLegacyStart) +
+      `// 舊頁面仍可能送 reconciliation 訊息；新 SW 直接回覆完成，不讀 manifest、不開圖桶。
+async function reconcileImages(manifest, client) {
+  _replyVersionedAssetCache(client, 'reconcile-done');
+}
+async function reconcileAnim(folders, client) {
+  _replyVersionedAssetCache(client, 'reconcile-anim-done');
+}
+
+` + sw.slice(swLegacyEnd);
+
+    const FETCH_ANCHOR = '    e.respondWith(cacheFirst(req, IMG_CACHE));';
+    if (!sw.includes(FETCH_ANCHOR)) {
+      throw new Error(`[${SW_FILE}] 找不到 assets fetch 圖桶錨點。`);
+    }
+    sw = sw.replace(FETCH_ANCHOR,
+      "    const assetCache = _assetCacheName(url.pathname);\n" +
+      "    if (assetCache) e.respondWith(cacheFirst(req, assetCache));");
+    touched = true;
+  }
+
+  if (!touched) { already++; return; }
+  if (!CHECK) {
+    writeFileSync(PWA_FILE, pwa);
+    writeFileSync(SW_FILE, sw);
+  }
+  changed++;
+  console.log(`[patch] PWA 圖片快取改為類別／動畫分片版本桶（${PWA_FILE}、${SW_FILE}）`);
+}
+
+const PATCHES = [patchMaybeSpawnMobs, patchTradEnHook, patch16Slots, patchPetAnimTicker, patchBossHuntEscape, patchUseItemKeepModal, patchSellNowNoForce, patchLegacyOfflineOwnership, patchVersionedAssetCaches];
 
 try {
   for (const p of PATCHES) p();
