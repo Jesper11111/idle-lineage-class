@@ -6,6 +6,7 @@
     "test": "node scripts/smoke-hooks.mjs",
     "test:powersave-inventory": "node scripts/test-powersave-inventory.mjs",
     "test:mobile-memory": "node scripts/test-mobile-memory.mjs",
+    "test:mobile-audio-memory": "node scripts/test-mobile-audio-memory.mjs",
     "test:pwa-cache": "node scripts/test-pwa-versioned-cache.mjs",
     "test:backports": "node scripts/test-shines-backports.mjs"
   },

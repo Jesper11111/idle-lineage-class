@@ -49,6 +49,7 @@ const localAfkFiles = new Set([
   'afk-offline-owner.js',
   'afk-merc-policy.js',
   'afk-mobile-memory.js',
+  'afk-mobile-audio-memory.js',
   'afk-powersave-inventory.js'
 ]);
 const ppAfkFiles = readdirSync(UP).filter(f => /^afk-.+\.js$/.test(f) && !localAfkFiles.has(f));
@@ -104,6 +105,7 @@ try {
 
 // checkpoint 必須排在 stamp-sw-version 前，version.json 的 upstreamAt 才會反映本次同步。
 run('node scripts/stamp-sw-version.mjs');
+run('node scripts/test-mobile-audio-memory.mjs');
 
 if (process.env.AFK_SKIP_SMOKE === '1') {
   console.log('[sync] AFK_SKIP_SMOKE=1 → 跳過 smoke（呼叫端自行執行）');
