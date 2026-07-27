@@ -20,6 +20,14 @@
  *      防止玩家已關動畫後，登入畫面仍解碼完整職業序列。
  *  11. 手機雙省電怪物縮圖閘門 — 戰鬥渲染在原尺寸 URL 進 DOM 前詢問本地政策掛點；
  *      簡化模式改用 96×96 單層辨識圖，並禁止載入原尺寸影子／武器圖層。
+ *  12. 存檔壓縮工作合併 — 網頁版仍先同步寫入原文確保持久化，但 Worker 改為全域只執行
+ *      一件工作、每個 key 只保留最新待處理版本；舊版本不再全部排進 Worker 複製完整存檔。
+ *  13. 手機圖片生命週期 — 城鎮 NPC／玩家收購 NPC 在雙省電下只載首幀，城鎮 ticker 停止，
+ *      換圖／換角通知本地政策層釋放圖片快取；非同步動畫探測完成前再次確認模式。
+ *  14. 手機登入資源閘門 — 已儲存雙省電設定的手機在 CSS 載入前改用漸層背景；隱藏的選角／
+ *      創角圖片延遲載入，登入逐幀預載也遵守圖片記憶體模式。
+ *  15. 手機卡片圖鑑單層縮圖 — 圖鑑沿用 96×96 怪物縮圖時，不再另外疊回原尺寸影子／武器。
+ *  16. 背景 Worker Blob 生命週期 — 即使 Worker 建構同步失敗，也會撤銷暫時 Blob URL。
  *
  * 用法：node scripts/apply-core-patches.mjs        （--check 只驗證是否已全部補上、不寫檔）
  */
@@ -484,7 +492,8 @@ async function reconcileAnim(folders, client) {
 //   條件恆 false，完全維持 PP 動畫。補丁只加閘門，不接管角色資料或登入流程。
 function patchMobileMemoryPreviewGate() {
   const FILE = 'js/13-shop-save.js';
-  let s = readFileSync(FILE, 'utf8');
+  // 上游 checkout 在 Windows 會保留 CRLF；所有多行錨點先正規化，避免乾淨上游第一次重套失敗。
+  let s = readFileSync(FILE, 'utf8').replace(/\r\n/g, '\n');
   const gate = "!(typeof window.__afkMobileMemoryLite === 'function' && window.__afkMobileMemoryLite())";
   const expectedCount = (s.match(/__afkMobileMemoryLite/g) || []).length;
   if (expectedCount === 6) { already++; return; }   // 三個條件，每個掛點名稱在 typeof 與呼叫各出現一次
@@ -520,7 +529,19 @@ function patchMobileMemoryPreviewGate() {
 function patchMobileMobThumbGate() {
   const FILE = 'js/09-vfx-render.js';
   let s = readFileSync(FILE, 'utf8');
-  if (s.includes('__afkMobileMobStill')) { already++; return; }
+  const readyMarkers = [
+    "let _mobileLiteStill = (typeof window.__afkMobileMobStill === 'function')",
+    'let _mi = _mobileLiteStill || mobStillImg(m.n, m.img, true);',
+    'let _fullMobLayers = !_mobileLiteStill;',
+    'let _spriteShadow = _fullMobLayers && MOB_ANIM_NAMES.has(m.n)',
+    'let _weaponFx = _fullMobLayers && MOB_ANIM_NAMES.has(m.n)',
+    'let _weaponFx2 = _fullMobLayers && MOB_ANIM_NAMES.has(m.n)'
+  ];
+  const readyCount = readyMarkers.filter((marker) => s.includes(marker)).length;
+  if (readyCount === readyMarkers.length) { already++; return; }
+  if (readyCount || s.includes('__afkMobileMobStill')) {
+    throw new Error(`[${FILE}] 手機怪物縮圖閘門只剩 ${readyCount}/${readyMarkers.length} 個完整標記，拒絕靜默略過。`);
+  }
 
   const stillAnchor = '            let _mi = mobStillImg(m.n, m.img, true);   // 🎬 戰鬥初始幀：有動畫→優先 spawn_0（無 spawn 退 idle_0·再退舊靜態）；無動畫→舊靜態';
   const shadowAnchor = "            let _spriteShadow = MOB_ANIM_NAMES.has(m.n) && (typeof MOB_ANIM_SPRITE_SHADOW !== 'undefined') && MOB_ANIM_SPRITE_SHADOW.has(m.n);";
@@ -551,7 +572,1033 @@ function patchMobileMobThumbGate() {
   console.log(`[patch] 手機雙省電怪物縮圖閘門（${FILE}）`);
 }
 
-const PATCHES = [patchMaybeSpawnMobs, patchTradEnHook, patch16Slots, patchPetAnimTicker, patchBossHuntEscape, patchUseItemKeepModal, patchSellNowNoForce, patchLegacyOfflineOwnership, patchVersionedAssetCaches, patchMobileMemoryPreviewGate, patchMobileMobThumbGate];
+// ── 補丁 12：非同步存檔壓縮改為有上限的最新值佇列 ─────────────────
+//   原版每次 _lzSet 都把完整 JSON 同時留在主執行緒 dictionary、再 postMessage 複製進 Worker。
+//   已被新 revision 取代的舊工作仍會完整壓完才丟棄；換角／生命週期連續存檔會瞬間保留數十份。
+//   原文在排壓縮前已同步寫入 localStorage，所以安全的合併方式是：全域一個 in-flight，
+//   每個 key 一個最新 pending。被取代的只是不必要的壓縮工作，不是存檔本身。
+function patchCoalescedSaveCompression() {
+  const DATA_FILE = 'js/00-data.js';
+  let data = readFileSync(DATA_FILE, 'utf8');
+  const queueReady = [
+    '_lzWorkerPending = Object.create(null)',
+    '_lzWorkerWatchdog = null',
+    '_lzWorkerGen = 0',
+    'job.value = null',
+    'function _resumeLzCompression()',
+    '_lzWorkerGen !== workerGen',
+    'var token = active.token',
+    'if (workerUrl) {'
+  ].every((marker) => data.includes(marker));
+  if (!queueReady) {
+    const START = 'var _lzWorker = null';
+    const END = '// 一次性遷移：打包版首次啟用檔案存檔時';
+    const start = data.indexOf(START);
+    const end = data.indexOf(END, start);
+    if (start < 0 || end < 0) {
+      throw new Error(`[${DATA_FILE}] 找不到非同步 LZ Worker 區塊錨點，上游可能改寫存檔壓縮流程。`);
+    }
+    const replacement = `var _lzWorker = null, _lzWorkerGen = 0, _lzWorkerSeq = 0, _lzWorkerRev = Object.create(null), _lzWorkerRaw = Object.create(null);
+var _lzWorkerPending = Object.create(null), _lzWorkerActive = null;
+var _lzWorkerWatchdog = null, _LZ_WORKER_TIMEOUT_MS = 15000;
+function _clearLzWorkerWatchdog() {
+  if (_lzWorkerWatchdog != null) {
+    clearTimeout(_lzWorkerWatchdog);
+    _lzWorkerWatchdog = null;
+  }
+}
+// 同一 key 的直接覆寫／刪除與同步壓縮都可呼叫：撤掉尚未送出的舊工作，並立即放掉主線 raw 參照。
+// 已 postMessage 的單一 active clone 無法取消，但 revision guard 會讓回覆失效；最多只剩這一份。
+function _cancelLzCompressionKey(key) {
+  var pending = _lzWorkerPending[key];
+  if (pending) {
+    delete _lzWorkerRaw[pending.token];
+    delete _lzWorkerPending[key];
+  }
+  if (_lzWorkerActive && _lzWorkerActive.key === key) delete _lzWorkerRaw[_lzWorkerActive.token];
+}
+// Direct raw replacements (backup restore / migration) must invalidate a queued compression
+// result for the same key, otherwise an older Worker reply can overwrite the restored value.
+function _lzSetStoredRaw(key, value) {
+  if (!_FS) {
+    _lzWorkerRev[key] = (_lzWorkerRev[key] || 0) + 1;
+    _cancelLzCompressionKey(key);
+  }
+  return _lsSet(key, value);
+}
+function _lzRemoveStored(key) {
+  if (!_FS) {
+    _lzWorkerRev[key] = (_lzWorkerRev[key] || 0) + 1;
+    _cancelLzCompressionKey(key);
+  }
+  _lsRemove(key);
+}
+function _resetLzCompressionQueue() {
+  _clearLzWorkerWatchdog();
+  _lzWorkerActive = null;
+  _lzWorkerPending = Object.create(null);
+  _lzWorkerRaw = Object.create(null);
+}
+function _resumeLzCompression() {
+  if (_FS || !Object.keys(_lzWorkerPending).length) return;
+  _getLzWorker();
+  _drainLzCompression();
+}
+function _drainLzCompression() {
+  if (_FS || _lzWorkerActive || !_lzWorker) return;
+  var keys = Object.keys(_lzWorkerPending);
+  if (!keys.length) return;
+  var job = _lzWorkerPending[keys[0]];
+  delete _lzWorkerPending[job.key];
+  var worker = _lzWorker;
+  job.id = ++_lzWorkerSeq;
+  job.worker = worker;
+  job.gen = _lzWorkerGen;
+  _lzWorkerActive = job;
+  try {
+    worker.postMessage({ id: job.id, key: job.key, rev: job.rev, value: job.value });
+    job.value = null;   // structured clone 已完成；active 不再重複持有整份主線字串
+    var activeToken = job.token;
+    var activeId = job.id;
+    _clearLzWorkerWatchdog();
+    _lzWorkerWatchdog = setTimeout(function() {
+      if (_lzWorker !== worker || _lzWorkerGen !== job.gen || !_lzWorkerActive ||
+          _lzWorkerActive.token !== activeToken || _lzWorkerActive.id !== activeId) return;
+      delete _lzWorkerRaw[activeToken];
+      _lzWorkerActive = null;
+      try { worker.terminate(); } catch (e) {}
+      _lzWorker = null;
+      _lzWorkerWatchdog = null;
+      _resumeLzCompression();
+    }, _LZ_WORKER_TIMEOUT_MS);
+  } catch (e) {
+    _clearLzWorkerWatchdog();
+    delete _lzWorkerRaw[job.token];
+    _lzWorkerActive = null;
+    try { worker.terminate(); } catch (e2) {}
+    if (_lzWorker === worker) _lzWorker = null;
+    setTimeout(_resumeLzCompression, 0);
+  }
+}
+function _getLzWorker() {
+  if (_lzWorker || typeof Worker === 'undefined' || typeof Blob === 'undefined' || typeof URL === 'undefined') return _lzWorker;
+  var workerUrl = null;
+  try {
+    var source = [
+      'var f=String.fromCharCode,LZString={};',
+      'LZString._compress=' + LZString._compress.toString() + ';',
+      'LZString.compressToUTF16=' + LZString.compressToUTF16.toString() + ';',
+      'self.onmessage=function(e){var d=e.data;try{self.postMessage({id:d.id,key:d.key,rev:d.rev,packed:"LZ1:"+LZString.compressToUTF16(d.value)});}catch(err){self.postMessage({id:d.id,key:d.key,rev:d.rev,error:true});}};'
+    ].join('\\n');
+    workerUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+    var worker = new Worker(workerUrl);
+    var workerGen = ++_lzWorkerGen;
+    _lzWorker = worker;
+    worker.onmessage = function(e) {
+      var d = e.data || {};
+      if (_lzWorker !== worker || _lzWorkerGen !== workerGen) return;
+      var active = _lzWorkerActive;
+      if (!active || active.id !== d.id || active.key !== d.key || active.rev !== d.rev) return;
+      _clearLzWorkerWatchdog();
+      _lzWorkerActive = null;
+      var token = active.token, raw = _lzWorkerRaw[token];
+      delete _lzWorkerRaw[token];
+      if (!d.error && active && active.key === d.key && active.rev === d.rev &&
+          _lzWorkerRev[d.key] === d.rev && raw != null && _lsGet(d.key) === raw) {
+        _lsSet(d.key, d.packed);
+      }
+      _drainLzCompression();
+    };
+    worker.onerror = function() {
+      if (_lzWorker !== worker || _lzWorkerGen !== workerGen) return;
+      _clearLzWorkerWatchdog();
+      var active = _lzWorkerActive;
+      if (active) delete _lzWorkerRaw[active.token];
+      _lzWorkerActive = null;
+      try { worker.terminate(); } catch (e) {}
+      _lzWorker = null;
+      _resumeLzCompression();
+    };
+  } catch (e) {
+    _lzWorker = null;
+    _resetLzCompressionQueue();
+  } finally {
+    if (workerUrl) {
+      try { URL.revokeObjectURL(workerUrl); } catch (e) {}
+    }
+  }
+  return _lzWorker;
+}
+function _queueLzCompression(key, value, rev) {
+  if (_FS) return;
+  var worker = _getLzWorker();
+  if (!worker) return;
+  var old = _lzWorkerPending[key];
+  if (old) delete _lzWorkerRaw[old.token];
+  // 新 revision 已使同 key 的 active 工作失效；主線 raw 可先放掉，Worker 內最多只剩一份 clone。
+  if (_lzWorkerActive && _lzWorkerActive.key === key) delete _lzWorkerRaw[_lzWorkerActive.token];
+  var token = key + '@' + rev;
+  var job = { key: key, value: value, rev: rev, token: token };
+  _lzWorkerPending[key] = job;
+  _lzWorkerRaw[token] = value;
+  _drainLzCompression();
+}
+`;
+    data = data.slice(0, start) + replacement + data.slice(end);
+  }
+  if (!data.includes('_cancelLzCompressionKey(key); // raw 寫失敗轉同步 fallback')) {
+    const revAnchor = `  _lzWorkerRev[key] = rev; // Invalidate every older result before either write path starts.`;
+    if (!data.includes(revAnchor)) {
+      throw new Error(`[${DATA_FILE}] 找不到 _lzSet revision 錨點，上游可能改寫存檔 fallback。`);
+    }
+    data = data.replace(revAnchor, `${revAnchor}
+  _cancelLzCompressionKey(key); // raw 寫失敗轉同步 fallback 時，也不能留下同 key 舊工作白做完整壓縮。`);
+  }
+
+  const SAVE_FILE = 'js/13-shop-save.js';
+  let save = readFileSync(SAVE_FILE, 'utf8');
+  const flushReady = save.includes('function _closeFlushClock()') &&
+    save.includes('if(_flushSaved) _lastCloseFlushAt = _flushNow');
+  if (!flushReady) {
+    const startMarker = save.includes('let _lastCloseFlushAt =')
+      ? 'let _lastCloseFlushAt =' : 'function _flushSaveNow(){';
+    const start = save.indexOf(startMarker);
+    const end = save.indexOf("if(typeof document !== 'undefined' && document.addEventListener)", start);
+    if (start < 0 || end < 0) {
+      throw new Error(`[${SAVE_FILE}] 找不到關頁存檔錨點，上游可能改寫生命週期存檔。`);
+    }
+    const replacement = `let _lastCloseFlushAt = -Infinity;
+function _closeFlushClock(){
+    return (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
+        ? performance.now() : Date.now();
+}
+function _flushSaveNow(){
+    if(typeof player === 'undefined' || !player || !player.cls || typeof saveGame !== 'function') return;
+    let _flushNow = _closeFlushClock();
+    if(_flushNow - _lastCloseFlushAt < 250) return;   // visibilitychange/pagehide/beforeunload 同一輪只寫一次
+    let _flushSaved = false;
+    if(typeof window !== 'undefined') window.__fb5CloseFlush = true;
+    try { _flushSaved = saveGame() === true; } catch(e) {}
+    finally { if(typeof window !== 'undefined') window.__fb5CloseFlush = false; }
+    if(_flushSaved) _lastCloseFlushAt = _flushNow;   // 失敗不鎖住後續 pagehide／beforeunload 的救援重試
+    return _flushSaved;
+}
+`;
+    save = save.slice(0, start) + replacement + save.slice(end);
+  }
+
+  const dataDone = data.includes('_lzWorkerPending = Object.create(null)') &&
+    data.includes('_lzWorkerWatchdog = null') &&
+    data.includes('_lzWorkerGen = 0') &&
+    data.includes('_LZ_WORKER_TIMEOUT_MS = 15000') &&
+    data.includes('job.value = null') &&
+    data.includes('function _resumeLzCompression()') &&
+    data.includes('_lzWorkerGen !== workerGen') &&
+    data.includes('var token = active.token') &&
+    data.includes('if (workerUrl) {') &&
+    data.includes('_cancelLzCompressionKey(key); // raw 寫失敗轉同步 fallback');
+  const saveDone = save.includes('function _closeFlushClock()') &&
+    save.includes('if(_flushSaved) _lastCloseFlushAt = _flushNow');
+  if (!dataDone || !saveDone) throw new Error('存檔壓縮合併補丁未完整產生。');
+  const dataBefore = readFileSync(DATA_FILE, 'utf8');
+  const saveBefore = readFileSync(SAVE_FILE, 'utf8');
+  const wasDone = [
+    '_lzWorkerWatchdog = null',
+    '_lzWorkerGen = 0',
+    'job.value = null',
+    'function _resumeLzCompression()',
+    '_lzWorkerGen !== workerGen',
+    'var token = active.token',
+    'if (workerUrl) {',
+    '_cancelLzCompressionKey(key); // raw 寫失敗轉同步 fallback'
+  ].every((marker) => dataBefore.includes(marker)) &&
+    saveBefore.includes('function _closeFlushClock()') &&
+    saveBefore.includes('if(_flushSaved) _lastCloseFlushAt = _flushNow');
+  if (wasDone) { already++; return; }
+  if (!CHECK) {
+    writeFileSync(DATA_FILE, data);
+    writeFileSync(SAVE_FILE, save);
+  }
+  changed++;
+  console.log(`[patch] 存檔壓縮改為每 key 最新值有界佇列（${DATA_FILE}、${SAVE_FILE}）`);
+}
+
+// ── 補丁 13：手機圖片快取生命週期與城鎮靜態幀閘門 ─────────────
+function patchMobileImageLifecycleHooks() {
+  const WORLD_FILE = 'js/11-world-map.js';
+  // Windows checkout 會把上游檔案展開成 CRLF；這一組補丁有多行精確錨點，
+  // 先統一成 LF 再處理，避免 source-dir 預演在真正覆蓋前誤判不相容。
+  const readLf = (file) => readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+  let world = readLf(WORLD_FILE);
+  const PROGRESSION_FILE = 'js/05-kill-progression.js';
+  let progression = readLf(PROGRESSION_FILE);
+  const directMapLifecycleLine = "    if (typeof window.__afkMobileMemoryLifecycle === 'function') window.__afkMobileMemoryLifecycle('map-change');";
+  const progressionTargets = [
+    "    mapState.current = 'pride_f' + n;",
+    '    mapState.current = mapKey;',
+    "    mapState.current = 'rift_battle';"
+  ];
+  const progressionLines = () => progression.split(/\r?\n/);
+  const progressionTargetsReady = () => {
+    const lines = progressionLines();
+    return progressionTargets.every((target) => {
+      const at = lines.indexOf(target);
+      return at > 0 && lines[at - 1].includes(directMapLifecycleLine.trim());
+    });
+  };
+  const progressionLifecycleCount = (progression.match(/__afkMobileMemoryLifecycle\('map-change'\)/g) || []).length;
+  if (progressionLifecycleCount === 0) {
+    for (const target of progressionTargets) {
+      const anchor = new RegExp(`    saveSiegeBossHp\\(\\);\\r?\\n${target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`);
+      if (!anchor.test(progression)) {
+        throw new Error(`[${PROGRESSION_FILE}] 找不到直接進圖生命週期錨點：${target.trim()}`);
+      }
+      progression = progression.replace(anchor, `    saveSiegeBossHp();\n${directMapLifecycleLine}   // 🔌 直接進圖也必須釋放上一張圖片\n${target}`);
+    }
+  } else if (progressionLifecycleCount !== progressionTargets.length || !progressionTargetsReady()) {
+    throw new Error(`[${PROGRESSION_FILE}] 直接進圖生命週期鉤子應完整存在 ${progressionTargets.length} 處，實際 ${progressionLifecycleCount}。`);
+  }
+  const worldMarkers = [
+    '__afkMobileTownNpcFrames(key, false)',
+    '__afkMobileTownNpcFrames(key, true)',
+    '手機雙省電：城鎮也停止 8fps',
+    "if (_changeTarget !== mapState.current && typeof window.__afkMobileMemoryLifecycle === 'function') window.__afkMobileMemoryLifecycle('map-change');"
+  ];
+  const worldDone = worldMarkers.every((marker) => world.includes(marker));
+  if (!worldDone) {
+    if (world.includes('__afkMobileTownNpcFrames') || world.includes("__afkMobileMemoryLifecycle('map-change')")) {
+      throw new Error(`[${WORLD_FILE}] 手機 NPC／地圖生命週期鉤子只剩部分，拒絕靜默略過。`);
+    }
+    const bodyAnchor = `function _npcFrames(key) {`;
+    const weaponAnchor = `function _npcWeaponFrames(key) {   // 🔥 火焰/武器疊層幀(idle_w_N)：僅 NPC_SPR 有 w 的（如宙斯之熔岩高崙）·與本體同幀數同步`;
+    const tickAnchor = `function _townNpcAnimTick() {`;
+    const mapAnchor = `    mapState.current = document.getElementById('map-select').value;`;
+    for (const [label, anchor] of [['NPC body', bodyAnchor], ['NPC weapon', weaponAnchor], ['town ticker', tickAnchor], ['map lifecycle', mapAnchor]]) {
+      if (!world.includes(anchor)) throw new Error(`[${WORLD_FILE}] 找不到 ${label} 錨點。`);
+    }
+    world = world.replace(bodyAnchor, `${bodyAnchor}
+    let _mobileFrames = (typeof window.__afkMobileTownNpcFrames === 'function') ? window.__afkMobileTownNpcFrames(key, false) : null;
+    if (_mobileFrames) return _mobileFrames;   // 🔌 手機雙省電：DOM 已載 idle_0，不建立完整站立序列`);
+    world = world.replace(weaponAnchor, `${weaponAnchor}
+    let _mobileFrames = (typeof window.__afkMobileTownNpcFrames === 'function') ? window.__afkMobileTownNpcFrames(key, true) : null;
+    if (_mobileFrames) return _mobileFrames;   // 🔌 手機雙省電：DOM 已載 idle_w_0，不建立完整武器序列`);
+    world = world.replace(tickAnchor, `${tickAnchor}
+    if (typeof window.__afkMobileMemoryLite === 'function' && window.__afkMobileMemoryLite()) return;   // 🔌 手機雙省電：城鎮也停止 8fps`);
+    world = world.replace(mapAnchor, `    if (_changeTarget !== mapState.current && typeof window.__afkMobileMemoryLifecycle === 'function') window.__afkMobileMemoryLifecycle('map-change');
+${mapAnchor}`);
+  }
+  const sanctuaryLifecycleLine = `${directMapLifecycleLine}   // 🔌 隱藏聖地直接進圖也要形成圖片資源邊界`;
+  const sanctuaryLifecycleCount = (world.match(/隱藏聖地直接進圖也要形成圖片資源邊界/g) || []).length;
+  if (sanctuaryLifecycleCount === 0) {
+    const sanctuaryAnchor = /    saveSiegeBossHp\(\);\r?\n    mapState\.current = mapKey;/;
+    if (!sanctuaryAnchor.test(world)) {
+      throw new Error(`[${WORLD_FILE}] 找不到 sanctuaryEnter 直接進圖生命週期錨點。`);
+    }
+    world = world.replace(sanctuaryAnchor, `    saveSiegeBossHp();\n${sanctuaryLifecycleLine}\n    mapState.current = mapKey;`);
+  } else if (sanctuaryLifecycleCount !== 1 || !world.includes(sanctuaryLifecycleLine)) {
+    throw new Error(`[${WORLD_FILE}] sanctuaryEnter 圖片生命週期鉤子不完整。`);
+  }
+
+  const VFX_FILE = 'js/09-vfx-render.js';
+  let vfx = readLf(VFX_FILE);
+  const probeLoaderSignature = 'function _probeFramesWin(urlFor, maxF, minF, done, stillCurrent)';
+  const probeLoaderMarkers = [
+    probeLoaderSignature,
+    'const MOBILE_ACTIVE_CAP = 6, DESKTOP_ACTIVE_CAP = 12',
+    'window.__afkCancelImageProbes = cancelAll',
+    'window.__afkEnforceImageProbeCap = enforceCap',
+    'window.__afkImageProbeStats = stats',
+    '_probeFramesWin._scheduler = scheduler',
+    'let results = [], active = Object.create(null)',
+    'done(null, 0, true)',
+    "im.removeAttribute('src')"
+  ];
+  if (!probeLoaderMarkers.every((marker) => vfx.includes(marker))) {
+    const globalMarkers = [
+      'MOBILE_ACTIVE_CAP',
+      '__afkCancelImageProbes',
+      '__afkEnforceImageProbeCap',
+      '__afkImageProbeStats',
+      '_probeFramesWin._scheduler'
+    ];
+    if (globalMarkers.some((marker) => vfx.includes(marker))) {
+      throw new Error(`[${VFX_FILE}] 全域有界 probe loader 只剩部分，拒絕靜默略過。`);
+    }
+    const probeStart = vfx.indexOf('function _probeFramesWin(');
+    const probeEnd = vfx.indexOf('function _mobAnimProbe(name)', probeStart);
+    if (probeStart < 0 || probeEnd < 0) {
+      throw new Error(`[${VFX_FILE}] 找不到 _probeFramesWin 完整區塊錨點。`);
+    }
+    const existingProbeLoader = vfx.slice(probeStart, probeEnd);
+    for (const marker of ['_manifestCount(urlFor(0))', 'new Image()', 'function pump()']) {
+      if (!existingProbeLoader.includes(marker)) {
+        throw new Error(`[${VFX_FILE}] _probeFramesWin 缺少預期結構 ${marker}，拒絕不確定替換。`);
+      }
+    }
+    const probeLoader = `function _probeFramesWin(urlFor, maxF, minF, done, stillCurrent) {
+    // 每個序列只保留小窗口，所有 mob／玩家／傭兵／寵物序列再共用一個全域 semaphore。
+    // 否則一隻多圖層怪會同時開 20+ 個序列，每序列 6 張仍足以瞬間壓垮手機解碼記憶體。
+    const WIN = 6;
+    let scheduler = _probeFramesWin._scheduler;
+    if (!scheduler) {
+        scheduler = (() => {
+            const MOBILE_ACTIVE_CAP = 6, DESKTOP_ACTIVE_CAP = 12;
+            let queue = [], activeJobs = new Set(), groups = new Set(), cancellingAll = false;
+            function mobile() {
+                try {
+                    if (document.body && document.body.classList.contains('m-mobile')) return true;
+                    return window.innerWidth <= 900 && !!window.matchMedia &&
+                        window.matchMedia('(pointer: coarse)').matches;
+                } catch (e) {
+                    try { return window.innerWidth <= 900; } catch (e2) { return false; }
+                }
+            }
+            function cap() { return mobile() ? MOBILE_ACTIVE_CAP : DESKTOP_ACTIVE_CAP; }
+            let lastCap = cap();
+            function queuedCount() {
+                let total = 0;
+                for (let job of queue) if (job && job.state === 'queued') total++;
+                return total;
+            }
+            function unload(im) {
+                if (!im) return;
+                im.onload = im.onerror = null;
+                try { im.removeAttribute('src'); }
+                catch (e) { try { im.src = 'data:,'; } catch (e2) {} }
+            }
+            function enforceCap() {
+                let nextCap = cap();
+                let shrank = nextCap < lastCap;
+                lastCap = nextCap;
+                // 工作是以 probe group 完成；任意砍半個 group 會讓它的 inFlight 永遠不歸零。
+                // cap 縮小且現有 active＋queued 超標時整批取消，讓呼叫端收到 cancelled、
+                // 同步卸載 Image，下一次 render 再依新 cap 建立乾淨批次。
+                if (shrank && activeJobs.size + queuedCount() > nextCap) {
+                    cancelAll();
+                    return true;
+                }
+                return false;
+            }
+            function drain() {
+                if (cancellingAll) return;
+                if (enforceCap()) return;
+                let limit = cap();
+                while (activeJobs.size < limit && queue.length) {
+                    let job = queue.shift();
+                    if (!job || job.state !== 'queued') continue;
+                    job.state = 'active';
+                    let im;
+                    try { im = new Image(); }
+                    catch (e) {
+                        job.state = 'done';
+                        let failed = job.settle;
+                        job.settle = null;
+                        if (failed) failed(false, null);
+                        continue;
+                    }
+                    job.image = im;
+                    activeJobs.add(job);
+                    let finish = ok => {
+                        if (job.state !== 'active') { unload(im); return; }
+                        job.state = 'done';
+                        activeJobs.delete(job);
+                        im.onload = im.onerror = null;
+                        let settle = job.settle;
+                        job.settle = null;
+                        try { if (settle) settle(ok, im); }
+                        finally { drain(); }
+                    };
+                    im.onload = () => finish(true);
+                    im.onerror = () => finish(false);
+                    try { im.src = job.url; } catch (e) { finish(false); }
+                }
+            }
+            function schedule(url, settle) {
+                let job = { url: url, settle: settle, image: null, state: 'queued' };
+                queue.push(job);
+                return job;
+            }
+            function cancelJob(job) {
+                if (!job || job.state === 'done' || job.state === 'cancelled') return;
+                if (job.state === 'active') {
+                    activeJobs.delete(job);
+                    unload(job.image);
+                }
+                job.state = 'cancelled';
+                job.settle = null;
+                if (!cancellingAll) drain();
+            }
+            function cancelJobs(jobs) {
+                let outerCancel = cancellingAll;
+                cancellingAll = true;
+                try {
+                    for (let job of jobs) cancelJob(job);
+                } finally {
+                    cancellingAll = outerCancel;
+                }
+                if (!cancellingAll) drain();
+            }
+            function register(cancel) { groups.add(cancel); }
+            function unregister(cancel) { groups.delete(cancel); }
+            function cancelAll() {
+                if (cancellingAll) return;
+                cancellingAll = true;
+                let pendingGroups = Array.from(groups);
+                for (let cancel of pendingGroups) {
+                    try { cancel(); } catch (e) {}
+                }
+                for (let job of queue) cancelJob(job);
+                queue = [];
+                for (let job of Array.from(activeJobs)) cancelJob(job);
+                cancellingAll = false;
+                drain();
+            }
+            function stats() {
+                return { active: activeJobs.size, queued: queuedCount(), groups: groups.size, cap: cap() };
+            }
+            let api = { schedule, run: drain, cancel: cancelJob, cancelMany: cancelJobs, register, unregister, cancelAll, enforceCap, stats };
+            try {
+                window.__afkCancelImageProbes = cancelAll;
+                window.__afkEnforceImageProbeCap = enforceCap;
+                window.__afkImageProbeStats = stats;
+            } catch (e) {}
+            return api;
+        })();
+        _probeFramesWin._scheduler = scheduler;
+    }
+    let known = _manifestCount(urlFor(0));
+    let stopAt = known === null ? maxF : Math.min(known, maxF);
+    let need = minF || 2;
+    let results = [], active = Object.create(null);
+    let next = 0, inFlight = 0, finished = false;
+    function current() {
+        if (typeof stillCurrent !== 'function') return true;
+        try { return stillCurrent() !== false; } catch (e) { return false; }
+    }
+    function unload(im) {
+        if (!im) return;
+        im.onload = im.onerror = null;
+        try { im.removeAttribute('src'); }
+        catch (e) { try { im.src = 'data:,'; } catch (e2) {} }
+    }
+    function releaseActive(from) {
+        let jobs = [];
+        Object.keys(active).forEach(k => {
+            if (from !== undefined && Number(k) < from) return;
+            let job = active[k];
+            delete active[k];
+            inFlight--;
+            jobs.push(job);
+        });
+        scheduler.cancelMany(jobs);
+    }
+    function releaseResults(keep) {
+        for (let i = keep || 0; i < results.length; i++) {
+            if (results[i] && results[i] !== false) unload(results[i]);
+        }
+    }
+    function cancel() {
+        if (finished) return;
+        finished = true;
+        scheduler.unregister(cancel);
+        releaseActive();
+        releaseResults(0);
+        done(null, 0, true);
+    }
+    function complete(n) {
+        if (finished) return;
+        finished = true;
+        scheduler.unregister(cancel);
+        let frames = n >= need ? results.slice(0, n) : null;
+        releaseActive();
+        releaseResults(frames ? n : 0);
+        done(frames, n, false);
+    }
+    function settle(i, ok, im) {
+        if (finished) { unload(im); return; }
+        if (active[i] && active[i].image === im) {
+            delete active[i];
+            inFlight--;
+        }
+        if (!current()) { unload(im); cancel(); return; }
+        if (ok) results[i] = im;
+        else {
+            results[i] = false;
+            unload(im);
+            if (i < stopAt) {
+                stopAt = i;
+                releaseActive(stopAt);
+                releaseResults(stopAt);
+            }
+        }
+        let n = 0;
+        while (n < stopAt && results[n]) n++;
+        if (n >= stopAt || results[n] === false) { complete(n); return; }
+        pump();
+    }
+    function pump() {
+        if (finished) return;
+        if (!current()) { cancel(); return; }
+        while (!finished && inFlight < WIN && next < stopAt) {
+            if (!current()) { cancel(); return; }
+            let i = next++;
+            inFlight++;
+            active[i] = scheduler.schedule(urlFor(i), (ok, im) => settle(i, ok, im));
+        }
+        scheduler.run();   // active[i] 全部賦值後才可建立 Image，涵蓋 constructor/src 同步拋錯
+        if (!finished && stopAt === 0) complete(0);
+    }
+    scheduler.register(cancel);
+    pump();
+}
+`;
+    vfx = vfx.slice(0, probeStart) + probeLoader + vfx.slice(probeEnd);
+  }
+
+  const vfxEpochMarkers = [
+    'let _mobMemoryEpoch =',
+    '__afkMobileMemoryAcceptFrames(_mobMemoryEpoch)',
+    '__afkMobileMemoryProbeCurrent(_mobMemoryEpoch)',
+    'let _mob8MemoryEpoch =',
+    '__afkMobileMemoryAcceptFrames(_mob8MemoryEpoch)',
+    '__afkMobileMemoryProbeCurrent(_mob8MemoryEpoch)',
+    'let _morphMemoryEpoch =',
+    '__afkMobileMemoryAcceptFrames(_morphMemoryEpoch)',
+    '__afkMobileMemoryProbeCurrent(_morphMemoryEpoch)'
+  ];
+  if (!vfxEpochMarkers.every((marker) => vfx.includes(marker))) {
+    if (vfx.includes('__afkMobileMemoryAcceptFrames') || vfx.includes('__afkMobileMemoryFrameEpoch')) {
+      throw new Error(`[${VFX_FILE}] 手機 probe epoch 鉤子只剩部分，拒絕靜默略過。`);
+    }
+    const mobStart = `    if (_mobAnimCache[name] !== undefined) return;`;
+    const mob8Start = `    if (_mob8Cache[key] !== undefined) return;`;
+    const morphStart = `function _battleSpriteProbe(form) {`;
+    const mobFinish = `    let finish = () => { if (--pending > 0) return; _mobAnimCache[name] = (out.idle || out.spawn || out.attack || out.skill || out.hurt || out.death) ? out : null; };`;
+    const mob8Finish = `    let finish = () => { if (--pending > 0) return; _mob8Cache[key] = out.idle ? out : null; };`;
+    const morphFinish = `    let finish = () => { if (--pending <= 0) {`;
+    for (const [label, anchor] of [['mob start', mobStart], ['mob8 start', mob8Start], ['morph start', morphStart], ['mob probe', mobFinish], ['mob8 probe', mob8Finish], ['morph probe', morphFinish]]) {
+      if (!vfx.includes(anchor)) throw new Error(`[${VFX_FILE}] 找不到 ${label} 完成錨點。`);
+    }
+    vfx = vfx.replace(mobStart, `${mobStart}
+    let _mobMemoryEpoch = (typeof window.__afkMobileMemoryFrameEpoch === 'function') ? window.__afkMobileMemoryFrameEpoch() : null;`);
+    vfx = vfx.replace(mob8Start, `${mob8Start}
+    let _mob8MemoryEpoch = (typeof window.__afkMobileMemoryFrameEpoch === 'function') ? window.__afkMobileMemoryFrameEpoch() : null;`);
+    vfx = vfx.replace(morphStart, `${morphStart}
+    let _morphMemoryEpoch = (typeof window.__afkMobileMemoryFrameEpoch === 'function') ? window.__afkMobileMemoryFrameEpoch() : null;`);
+    vfx = vfx.replace(mobFinish, `    let finish = () => { if (--pending > 0) return; if (typeof window.__afkMobileMemoryAcceptFrames === 'function' && !window.__afkMobileMemoryAcceptFrames(_mobMemoryEpoch)) { if (typeof window.__afkMobileMemoryProbeCurrent !== 'function' || window.__afkMobileMemoryProbeCurrent(_mobMemoryEpoch)) delete _mobAnimCache[name]; return; } _mobAnimCache[name] = (out.idle || out.spawn || out.attack || out.skill || out.hurt || out.death) ? out : null; };`);
+    vfx = vfx.replace(mob8Finish, `    let finish = () => { if (--pending > 0) return; if (typeof window.__afkMobileMemoryAcceptFrames === 'function' && !window.__afkMobileMemoryAcceptFrames(_mob8MemoryEpoch)) { if (typeof window.__afkMobileMemoryProbeCurrent !== 'function' || window.__afkMobileMemoryProbeCurrent(_mob8MemoryEpoch)) delete _mob8Cache[key]; return; } _mob8Cache[key] = out.idle ? out : null; };`);
+    vfx = vfx.replace(morphFinish, `${morphFinish}
+        if (typeof window.__afkMobileMemoryAcceptFrames === 'function' && !window.__afkMobileMemoryAcceptFrames(_morphMemoryEpoch)) { if (typeof window.__afkMobileMemoryProbeCurrent !== 'function' || window.__afkMobileMemoryProbeCurrent(_morphMemoryEpoch)) delete _morphBattleCache[form.key]; return; }`);
+  }
+
+  const vfxProbeMarkers = [
+    'let _mobMemoryCurrent =',
+    '}, _mobMemoryCurrent);',
+    'let _mob8MemoryCurrent =',
+    '_mob8MemoryCurrent);',
+    'let _morphMemoryCurrent =',
+    '_morphMemoryCurrent);'
+  ];
+  if (!vfxProbeMarkers.every((marker) => vfx.includes(marker))) {
+    if (vfxProbeMarkers.some((marker) => vfx.includes(marker))) {
+      throw new Error(`[${VFX_FILE}] probe 取消 predicate 只剩部分，拒絕靜默略過。`);
+    }
+    const mobEpoch = `    let _mobMemoryEpoch = (typeof window.__afkMobileMemoryFrameEpoch === 'function') ? window.__afkMobileMemoryFrameEpoch() : null;`;
+    const mob8Epoch = `    let _mob8MemoryEpoch = (typeof window.__afkMobileMemoryFrameEpoch === 'function') ? window.__afkMobileMemoryFrameEpoch() : null;`;
+    const morphEpoch = `    let _morphMemoryEpoch = (typeof window.__afkMobileMemoryFrameEpoch === 'function') ? window.__afkMobileMemoryFrameEpoch() : null;`;
+    const mobCall = '        let attempt = () => _probeFramesWin(i => `assets/anim/${animName}/${prefixes[pi]}${i}.png`, MOB_ANIM_MAX_FRAMES, minF || 2, (frames, n) => {';
+    const mobCallEnd = `            target[key] = frames; finish();
+        });`;
+    const mob8Call = `        _probeFramesWin(i => folder + pfx + i + '.png', MOB_ANIM_MAX_FRAMES, minF || 2, frames => { target[k] = frames; finish(); });`;
+    const morphCall = `        _probeFramesWin(i => form.base + pfx + i + '.png', MOB_ANIM_MAX_FRAMES, minF || 2, frames => { target[key] = frames; finish(); });`;
+    for (const [label, anchor] of [
+      ['mob epoch', mobEpoch], ['mob8 epoch', mob8Epoch], ['morph epoch', morphEpoch],
+      ['mob callback', mobCall], ['mob callback end', mobCallEnd],
+      ['mob8 callback', mob8Call], ['morph callback', morphCall],
+      ['mob fallback', 'if (!frames && n === 0 && pi + 1 < prefixes.length)']
+    ]) {
+      if (!vfx.includes(anchor)) throw new Error(`[${VFX_FILE}] 找不到 ${label} predicate 錨點。`);
+    }
+    vfx = vfx.replace(mobEpoch, `${mobEpoch}
+    let _mobMemoryCurrent = () => typeof window.__afkMobileMemoryProbeCurrent !== 'function' || window.__afkMobileMemoryProbeCurrent(_mobMemoryEpoch);`);
+    vfx = vfx.replace(mob8Epoch, `${mob8Epoch}
+    let _mob8MemoryCurrent = () => typeof window.__afkMobileMemoryProbeCurrent !== 'function' || window.__afkMobileMemoryProbeCurrent(_mob8MemoryEpoch);`);
+    vfx = vfx.replace(morphEpoch, `${morphEpoch}
+    let _morphMemoryCurrent = () => typeof window.__afkMobileMemoryProbeCurrent !== 'function' || window.__afkMobileMemoryProbeCurrent(_morphMemoryEpoch);`);
+    vfx = vfx.replace(mobCall, mobCall.replace('(frames, n) => {', '(frames, n, cancelled) => {'));
+    vfx = vfx.replace('if (!frames && n === 0 && pi + 1 < prefixes.length)', 'if (!cancelled && !frames && n === 0 && pi + 1 < prefixes.length)');
+    vfx = vfx.replace(mobCallEnd, `            target[key] = frames; finish();
+        }, _mobMemoryCurrent);`);
+    vfx = vfx.replace(mob8Call, `        _probeFramesWin(i => folder + pfx + i + '.png', MOB_ANIM_MAX_FRAMES, minF || 2, frames => { target[k] = frames; finish(); }, _mob8MemoryCurrent);`);
+    vfx = vfx.replace(morphCall, `        _probeFramesWin(i => form.base + pfx + i + '.png', MOB_ANIM_MAX_FRAMES, minF || 2, frames => { target[key] = frames; finish(); }, _morphMemoryCurrent);`);
+  }
+  const vfxMarkers = [...probeLoaderMarkers, ...vfxEpochMarkers, ...vfxProbeMarkers];
+
+  const PET_FILE = 'js/22-pets.js';
+  let pets = readLf(PET_FILE);
+  const petEpochMarkers = ['let _petMemoryEpoch =', '__afkMobileMemoryAcceptFrames(_petMemoryEpoch)', '__afkMobileMemoryProbeCurrent(_petMemoryEpoch)'];
+  if (!petEpochMarkers.every((marker) => pets.includes(marker))) {
+    if (pets.includes('__afkMobileMemoryAcceptFrames') || pets.includes('__afkMobileMemoryFrameEpoch')) {
+      throw new Error(`[${PET_FILE}] 手機 pet probe epoch 鉤子只剩部分，拒絕靜默略過。`);
+    }
+    const petStart = `    if (_pet8Cache[key] !== undefined) return;`;
+    const petFinish = `    let finish = () => { if (--pending > 0) return; _pet8Cache[key] = out.idle ? out : null; };`;
+    if (!pets.includes(petStart) || !pets.includes(petFinish)) throw new Error(`[${PET_FILE}] 找不到 pet8 probe 錨點。`);
+    pets = pets.replace(petStart, `${petStart}
+    let _petMemoryEpoch = (typeof window.__afkMobileMemoryFrameEpoch === 'function') ? window.__afkMobileMemoryFrameEpoch() : null;`);
+    pets = pets.replace(petFinish, `    let finish = () => { if (--pending > 0) return; if (typeof window.__afkMobileMemoryAcceptFrames === 'function' && !window.__afkMobileMemoryAcceptFrames(_petMemoryEpoch)) { if (typeof window.__afkMobileMemoryProbeCurrent !== 'function' || window.__afkMobileMemoryProbeCurrent(_petMemoryEpoch)) delete _pet8Cache[key]; return; } _pet8Cache[key] = out.idle ? out : null; };`);
+  }
+  const petProbeMarkers = ['let _petMemoryCurrent =', '_petMemoryCurrent);'];
+  if (!petProbeMarkers.every((marker) => pets.includes(marker))) {
+    if (petProbeMarkers.some((marker) => pets.includes(marker))) {
+      throw new Error(`[${PET_FILE}] pet probe 取消 predicate 只剩部分，拒絕靜默略過。`);
+    }
+    const petEpoch = `    let _petMemoryEpoch = (typeof window.__afkMobileMemoryFrameEpoch === 'function') ? window.__afkMobileMemoryFrameEpoch() : null;`;
+    const petCall = `        _probeFramesWin(i => folder + pfx + i + '.png', PET_ANIM_MAXF, minF || 2, frames => { target[k] = frames; finish(); });`;
+    if (!pets.includes(petEpoch) || !pets.includes(petCall)) {
+      throw new Error(`[${PET_FILE}] 找不到 pet probe predicate 錨點。`);
+    }
+    pets = pets.replace(petEpoch, `${petEpoch}
+    let _petMemoryCurrent = () => typeof window.__afkMobileMemoryProbeCurrent !== 'function' || window.__afkMobileMemoryProbeCurrent(_petMemoryEpoch);`);
+    pets = pets.replace(petCall, `        _probeFramesWin(i => folder + pfx + i + '.png', PET_ANIM_MAXF, minF || 2, frames => { target[k] = frames; finish(); }, _petMemoryCurrent);`);
+  }
+  const petMarkers = [...petEpochMarkers, ...petProbeMarkers];
+
+  const MARKET_FILE = 'js/24-pandora-relic-market.js';
+  let market = readLf(MARKET_FILE);
+  const marketCleanupMarkers = [
+    '__afkClearWanderingBuyerFrames',
+    'img.onload = img.onerror = null',
+    "img.removeAttribute('src')",
+    "img.removeAttribute('srcset')",
+    '_classFrameCache = Object.create(null)'
+  ];
+  const marketDone = market.includes('__afkMobileWanderingBuyerStill') &&
+    marketCleanupMarkers.every((marker) => market.includes(marker));
+  if (!marketDone) {
+    if (market.includes('__afkMobileWanderingBuyerStill') ||
+        market.includes('__afkClearWanderingBuyerFrames')) {
+      throw new Error(`[${MARKET_FILE}] 玩家收購 NPC 手機鉤子只剩部分，拒絕靜默略過。`);
+    }
+    const folderAnchor = `        let folder = String((w && w.avatar) || '男騎士') + _dirs[_h % 3];`;
+    const exportAnchor = `    window.wanderingBuyerSpriteData = wanderingBuyerSpriteData;`;
+    if (!market.includes(folderAnchor) || !market.includes(exportAnchor)) {
+      throw new Error(`[${MARKET_FILE}] 找不到玩家收購 NPC 快取錨點。`);
+    }
+    market = market.replace(folderAnchor, `${folderAnchor}
+        let _mobileStill = (typeof window.__afkMobileWanderingBuyerStill === 'function') ? window.__afkMobileWanderingBuyerStill(w, folder) : null;
+        if (_mobileStill) return _mobileStill;   // 🔌 手機雙省電：只交首幀 URL，不建立 body+shadow 完整序列`);
+    market = market.replace(exportAnchor, `    window.__afkClearWanderingBuyerFrames = function () {
+        Object.keys(_classFrameCache).forEach(function (key) {
+            let entry = _classFrameCache[key];
+            [entry && entry.frames, entry && entry.shadows].forEach(function (list) {
+                (Array.isArray(list) ? list : []).forEach(function (img) {
+                    if (!img) return;
+                    img.onload = img.onerror = null;
+                    try {
+                        img.removeAttribute('src');
+                        img.removeAttribute('srcset');
+                    } catch (e) {
+                        try { img.src = ''; } catch (_) {}
+                    }
+                });
+            });
+        });
+        _classFrameCache = Object.create(null);   // 主動卸載 body+shadow Image，再丟棄快取
+    };
+${exportAnchor}`);
+  }
+
+  const SAVE_FILE = 'js/13-shop-save.js';
+  let save = readLf(SAVE_FILE);
+  const saveMarkers = [
+    "__afkMobileMemoryLifecycle('character-select')",
+    "__afkMobileMemoryLifecycle('role-load')",
+    "__afkMobileMemoryLifecycle('role-start')",
+    '父畫面隱藏時，子 panel 即使沒 hidden 也不可在遊戲背後逐幀解碼',
+    '進遊戲後子 panel 也明確隱藏，禁止背景逐幀與圖片回流'
+  ];
+  const baseLifecycle = [
+    "__afkMobileMemoryLifecycle('character-select')",
+    "__afkMobileMemoryLifecycle('role-load')",
+    "__afkMobileMemoryLifecycle('role-start')"
+  ];
+  if (!baseLifecycle.every((marker) => save.includes(marker))) {
+    if (baseLifecycle.some((marker) => save.includes(marker))) {
+      throw new Error(`[${SAVE_FILE}] 手機角色生命週期鉤子只剩部分，拒絕靜默略過。`);
+    }
+    const selectAnchor = `    try { if(typeof _bgmTick === 'function') { _bgmScene = null; _bgmTick(); } } catch(e) {}`;
+    const loadAnchor = `        player = d.p; mapState = d.ms;`;
+    const startAnchor = `    document.body.classList.add('game-bg-dim');   // 正式遊戲後：背景淡化`;
+    for (const [label, anchor] of [['character select', selectAnchor], ['load role', loadAnchor], ['start role', startAnchor]]) {
+      if (!save.includes(anchor)) throw new Error(`[${SAVE_FILE}] 找不到 ${label} 生命週期錨點。`);
+    }
+    save = save.replace(selectAnchor, `    if (typeof window.__afkMobileMemoryLifecycle === 'function') window.__afkMobileMemoryLifecycle('character-select');
+${selectAnchor}`);
+    save = save.replace(loadAnchor, `        if (typeof window.__afkMobileMemoryLifecycle === 'function') window.__afkMobileMemoryLifecycle('role-load');
+${loadAnchor}`);
+    save = save.replace(startAnchor, `${startAnchor}
+    if (typeof window.__afkMobileMemoryLifecycle === 'function') window.__afkMobileMemoryLifecycle('role-start');`);
+  }
+  const readyCount = (save.match(/__afkMobileMemoryLifecycle\('role-ready'\)/g) || []).length;
+  if (readyCount === 0) {
+    const createReadyAnchor = "    startGameTimers();\n    logSys(`===== 歡迎來到天堂放置冒險 =====`);";
+    const loadReadyAnchor = "        startGameTimers();\n        logSys(`===== 歡迎回來 =====`);";
+    if (!save.includes(createReadyAnchor) || !save.includes(loadReadyAnchor)) {
+      throw new Error(`[${SAVE_FILE}] 找不到新建／讀檔 role-ready 錨點。`);
+    }
+    save = save.replace(createReadyAnchor, "    startGameTimers();\n    if (typeof window.__afkMobileMemoryLifecycle === 'function') window.__afkMobileMemoryLifecycle('role-ready');\n    logSys(`===== 歡迎來到天堂放置冒險 =====`);");
+    save = save.replace(loadReadyAnchor, "        startGameTimers();\n        if (typeof window.__afkMobileMemoryLifecycle === 'function') window.__afkMobileMemoryLifecycle('role-ready');\n        logSys(`===== 歡迎回來 =====`);");
+  } else if (readyCount !== 2) {
+    throw new Error(`[${SAVE_FILE}] role-ready 鉤子應有 2 處，實際 ${readyCount}。`);
+  }
+  if (!save.includes('父畫面隱藏時，子 panel 即使沒 hidden 也不可在遊戲背後逐幀解碼')) {
+    const tickerAnchor = `        const panel = document.getElementById('load-select-panel');
+        if(panel && !panel.classList.contains('hidden') && !(typeof window.__afkMobileMemoryLite === 'function' && window.__afkMobileMemoryLite()) && now - _loadAnimState.lastAt >= _loadAnimState.stepMs){`;
+    if (!save.includes(tickerAnchor)) throw new Error(`[${SAVE_FILE}] 找不到選角逐幀可見性錨點。`);
+    save = save.replace(tickerAnchor, `        const panel = document.getElementById('load-select-panel');
+        const screen = document.getElementById('creation-screen');   // 🔌 父畫面隱藏時，子 panel 即使沒 hidden 也不可在遊戲背後逐幀解碼
+        const game = document.getElementById('game-screen');
+        if(panel && screen && !screen.classList.contains('hidden') && (!game || game.classList.contains('hidden')) &&
+           !panel.classList.contains('hidden') && !(typeof window.__afkMobileMemoryLite === 'function' && window.__afkMobileMemoryLite()) && now - _loadAnimState.lastAt >= _loadAnimState.stepMs){`);
+  }
+  if (!save.includes('進遊戲後子 panel 也明確隱藏，禁止背景逐幀與圖片回流')) {
+    const loadHideAnchor = `        document.getElementById('creation-screen').classList.add('hidden');
+        document.getElementById('game-screen').classList.remove('hidden');`;
+    if (!save.includes(loadHideAnchor)) throw new Error(`[${SAVE_FILE}] 找不到讀檔隱藏選角面板錨點。`);
+    save = save.replace(loadHideAnchor, `        document.getElementById('creation-screen').classList.add('hidden');
+        { let _loadPanel = document.getElementById('load-select-panel'); if (_loadPanel) _loadPanel.classList.add('hidden'); }   // 🔌 進遊戲後子 panel 也明確隱藏，禁止背景逐幀與圖片回流
+        document.getElementById('game-screen').classList.remove('hidden');`);
+  }
+  if ((save.match(/__afkMobileMemoryLifecycle\('role-ready'\)/g) || []).length !== 2) {
+    throw new Error(`[${SAVE_FILE}] role-ready 鉤子驗證失敗。`);
+  }
+
+  const doneBefore = readFileSync(WORLD_FILE, 'utf8').includes('__afkMobileTownNpcFrames') &&
+    worldMarkers.every((marker) => readFileSync(WORLD_FILE, 'utf8').includes(marker)) &&
+    (readFileSync(WORLD_FILE, 'utf8').match(/隱藏聖地直接進圖也要形成圖片資源邊界/g) || []).length === 1 &&
+    (readFileSync(PROGRESSION_FILE, 'utf8').match(/__afkMobileMemoryLifecycle\('map-change'\)/g) || []).length === progressionTargets.length &&
+    vfxMarkers.every((marker) => readFileSync(VFX_FILE, 'utf8').includes(marker)) &&
+    petMarkers.every((marker) => readFileSync(PET_FILE, 'utf8').includes(marker)) &&
+    readFileSync(MARKET_FILE, 'utf8').includes('__afkMobileWanderingBuyerStill') &&
+    readFileSync(MARKET_FILE, 'utf8').includes('__afkClearWanderingBuyerFrames') &&
+    saveMarkers.every((marker) => readFileSync(SAVE_FILE, 'utf8').includes(marker)) &&
+    (readFileSync(SAVE_FILE, 'utf8').match(/__afkMobileMemoryLifecycle\('role-ready'\)/g) || []).length === 2;
+  if (doneBefore) { already++; return; }
+  if (!CHECK) {
+    writeFileSync(WORLD_FILE, world);
+    writeFileSync(PROGRESSION_FILE, progression);
+    writeFileSync(VFX_FILE, vfx);
+    writeFileSync(PET_FILE, pets);
+    writeFileSync(MARKET_FILE, market);
+    writeFileSync(SAVE_FILE, save);
+  }
+  changed++;
+  console.log(`[patch] 手機圖片生命週期／城鎮首幀閘門（${WORLD_FILE}、${PROGRESSION_FILE}、${VFX_FILE}、${PET_FILE}、${MARKET_FILE}、${SAVE_FILE}）`);
+}
+
+// ── 補丁 14：手機登入背景與隱藏創角資源延遲載入 ───────────────────
+function patchMobileLoginResources() {
+  const FILE = 'index.html';
+  let s = readFileSync(FILE, 'utf8');
+  const lazyIds = ['load-select-bg', 'load-select-overlay', 'creation-bg-image', 'class-preview-img'];
+  const lazyIdReady = lazyIds.every((id) => {
+    const tag = (s.match(new RegExp('<img\\s+id="' + id + '"[^>]*>')) || [])[0] || '';
+    return tag.includes('loading="lazy"') && tag.includes('decoding="async"') &&
+      tag.includes('data-afk-mobile-lazy="1"');
+  });
+  const lazyLogoCount = (s.match(/class="creation-class-btn[^>]*>\s*<img[^>]*data-afk-mobile-lazy="1"[^>]*>/g) || []).length;
+  const loginMarkers = [
+    "localStorage.getItem('afk_ps_noanim') === '1'",
+    "localStorage.getItem('afk_ps_lowfps') === '1'",
+    "document.documentElement.classList.add('afk-memory-lite-boot')",
+    'var nextFrame=first+1,preloadRunning=false,preloadTimer=0,preloadImage=null;',
+    'function pausePreload()',
+    "preloadImage.removeAttribute('src')",
+    'function creationVisible()',
+    "window.addEventListener('afk-mobile-memory-change'",
+    "window.addEventListener('afk-mobile-memory-login'",
+    "if(ready&&img&&screen&&!screen.classList.contains('hidden')&&!memoryLite()"
+  ];
+  const loginReady = lazyIdReady && lazyLogoCount === 8 &&
+    loginMarkers.every((marker) => s.includes(marker));
+  if (loginReady) { already++; return; }
+
+  const headAnchor = `    <title>放置天堂 - 日出之國</title>`;
+  if (!s.includes(headAnchor)) throw new Error(`[${FILE}] 找不到 head 啟動錨點。`);
+  if (!s.includes('afk-memory-lite-boot')) {
+    const bootstrap = `    <!-- 🔌 加掛版補丁：在大型 CSS 圖進入 computed style 前讀取既有雙省電設定，避免先解碼 3344×1882 body 背景。 -->
+    <script>
+      try {
+        if (localStorage.getItem('afk_ps_noanim') === '1' && localStorage.getItem('afk_ps_lowfps') === '1' &&
+            innerWidth <= 900 && matchMedia('(pointer:coarse)').matches) {
+          document.documentElement.classList.add('afk-memory-lite-boot');
+        }
+      } catch (e) {}
+    </script>
+    <style>html.afk-memory-lite-boot body{background-image:linear-gradient(135deg,#172033 0%,#101827 48%,#080d18 100%)!important;background-attachment:scroll!important;}</style>
+
+`;
+    s = s.replace(headAnchor, bootstrap + headAnchor);
+  }
+
+  for (const id of lazyIds) {
+    const tagRe = new RegExp('<img\\s+id="' + id + '"[^>]*>');
+    const tag = (s.match(tagRe) || [])[0];
+    if (!tag) throw new Error(`[${FILE}] 找不到隱藏登入圖片 #${id}。`);
+    if (tag.includes('data-afk-mobile-lazy')) continue;
+    const re = new RegExp('(<img\\s+id="' + id + '"\\s+)(?![^>]*data-afk-mobile-lazy)');
+    s = s.replace(re, '$1loading="lazy" decoding="async" data-afk-mobile-lazy="1" ');
+  }
+  const logoRe = /(<button[^>]+class="creation-class-btn[^>]*><img\s+)(?![^>]*data-afk-mobile-lazy)/g;
+  s = s.replace(logoRe, '$1loading="lazy" decoding="async" data-afk-mobile-lazy="1" ');
+  if ((s.match(/data-afk-mobile-lazy="1"/g) || []).length < 12) {
+    throw new Error(`[${FILE}] 隱藏登入圖片 lazy 標記不足 12 張。`);
+  }
+
+  if (!s.includes('var nextFrame=first+1') || !s.includes('function pausePreload()') ||
+      !s.includes('function creationVisible()') ||
+      !s.includes("window.addEventListener('afk-mobile-memory-change'") ||
+      !s.includes("window.addEventListener('afk-mobile-memory-login'")) {
+    const loginStartText = `      // 登入頁逐幀動畫：273.png～300.png，使用相對路徑，GitHub Pages 可直接部署。`;
+    const loginEndText = `      })();`;
+    const loginStart = s.indexOf(loginStartText);
+    const loginEndAt = s.indexOf(loginEndText, loginStart);
+    if (loginStart < 0 || loginEndAt < 0) {
+      throw new Error(`[${FILE}] 找不到完整登入逐幀預載區塊。`);
+    }
+    const loginEnd = loginEndAt + loginEndText.length;
+    const preloader = `      // 登入頁逐幀動畫：273.png～300.png；雙省電可中止在途預載，關閉後從斷點恢復。
+      (function(){
+        var first=273,last=300,frame=first,lastAt=0,stepMs=90,ready=false;
+        var nextFrame=first+1,preloadRunning=false,preloadTimer=0,preloadImage=null;
+        var base='public/assets/login/';
+        function memoryLite(){
+          return typeof window.__afkMobileMemoryLite==='function'&&window.__afkMobileMemoryLite();
+        }
+        function creationVisible(){
+          var screen=document.getElementById('creation-screen');
+          return !!(screen&&!screen.classList.contains('hidden'));
+        }
+        function preloadNext(){
+          if(ready||memoryLite()||!creationVisible()){preloadRunning=false;return;}
+          if(nextFrame>last){ready=true;preloadRunning=false;return;}
+          preloadRunning=true;
+          var n=nextFrame,p=new Image();
+          preloadImage=p;
+          var settle=function(){
+            if(preloadImage!==p)return;
+            p.onload=p.onerror=null;
+            preloadImage=null;
+            nextFrame=n+1;
+            preloadRunning=false;
+            preloadNext();
+          };
+          p.onload=p.onerror=settle;
+          p.src=base+n+'.png';
+        }
+        function beginPreload(){
+          if(ready||preloadRunning||preloadTimer||memoryLite()||!creationVisible())return;
+          preloadTimer=setTimeout(function(){preloadTimer=0;preloadNext();},500);
+        }
+        function pausePreload(){
+          if(preloadTimer){clearTimeout(preloadTimer);preloadTimer=0;}
+          if(preloadImage){
+            preloadImage.onload=preloadImage.onerror=null;
+            try{preloadImage.removeAttribute('src');}catch(e){}
+            preloadImage=null;
+          }
+          preloadRunning=false;
+        }
+        if(document.readyState==='complete')beginPreload();
+        else window.addEventListener('load',beginPreload,{once:true});
+        window.addEventListener('afk-mobile-memory-change',function(event){
+          if(event&&event.detail&&event.detail.active)pausePreload();
+          else beginPreload();
+        });
+        window.addEventListener('afk-mobile-memory-login',function(event){
+          if(event&&event.detail&&event.detail.visible)beginPreload();
+          else pausePreload();
+        });
+        function animateLogin(now){
+          var screen=document.getElementById('creation-screen');
+          var img=document.getElementById('login-anim-image');
+          if(ready&&img&&screen&&!screen.classList.contains('hidden')&&!memoryLite()&&now-lastAt>=stepMs){
+            frame=frame>=last?first:frame+1;
+            img.src=base+frame+'.png';
+            lastAt=now;
+          }
+          requestAnimationFrame(animateLogin);
+        }
+        requestAnimationFrame(animateLogin);
+      })();`;
+    s = s.slice(0, loginStart) + preloader + s.slice(loginEnd);
+  }
+
+  const finalLazyIdReady = lazyIds.every((id) => {
+    const tag = (s.match(new RegExp('<img\\s+id="' + id + '"[^>]*>')) || [])[0] || '';
+    return tag.includes('loading="lazy"') && tag.includes('decoding="async"') &&
+      tag.includes('data-afk-mobile-lazy="1"');
+  });
+  const finalLazyLogoCount = (s.match(/class="creation-class-btn[^>]*>\s*<img[^>]*data-afk-mobile-lazy="1"[^>]*>/g) || []).length;
+  const missingLoginMarkers = loginMarkers.filter((marker) => !s.includes(marker));
+  if (!finalLazyIdReady || finalLazyLogoCount !== 8 || missingLoginMarkers.length) {
+    throw new Error(`[${FILE}] 手機登入資源閘門產生不完整：` +
+      `${!finalLazyIdReady ? '4 張固定圖片 lazy 不完整；' : ''}` +
+      `${finalLazyLogoCount !== 8 ? `職業 logo=${finalLazyLogoCount}/8；` : ''}` +
+      missingLoginMarkers.join(' | '));
+  }
+
+  if (!CHECK) writeFileSync(FILE, s);
+  changed++;
+  console.log(`[patch] 手機登入背景／隱藏選角資源閘門（${FILE}）`);
+}
+
+// ── 補丁 15：手機雙省電的卡片圖鑑只用單層縮圖 ─────────────────────
+function patchMobileCardThumbGate() {
+  const FILE = 'js/15-cards.js';
+  let s = readFileSync(FILE, 'utf8');
+  const desired = "    if (typeof window.__afkMobileMemoryLite === 'function' && window.__afkMobileMemoryLite()) return single;   // 🔌 手機雙省電縮圖已含完整單層，不疊回原尺寸影子／武器";
+  if (s.includes(desired)) { already++; return; }
+  if (s.includes('__afkMobileMemoryLite') || s.includes('手機雙省電縮圖已含完整單層')) {
+    throw new Error(`[${FILE}] 手機卡片縮圖閘門只剩部分，拒絕用註解誤判完成。`);
+  }
+  const anchor = `    if (silh) return single;   // 剪影(未收集)：黑影單張即可`;
+  if (!s.includes(anchor)) throw new Error(`[${FILE}] 找不到卡片圖鑑縮圖錨點。`);
+  s = s.replace(anchor, `${anchor}
+${desired}`);
+  if (!CHECK) writeFileSync(FILE, s);
+  changed++;
+  console.log(`[patch] 手機卡片圖鑑單層縮圖閘門（${FILE}）`);
+}
+
+// ── 補丁 16：背景心跳 Worker 建構失敗也撤銷 Blob URL ──────────────────
+function patchBackgroundHeartbeatBlobLifecycle() {
+  const FILE = 'js/01-drops-config.js';
+  let s = readFileSync(FILE, 'utf8').replace(/\r\n/g, '\n');
+  const doneMarker = 'URL.revokeObjectURL(_u);   // Worker 建立同步失敗時也必須釋放 Blob URL';
+  if (s.includes(doneMarker)) { already++; return; }
+  if (s.includes('new Worker(_u)') && /finally\s*\{\s*URL\.revokeObjectURL\(_u\)/.test(s)) {
+    throw new Error(`[${FILE}] 背景心跳 Worker Blob URL 補丁只剩部分，拒絕靜默略過。`);
+  }
+  const anchor =
+`        _bgHeartbeatWorker = new Worker(_u);
+        URL.revokeObjectURL(_u);`;
+  if (!s.includes(anchor)) {
+    throw new Error(`[${FILE}] 找不到背景心跳 Worker Blob URL 錨點。`);
+  }
+  s = s.replace(anchor,
+`        try {
+            _bgHeartbeatWorker = new Worker(_u);
+        } finally {
+            URL.revokeObjectURL(_u);   // Worker 建立同步失敗時也必須釋放 Blob URL
+        }`);
+  if (!CHECK) writeFileSync(FILE, s);
+  changed++;
+  console.log(`[patch] 背景心跳 Worker Blob URL 生命週期（${FILE}）`);
+}
+
+const PATCHES = [patchMaybeSpawnMobs, patchTradEnHook, patch16Slots, patchPetAnimTicker, patchBossHuntEscape, patchUseItemKeepModal, patchSellNowNoForce, patchLegacyOfflineOwnership, patchVersionedAssetCaches, patchMobileMemoryPreviewGate, patchMobileMobThumbGate, patchCoalescedSaveCompression, patchMobileImageLifecycleHooks, patchMobileLoginResources, patchMobileCardThumbGate, patchBackgroundHeartbeatBlobLifecycle];
 
 try {
   for (const p of PATCHES) p();

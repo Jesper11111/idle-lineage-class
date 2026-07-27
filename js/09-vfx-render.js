@@ -1616,53 +1616,226 @@ function _manifestCount(url0) {
     let n = ent[parts.slice(3).join('/')];                                    // 前綴（八方向含 "d6/" 前置）
     return (typeof n === 'number') ? n : 0;                                   // 資料夾在表內但無此前綴＝確定 0 幀
 }
-function _probeFramesWin(urlFor, maxF, minF, done) {
-    // 🚀 v3.4.40 快路徑：幀數已知→直接平行載精確張數（零 404·零探測往返·離線同樣受益）。
-    //    仍逐幀檢查載入結果並只取「從 0 起的連續段」→ manifest 過期(少載/多載)也不會壞，語意與探測完全一致。
-    let known = _manifestCount(urlFor(0));
-    if (known !== null) {
-        if (known === 0) { done(null, 0); return; }                           // 確定沒有此序列→零請求
-        let got = [], left = known;
-        let step = () => {
-            if (--left > 0) return;
-            let n = 0;
-            while (n < known && got[n]) n++;                                  // 連續段（與探測同語意）
-            done(n >= (minF || 2) ? got.slice(0, n) : null, n);
-        };
-        for (let i = 0; i < known; i++) {
-            let im = new Image();
-            im.onload = () => { got[i] = im; step(); };
-            im.onerror = () => { got[i] = false; step(); };                   // manifest 過期→該幀當缺號·截斷至連續段
-            im.src = urlFor(i);
-        }
-        return;
-    }
+function _probeFramesWin(urlFor, maxF, minF, done, stillCurrent) {
+    // 每個序列只保留小窗口，所有 mob／玩家／傭兵／寵物序列再共用一個全域 semaphore。
+    // 否則一隻多圖層怪會同時開 20+ 個序列，每序列 6 張仍足以瞬間壓垮手機解碼記憶體。
     const WIN = 6;
-    let results = [], next = 0, inFlight = 0, stopAt = maxF, finished = false;
-    function settle() {
-        if (finished) return;
-        let n = 0;
-        while (n < stopAt && results[n]) n++;                      // 從 0 起算的連續已載幀數
-        if (n >= stopAt || results[n] === false) {                 // 連續段已確定（其後在途的載完也不影響結果）
-            finished = true;
-            done(n >= minF ? results.slice(0, n) : null, n);
-            return;
+    let scheduler = _probeFramesWin._scheduler;
+    if (!scheduler) {
+        scheduler = (() => {
+            const MOBILE_ACTIVE_CAP = 6, DESKTOP_ACTIVE_CAP = 12;
+            let queue = [], activeJobs = new Set(), groups = new Set(), cancellingAll = false;
+            function mobile() {
+                try {
+                    if (document.body && document.body.classList.contains('m-mobile')) return true;
+                    return window.innerWidth <= 900 && !!window.matchMedia &&
+                        window.matchMedia('(pointer: coarse)').matches;
+                } catch (e) {
+                    try { return window.innerWidth <= 900; } catch (e2) { return false; }
+                }
+            }
+            function cap() { return mobile() ? MOBILE_ACTIVE_CAP : DESKTOP_ACTIVE_CAP; }
+            let lastCap = cap();
+            function queuedCount() {
+                let total = 0;
+                for (let job of queue) if (job && job.state === 'queued') total++;
+                return total;
+            }
+            function unload(im) {
+                if (!im) return;
+                im.onload = im.onerror = null;
+                try { im.removeAttribute('src'); }
+                catch (e) { try { im.src = 'data:,'; } catch (e2) {} }
+            }
+            function enforceCap() {
+                let nextCap = cap();
+                let shrank = nextCap < lastCap;
+                lastCap = nextCap;
+                // 工作是以 probe group 完成；任意砍半個 group 會讓它的 inFlight 永遠不歸零。
+                // cap 縮小且現有 active＋queued 超標時整批取消，讓呼叫端收到 cancelled、
+                // 同步卸載 Image，下一次 render 再依新 cap 建立乾淨批次。
+                if (shrank && activeJobs.size + queuedCount() > nextCap) {
+                    cancelAll();
+                    return true;
+                }
+                return false;
+            }
+            function drain() {
+                if (cancellingAll) return;
+                if (enforceCap()) return;
+                let limit = cap();
+                while (activeJobs.size < limit && queue.length) {
+                    let job = queue.shift();
+                    if (!job || job.state !== 'queued') continue;
+                    job.state = 'active';
+                    let im;
+                    try { im = new Image(); }
+                    catch (e) {
+                        job.state = 'done';
+                        let failed = job.settle;
+                        job.settle = null;
+                        if (failed) failed(false, null);
+                        continue;
+                    }
+                    job.image = im;
+                    activeJobs.add(job);
+                    let finish = ok => {
+                        if (job.state !== 'active') { unload(im); return; }
+                        job.state = 'done';
+                        activeJobs.delete(job);
+                        im.onload = im.onerror = null;
+                        let settle = job.settle;
+                        job.settle = null;
+                        try { if (settle) settle(ok, im); }
+                        finally { drain(); }
+                    };
+                    im.onload = () => finish(true);
+                    im.onerror = () => finish(false);
+                    try { im.src = job.url; } catch (e) { finish(false); }
+                }
+            }
+            function schedule(url, settle) {
+                let job = { url: url, settle: settle, image: null, state: 'queued' };
+                queue.push(job);
+                return job;
+            }
+            function cancelJob(job) {
+                if (!job || job.state === 'done' || job.state === 'cancelled') return;
+                if (job.state === 'active') {
+                    activeJobs.delete(job);
+                    unload(job.image);
+                }
+                job.state = 'cancelled';
+                job.settle = null;
+                if (!cancellingAll) drain();
+            }
+            function cancelJobs(jobs) {
+                let outerCancel = cancellingAll;
+                cancellingAll = true;
+                try {
+                    for (let job of jobs) cancelJob(job);
+                } finally {
+                    cancellingAll = outerCancel;
+                }
+                if (!cancellingAll) drain();
+            }
+            function register(cancel) { groups.add(cancel); }
+            function unregister(cancel) { groups.delete(cancel); }
+            function cancelAll() {
+                if (cancellingAll) return;
+                cancellingAll = true;
+                let pendingGroups = Array.from(groups);
+                for (let cancel of pendingGroups) {
+                    try { cancel(); } catch (e) {}
+                }
+                for (let job of queue) cancelJob(job);
+                queue = [];
+                for (let job of Array.from(activeJobs)) cancelJob(job);
+                cancellingAll = false;
+                drain();
+            }
+            function stats() {
+                return { active: activeJobs.size, queued: queuedCount(), groups: groups.size, cap: cap() };
+            }
+            let api = { schedule, run: drain, cancel: cancelJob, cancelMany: cancelJobs, register, unregister, cancelAll, enforceCap, stats };
+            try {
+                window.__afkCancelImageProbes = cancelAll;
+                window.__afkEnforceImageProbeCap = enforceCap;
+                window.__afkImageProbeStats = stats;
+            } catch (e) {}
+            return api;
+        })();
+        _probeFramesWin._scheduler = scheduler;
+    }
+    let known = _manifestCount(urlFor(0));
+    let stopAt = known === null ? maxF : Math.min(known, maxF);
+    let need = minF || 2;
+    let results = [], active = Object.create(null);
+    let next = 0, inFlight = 0, finished = false;
+    function current() {
+        if (typeof stillCurrent !== 'function') return true;
+        try { return stillCurrent() !== false; } catch (e) { return false; }
+    }
+    function unload(im) {
+        if (!im) return;
+        im.onload = im.onerror = null;
+        try { im.removeAttribute('src'); }
+        catch (e) { try { im.src = 'data:,'; } catch (e2) {} }
+    }
+    function releaseActive(from) {
+        let jobs = [];
+        Object.keys(active).forEach(k => {
+            if (from !== undefined && Number(k) < from) return;
+            let job = active[k];
+            delete active[k];
+            inFlight--;
+            jobs.push(job);
+        });
+        scheduler.cancelMany(jobs);
+    }
+    function releaseResults(keep) {
+        for (let i = keep || 0; i < results.length; i++) {
+            if (results[i] && results[i] !== false) unload(results[i]);
         }
+    }
+    function cancel() {
+        if (finished) return;
+        finished = true;
+        scheduler.unregister(cancel);
+        releaseActive();
+        releaseResults(0);
+        done(null, 0, true);
+    }
+    function complete(n) {
+        if (finished) return;
+        finished = true;
+        scheduler.unregister(cancel);
+        let frames = n >= need ? results.slice(0, n) : null;
+        releaseActive();
+        releaseResults(frames ? n : 0);
+        done(frames, n, false);
+    }
+    function settle(i, ok, im) {
+        if (finished) { unload(im); return; }
+        if (active[i] && active[i].image === im) {
+            delete active[i];
+            inFlight--;
+        }
+        if (!current()) { unload(im); cancel(); return; }
+        if (ok) results[i] = im;
+        else {
+            results[i] = false;
+            unload(im);
+            if (i < stopAt) {
+                stopAt = i;
+                releaseActive(stopAt);
+                releaseResults(stopAt);
+            }
+        }
+        let n = 0;
+        while (n < stopAt && results[n]) n++;
+        if (n >= stopAt || results[n] === false) { complete(n); return; }
         pump();
     }
     function pump() {
+        if (finished) return;
+        if (!current()) { cancel(); return; }
         while (!finished && inFlight < WIN && next < stopAt) {
-            let i = next++; inFlight++;
-            let im = new Image();
-            im.onload = () => { inFlight--; results[i] = im; settle(); };
-            im.onerror = () => { inFlight--; results[i] = false; if (i < stopAt) stopAt = i; settle(); };
-            im.src = urlFor(i);
+            if (!current()) { cancel(); return; }
+            let i = next++;
+            inFlight++;
+            active[i] = scheduler.schedule(urlFor(i), (ok, im) => settle(i, ok, im));
         }
+        scheduler.run();   // active[i] 全部賦值後才可建立 Image，涵蓋 constructor/src 同步拋錯
+        if (!finished && stopAt === 0) complete(0);
     }
+    scheduler.register(cancel);
     pump();
 }
 function _mobAnimProbe(name) {
     if (_mobAnimCache[name] !== undefined) return;
+    let _mobMemoryEpoch = (typeof window.__afkMobileMemoryFrameEpoch === 'function') ? window.__afkMobileMemoryFrameEpoch() : null;
+    let _mobMemoryCurrent = () => typeof window.__afkMobileMemoryProbeCurrent !== 'function' || window.__afkMobileMemoryProbeCurrent(_mobMemoryEpoch);
     _mobAnimCache[name] = 'probing';
     let animName = _animDir(name);   // 🔗 共用怪：本體/影子/武器幀 URL 走目標資料夾(cache 仍 keyed by name)
     let hasShadow = (typeof MOB_ANIM_SPRITE_SHADOW !== 'undefined') && MOB_ANIM_SPRITE_SHADOW.has(name);   // 🌑 真實影子 sprite→額外探測 <動作>_s_N.png
@@ -1676,13 +1849,13 @@ function _mobAnimProbe(name) {
     if (hasWeapon2) out.weapon2 = { idle: null, spawn: null, attack: null, skill: null, hurt: null, death: null };
     if (hasSkillFx) out.skillFx = { start: null, end: null };
     let pending = 6 + (hasShadow ? 6 : 0) + (hasWeapon ? 6 : 0) + (hasWeapon2 ? 6 : 0) + (hasSkillFx ? (1 + (skfCfg.endPfx ? 1 : 0) + (skfCfg.startPfx2 ? 1 : 0) + (skfCfg.startPfx3 ? 1 : 0)) : 0);
-    let finish = () => { if (--pending > 0) return; _mobAnimCache[name] = (out.idle || out.spawn || out.attack || out.skill || out.hurt || out.death) ? out : null; };
+    let finish = () => { if (--pending > 0) return; if (typeof window.__afkMobileMemoryAcceptFrames === 'function' && !window.__afkMobileMemoryAcceptFrames(_mobMemoryEpoch)) { if (typeof window.__afkMobileMemoryProbeCurrent !== 'function' || window.__afkMobileMemoryProbeCurrent(_mobMemoryEpoch)) delete _mobAnimCache[name]; return; } _mobAnimCache[name] = (out.idle || out.spawn || out.attack || out.skill || out.hurt || out.death) ? out : null; };
     let probeSeq = (target, key, prefixes, minF) => {   // 依前綴平行探測(滑動窗口)到缺號為止；idle 先試 idle_ 再退裸編號。minF=最少幀數(受擊 hurt 允許 1 幀)
         let pi = 0;
-        let attempt = () => _probeFramesWin(i => `assets/anim/${animName}/${prefixes[pi]}${i}.png`, MOB_ANIM_MAX_FRAMES, minF || 2, (frames, n) => {
-            if (!frames && n === 0 && pi + 1 < prefixes.length) { pi++; attempt(); return; }   // 第 0 幀即缺→換下一個前綴重試（同舊制：僅首幀缺才換前綴）
+        let attempt = () => _probeFramesWin(i => `assets/anim/${animName}/${prefixes[pi]}${i}.png`, MOB_ANIM_MAX_FRAMES, minF || 2, (frames, n, cancelled) => {
+            if (!cancelled && !frames && n === 0 && pi + 1 < prefixes.length) { pi++; attempt(); return; }   // 第 0 幀即缺→換下一個前綴重試（同舊制：僅首幀缺才換前綴）
             target[key] = frames; finish();
-        });
+        }, _mobMemoryCurrent);
         attempt();
     };
     probeSeq(out, 'idle', ['idle_', '']);
@@ -1755,14 +1928,16 @@ function _vec2dir(dx, dy) {   // 螢幕向量(x右·y下)→ dir 0-7（NW 順時
 function _mob8Probe(name, dir) {
     let key = name + '#' + dir;
     if (_mob8Cache[key] !== undefined) return;
+    let _mob8MemoryEpoch = (typeof window.__afkMobileMemoryFrameEpoch === 'function') ? window.__afkMobileMemoryFrameEpoch() : null;
+    let _mob8MemoryCurrent = () => typeof window.__afkMobileMemoryProbeCurrent !== 'function' || window.__afkMobileMemoryProbeCurrent(_mob8MemoryEpoch);
     _mob8Cache[key] = 'probing';
     let folder = 'assets/anim/' + encodeURIComponent(_animDir(name)) + '/d' + dir + '/';   // 🔗 v3.2.17 八方向亦吃共用 alias（老虎→虎男）
     let out = { shadow: {} };
     let acts = ['idle', 'attack', 'hurt', 'death'];
     let pending = acts.length * 2;
-    let finish = () => { if (--pending > 0) return; _mob8Cache[key] = out.idle ? out : null; };
+    let finish = () => { if (--pending > 0) return; if (typeof window.__afkMobileMemoryAcceptFrames === 'function' && !window.__afkMobileMemoryAcceptFrames(_mob8MemoryEpoch)) { if (typeof window.__afkMobileMemoryProbeCurrent !== 'function' || window.__afkMobileMemoryProbeCurrent(_mob8MemoryEpoch)) delete _mob8Cache[key]; return; } _mob8Cache[key] = out.idle ? out : null; };
     let probeSeq = (target, k, pfx, minF) => {   // 🚀 平行探測（滑動窗口·見 _probeFramesWin）
-        _probeFramesWin(i => folder + pfx + i + '.png', MOB_ANIM_MAX_FRAMES, minF || 2, frames => { target[k] = frames; finish(); });
+        _probeFramesWin(i => folder + pfx + i + '.png', MOB_ANIM_MAX_FRAMES, minF || 2, frames => { target[k] = frames; finish(); }, _mob8MemoryCurrent);
     };
     acts.forEach(a => { probeSeq(out, a, a + '_', a === 'hurt' ? 1 : 2); probeSeq(out.shadow, a, a + '_s_', 1); });
 }
@@ -2025,16 +2200,19 @@ function _playerBattleForm() {
 }
 let _morphBattleCache = {};   // 形態 key（morph:<名>｜class:<avatar>:<武器key>）→ { idle/attack/skill/hurt/death:[Image]|null, shadow:{...}, weapon:{...} } | 'probing'
 function _battleSpriteProbe(form) {
+    let _morphMemoryEpoch = (typeof window.__afkMobileMemoryFrameEpoch === 'function') ? window.__afkMobileMemoryFrameEpoch() : null;
+    let _morphMemoryCurrent = () => typeof window.__afkMobileMemoryProbeCurrent !== 'function' || window.__afkMobileMemoryProbeCurrent(_morphMemoryEpoch);
     _morphBattleCache[form.key] = 'probing';
     let out = { shadow: {}, weapon: {} };
     let pending = form.wpn ? 20 : 18;   // 🗡️ v3.0.70 職業形態多探 2 項：武器專屬 skill（<wpn>_skill_·黑暗妖精雙刀/鋼爪·龍騎士雙手劍/鎖鏈劍·戰士各武器）；🚶 v3.7.65 動作多一組 walk（body/shadow/weapon 共 3）
     let finish = () => { if (--pending <= 0) {
+        if (typeof window.__afkMobileMemoryAcceptFrames === 'function' && !window.__afkMobileMemoryAcceptFrames(_morphMemoryEpoch)) { if (typeof window.__afkMobileMemoryProbeCurrent !== 'function' || window.__afkMobileMemoryProbeCurrent(_morphMemoryEpoch)) delete _morphBattleCache[form.key]; return; }
         // 🏹 弓/十字弓無專屬技能動畫(bow_skill_)：施放技能(如妖精三重矢)時原退回「通用 skill_」空手施法姿勢→改借用弓攻擊(bow_attack)姿勢，持弓者施放技能不再變空手（玩家＋傭兵共用此快取·同套用影子層）
         if (form.wpn === 'bow' && !out.wskill && out.attack) { out.wskill = out.attack; if (out.shadow && !out.shadow.wskill && out.shadow.attack) out.shadow.wskill = out.shadow.attack; }
         _morphBattleCache[form.key] = out;
     } };
     let probeSeq = (target, key, pfx, minF) => {   // 🚀 平行探測（滑動窗口·見 _probeFramesWin）
-        _probeFramesWin(i => form.base + pfx + i + '.png', MOB_ANIM_MAX_FRAMES, minF || 2, frames => { target[key] = frames; finish(); });
+        _probeFramesWin(i => form.base + pfx + i + '.png', MOB_ANIM_MAX_FRAMES, minF || 2, frames => { target[key] = frames; finish(); }, _morphMemoryCurrent);
     };
     let pfxOf = (a) => (form.wpn && a !== 'skill' && a !== 'death') ? form.wpn + '_' + a + '_' : a + '_';   // 職業形態：idle/attack/hurt 帶武器前綴·skill/death 共用
     ['idle', 'walk', 'attack', 'skill', 'hurt', 'death'].forEach(a => {   // 🚶 v3.7.65 walk＝行走幀（移動中播放·無此檔→null→退 idle）

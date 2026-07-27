@@ -13,7 +13,7 @@
 import {
   readFileSync, writeFileSync, readdirSync, copyFileSync, existsSync, rmSync
 } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 
 const UP = process.argv[2];
@@ -22,9 +22,14 @@ if (!UP || !existsSync(join(UP, 'index.html'))) {
   process.exit(1);
 }
 
-function run(cmd) {
-  console.log('$ ' + cmd);
-  execSync(cmd, { stdio: 'inherit' });
+function displayArg(arg) {
+  const value = String(arg);
+  return /^[A-Za-z0-9_./:@=-]+$/.test(value) ? value : JSON.stringify(value);
+}
+
+function runNode(script, ...args) {
+  console.log('$ ' + [process.execPath, script, ...args].map(displayArg).join(' '));
+  execFileSync(process.execPath, [script, ...args], { stdio: 'inherit' });
 }
 
 function mirrorFlatDir(name, accept = () => true) {
@@ -39,6 +44,11 @@ function mirrorFlatDir(name, accept = () => true) {
   }
   console.log(`[sync] 鏡像 ${name}/：${upstreamFiles.size} 檔`);
 }
+
+// 先直接預演外部 PP checkout；五層補丁全通過前不可覆蓋目前可用工作樹。
+// 隔離 fixture 會依正式順序驗證首次可套、第二次零變更與五層 --check。
+runNode('scripts/test-full-sync-preflight.mjs', '--source-dir', UP);
+runNode('scripts/check-save-io.mjs', '--source-dir', UP);
 
 // PP 完成品本身已含所有加掛核心鉤子；先鏡像最終 JS/CSS，再以 --check/錨點補丁驗證。
 mirrorFlatDir('js', f => f.endsWith('.js'));
@@ -64,7 +74,7 @@ for (const f of ['sw.js', 'wiki-checkpoint.json']) {
 }
 
 // 存檔 I/O 契約要在本地政策改寫前檢查。
-run('node scripts/check-save-io.mjs');
+runNode('scripts/check-save-io.mjs');
 
 // PP index 已含完整加掛載入順序；只注入 Jesper 政策檔，禁止重複。
 let idx = readFileSync(join(UP, 'index.html'), 'utf8').replace(/\r\n/g, '\n');
@@ -78,17 +88,25 @@ idx = idx.replace(offlineTag[0], block + '\n' + offlineTag[0]);
 writeFileSync('index.html', idx);
 console.log('[sync] index.html = PP 完成品 + Jesper 本地政策層');
 
-run('node scripts/apply-core-patches.mjs');
-run('node scripts/apply-shines-backports.mjs');
-run('node scripts/apply-policy-patches.mjs');
-run('node scripts/apply-offline-safety-patches.mjs');
+// 固定重套順序：核心 → PP 外掛生命週期 → Shines 回移 → Jesper 政策 → 離線安全。
+// 全部套完才跑 --check 與行為測試，避免只驗到半套中間狀態。
+const patchScripts = [
+  'scripts/apply-core-patches.mjs',
+  'scripts/apply-plugin-lifecycle-patches.mjs',
+  'scripts/apply-shines-backports.mjs',
+  'scripts/apply-policy-patches.mjs',
+  'scripts/apply-offline-safety-patches.mjs',
+];
+for (const script of patchScripts) runNode(script);
+for (const script of patchScripts) runNode(script, '--check');
+runNode('scripts/check-save-io.mjs', '--patched');
 
-run('node tools/gen-anim-manifest.js');
-run('node scripts/gen-manifests.mjs');
-run('node scripts/stamp-code-versions.mjs');
+runNode('tools/gen-anim-manifest.js');
+runNode('scripts/gen-manifests.mjs');
+runNode('scripts/stamp-code-versions.mjs');
 
 try {
-  const upSha = execSync('git -C "' + UP + '" rev-parse HEAD', { encoding: 'utf8' }).trim();
+  const upSha = execFileSync('git', ['-C', UP, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   const upVer = (readFileSync(join(UP, 'js', '00-data.js'), 'utf8').match(/GAME_VERSION = '([^']+)'/) || [])[1] || '?';
   const ck = JSON.parse(readFileSync('upstream-checkpoint.json', 'utf8'));
   ck.upstreamRepo = 'https://github.com/pp771007/idle-lineage-class.git';
@@ -100,17 +118,39 @@ try {
   writeFileSync('upstream-checkpoint.json', JSON.stringify(ck, null, 2) + '\n');
   console.log('[sync] upstream-checkpoint.json → pp771007 ' + upSha.slice(0, 10) + '（原版 ' + upVer + '）');
 } catch (e) {
-  console.warn('[sync] ⚠ upstream-checkpoint.json 未更新：' + e.message);
+  throw new Error('[sync] upstream-checkpoint.json 更新失敗，拒絕把來源不明的半套同步標成完成：' + e.message);
 }
 
 // checkpoint 必須排在 stamp-sw-version 前，version.json 的 upstreamAt 才會反映本次同步。
-run('node scripts/stamp-sw-version.mjs');
-run('node scripts/test-mobile-audio-memory.mjs');
+runNode('scripts/stamp-sw-version.mjs');
+
+// 同步完整性閘門：存檔併發、手機圖片／背包／Wiki 生命週期、PWA、離線與回移都要通過。
+const regressionTests = [
+  ['scripts/test-save-compression-queue.mjs'],
+  ['scripts/test-mobile-memory.mjs'],
+  ['scripts/test-mobile-stability-stress.mjs'],
+  ['scripts/test-mobile-stability-stress.mjs', '--webkit'],
+  ['scripts/test-mobile-audio-memory.mjs'],
+  ['scripts/test-powersave-inventory.mjs'],
+  ['scripts/test-wiki-mobile-memory.mjs'],
+  ['scripts/test-pwa-versioned-cache.mjs'],
+  ['scripts/test-offline-bossring.mjs'],
+  ['scripts/test-shines-backports.mjs'],
+];
+const privateSaveDir = '.testdata';
+const privateSaveAvailable = existsSync(privateSaveDir) &&
+  readdirSync(privateSaveDir).some((name) => /\.json$/i.test(name) && !name.startsWith('_'));
+if (privateSaveAvailable) {
+  regressionTests.splice(regressionTests.length - 1, 0, ['scripts/test-offline-bossring-integration.mjs']);
+} else {
+  console.log('[sync] .testdata 私人存檔不存在 → 離線真實存檔 integration 不在 CI 假裝通過；保留單元測試與合成角色雙引擎壓測。');
+}
+for (const [script, ...args] of regressionTests) runNode(script, ...args);
 
 if (process.env.AFK_SKIP_SMOKE === '1') {
   console.log('[sync] AFK_SKIP_SMOKE=1 → 跳過 smoke（呼叫端自行執行）');
 } else {
-  run('node scripts/smoke-hooks.mjs');
+  runNode('scripts/smoke-hooks.mjs');
 }
 
 console.log('\n✅ PP-first 同步完成：PP 最新版 + Jesper 固定政策。');

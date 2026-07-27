@@ -189,9 +189,18 @@ function patchBossring() {
   if (!CHECK) writeFileSync(BOSSRING_FILE, src);
 
   let toggles = readFileSync(TOGGLES_FILE, 'utf8').replace(/\r\n/g, '\n');
-  const oldDesc = "desc: '持傳送控制戒指時，場上無 BOSS 自動用瞬移卷軸召來（線上前景；排名/裂痕/軍王/攻城不套用）'";
+  const oldDescs = [
+    "desc: '持傳送控制戒指時，場上無 BOSS 自動用瞬移卷軸召來（線上前景；排名/裂痕/軍王/攻城不套用）'",
+    "desc: '帶著傳送控制戒指時，場上沒 BOSS 就自動用瞬移卷軸找一隻'",
+  ];
   const newDesc = "desc: '持傳送控制戒指時，場上無 BOSS 自動用瞬移卷軸召來（線上/離線；排名/裂痕/軍王/攻城不套用）'";
-  if (toggles.includes(oldDesc)) toggles = replaceOne(toggles, oldDesc, newDesc, TOGGLES_FILE, '外掛說明');
+  if (!toggles.includes(newDesc)) {
+    const matches = oldDescs.filter(desc => toggles.includes(desc));
+    if (matches.length !== 1) {
+      throw new Error(`[${TOGGLES_FILE}] 離線召王外掛說明錨點數量錯誤：${matches.length}`);
+    }
+    toggles = replaceOne(toggles, matches[0], newDesc, TOGGLES_FILE, '外掛說明');
+  }
   if (!toggles.includes(newDesc)) throw new Error(`[${TOGGLES_FILE}] 找不到離線召王外掛說明。`);
   if (!CHECK) writeFileSync(TOGGLES_FILE, toggles);
 }
@@ -199,10 +208,28 @@ function patchBossring() {
 function patchOffline() {
   let src = readFileSync(OFFLINE_FILE, 'utf8').replace(/\r\n/g, '\n');
   if (!src.includes(MARKER)) {
+    const toggleLine =
+      "  if (window.AFK_TOGGLES && !AFK_TOGGLES.enabled('offline')) return;   // 🎚️ 外掛開關:關掉→不掛任何鉤子,遊戲回原版(無離線結算)";
+    const chaseBlock =
+      "  // 子選項:掛機期間持續遭到追殺(預設關)。核心用牆鐘比對追殺到期時間,補跑時牆鐘幾乎凍結 → 不處理就等於離線自動豁免追殺。\n" +
+      "  if (window.AFK_TOGGLES) AFK_TOGGLES.register({ id: 'offlinechase', name: '掛機期間持續遭到追殺', group: '遊戲玩法', parent: 'offline', def: false });\n" +
+      "  function chaseOn() { return !!(window.AFK_TOGGLES && AFK_TOGGLES.enabled('offlinechase')); }";
+    const configAnchor =
+      "  // ----- 可調參數 ---------------------------------------------------------\n" +
+      "  var CAP_HOURS";
+    const introVariants = [
+      { from: toggleLine + '\n\n' + configAnchor, keep: toggleLine },
+      { from: toggleLine + '\n' + chaseBlock + '\n\n' + configAnchor, keep: toggleLine + '\n' + chaseBlock },
+    ];
+    const introMatches = introVariants.filter(variant => src.includes(variant.from));
+    if (introMatches.length !== 1) {
+      throw new Error(`[${OFFLINE_FILE}] 「獨占握手與遷移版本」錨點數量錯誤：${introMatches.length}`);
+    }
+    const intro = introMatches[0];
     src = replaceOne(
       src,
-      "  if (window.AFK_TOGGLES && !AFK_TOGGLES.enabled('offline')) return;   // 🎚️ 外掛開關:關掉→不掛任何鉤子,遊戲回原版(無離線結算)\n\n  // ----- 可調參數 ---------------------------------------------------------\n  var CAP_HOURS",
-      "  if (window.AFK_TOGGLES && !AFK_TOGGLES.enabled('offline')) return;   // 🎚️ 外掛開關:關掉→不掛任何鉤子,遊戲回原版(無離線結算)\n" +
+      intro.from,
+      intro.keep + "\n" +
       "  " + MARKER + "\n" +
       "  // 嚴格互斥：afk-offline-owner 必須先確認 PP／原版沒有另一套離線鉤子，舊引擎才可啟動。\n" +
       "  // 快取混搭或未來 PP 重啟另一套結算時 fail closed，寧可本次不發獎也不重複結算。\n" +

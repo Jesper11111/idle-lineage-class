@@ -5,8 +5,8 @@
  *   - 戰鬥 tick 的純數量變動只更新目前分頁的角標。
  *   - 新增、刪除、排序、強化、鎖定、裝備與技能變動最多每秒完整重建一次。
  *   - 自動整理仍立即排序資料，但不再用 force=true 重建手機看不到的五個分頁。
- *   - 隱藏分頁與手機非背包欄不重建，切回時立即同步。
- *   - tick 外操作與 force=true 維持核心的立即重建語意。
+ *   - 手機離開背包欄後卸下五個分頁 DOM／圖片；期間任何重建要求都只記為 dirty，切回才同步。
+ *   - 桌面與手機正在看背包時，tick 外操作／force=true 維持核心的立即重建語意。
  *
  * 本檔雖在 PP afk-offline 前載入，但刻意等 DOMContentLoaded 才安裝，確保它包在
  * afk-itemsearch 等後載入 wrapper 的最外層；純數量更新因此不會觸發隱藏分頁搜尋掃描。
@@ -34,6 +34,9 @@
         var _tabFlushing = false;
         var _tabRenderEpoch = 0;
         var _autoSortDepth = 0;
+        var _mobileTabsDormant = false;
+        var _lastMobileRight = null;
+        var _mobileViewObserver = null;
 
         function noteForwardedTabRender() {
             _tabRenderEpoch++;
@@ -43,13 +46,42 @@
         function activeManagedTab() {
             // 手機只有 mview-right 真正顯示背包欄；其他兩欄即使 tab 自己沒有 .hidden 也不可重繪。
             if (document.body && document.body.classList.contains('m-mobile') &&
-                !document.body.classList.contains('mview-right')) return '';
+                !mobileBackpackVisible()) return '';
             var ids = ['items', 'weapons', 'armors', 'equip', 'skill'];
             for (var i = 0; i < ids.length; i++) {
                 var el = document.getElementById('tab-' + ids[i]);
                 if (el && !el.classList.contains('hidden')) return ids[i];
             }
             return '';
+        }
+
+        function mobileBackpackVisible() {
+            var game = document.getElementById('game-screen');
+            return !!(document.body && document.body.classList.contains('m-mobile') &&
+                document.body.classList.contains('mview-right') &&
+                game && !game.classList.contains('hidden'));
+        }
+
+        function releaseMobileTabs() {
+            if (!document.body || !document.body.classList.contains('m-mobile') ||
+                mobileBackpackVisible()) return false;
+            clearTabTimers();
+            var ids = ['items', 'weapons', 'armors', 'equip', 'skill'];
+            for (var i = 0; i < ids.length; i++) {
+                var root = document.getElementById('tab-' + ids[i]);
+                if (!root || !root.childNodes.length) continue;
+                var images = root.querySelectorAll('img');
+                for (var j = 0; j < images.length; j++) {
+                    try {
+                        images[j].removeAttribute('src');
+                        images[j].removeAttribute('srcset');
+                    } catch (e) {}
+                }
+                root.replaceChildren();
+            }
+            _tabSnapshot = null;
+            _mobileTabsDormant = true;
+            return true;
         }
 
         function safeItemSig(item) {
@@ -71,7 +103,7 @@
             return [
                 (player.skills || []).join(','), (player.grantedSkills || []).join(','),
                 player.cls || '', player.lv || 0, player.elfEle || '', player.mastery || '',
-                statSum, d.weightPct || 0, d.loadTier || 0,
+                statSum,
                 Math.round(d.magicDmg || 0), Math.round(d.mr || 0)
             ].join('#');
         }
@@ -165,9 +197,28 @@
             return Object.prototype.hasOwnProperty.call(_tabSnapshot, tab) ? _tabSnapshot[tab] : null;
         }
 
+        function patchEquipWeightHeader(root) {
+            if (!root || typeof player === 'undefined' || !player) return;
+            var header = root.querySelector(':scope > .classic-list-toolbar');
+            if (!header) return;
+            var d = player.d || {};
+            var tier = Number(d.loadTier) || 0;
+            var span = header.querySelector('span');
+            if (span) {
+                try { span.className = typeof getLoadColor === 'function' ? getLoadColor(tier) : span.className; } catch (e) {}
+                span.textContent = '負重 ' + (Number(d.weightPct) || 0) + '%';
+            }
+            header.classList.toggle('cursor-help', tier >= 1);
+            if (tier === 1) header.title = '負重50%↑：HP/MP不自然恢復';
+            else if (tier === 2) header.title = '負重82%↑：HP/MP不自然恢復、停自動施法、攻速變慢';
+            else if (tier >= 3) header.title = '負重100%↑：HP/MP不自然恢復、停自動施法、攻速大幅變慢';
+            else header.removeAttribute('title');
+        }
+
         function patchVisibleCounts(tab) {
             var root = document.getElementById('tab-' + tab);
             if (!root) return;
+            if (tab === 'equip') patchEquipWeightHeader(root);
             var source = TAB_INVENTORY[tab] ? 'inv' : (tab === 'equip' ? 'eq' : '');
             if (!source) return;
             var items = countMapFor(source);
@@ -213,6 +264,7 @@
             try {
                 // 呼叫目前最外層 wrapper；本 wrapper 看到 _tabFlushing 後會透明放行一次。
                 window.renderTabs(true);
+                _mobileTabsDormant = false;
             } finally {
                 _tabFlushing = false;
             }
@@ -271,6 +323,13 @@
                 captureTabSnapshot();
                 return flushResult;
             }
+            // 手機沒有顯示背包欄時，資料已由核心更新完成；DOM 沒有人看，任何 force／玩家操作
+            // 都延後到真正切回背包再一次重建，避免每次換裝／換角重建五個隱藏分頁。
+            if (document.body && document.body.classList.contains('m-mobile') &&
+                !mobileBackpackVisible()) {
+                releaseMobileTabs();
+                return;
+            }
             var inCombatTick = false;
             try { inCombatTick = typeof state !== 'undefined' && !!state.inTick; } catch (e) {}
             // 核心 autoSortInventory 每 10 秒固定 renderTabs(true)，會繞過本外掛的戰鬥／隱藏欄保護。
@@ -320,21 +379,44 @@
         // 手機底部「背包」只切 mview-right，不會呼叫 switchTab。
         document.addEventListener('click', function (ev) {
             var btn = ev.target && ev.target.closest
-                ? ev.target.closest('#m-nav .m-nav-btn[data-view="right"]') : null;
-            if (btn) setTimeout(syncVisibleTabNow, 0);
+                ? ev.target.closest('#m-nav .m-nav-btn[data-view]') : null;
+            if (!btn) return;
+            setTimeout(function () {
+                if (btn.getAttribute('data-view') === 'right') syncVisibleTabNow();
+                else releaseMobileTabs();
+            }, 0);
         });
 
+        function syncMobileDormancy() {
+            var mobile = !!(document.body && document.body.classList.contains('m-mobile'));
+            var stateName = mobile ? (mobileBackpackVisible() ? 'right' : 'hidden') : 'desktop';
+            if (_lastMobileRight === stateName) return;
+            _lastMobileRight = stateName;
+            if (stateName === 'right') syncVisibleTabNow();
+            else if (stateName === 'hidden') releaseMobileTabs();
+            else if (_mobileTabsDormant) flushFullTabsNow();   // 旋轉／放大跨回桌面版時，不能留下手機休眠後的空背包
+        }
+        if (typeof MutationObserver === 'function' && document.body) {
+            _mobileViewObserver = new MutationObserver(syncMobileDormancy);
+            _mobileViewObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+            var gameScreen = document.getElementById('game-screen');
+            if (gameScreen) _mobileViewObserver.observe(gameScreen, { attributes: true, attributeFilter: ['class'] });
+        }
+
         window.__afkPsInventory = {
-            version: '1.2.0-local',
+            version: '1.3.0-local',
             countPatchMs: TAB_COUNT_PATCH_MS,
             fullRebuildMs: TAB_FULL_REBUILD_MS,
             autoSortDeferred: true,
+            mobileDormancy: true,
+            releaseMobileTabs: releaseMobileTabs,
             renderEpoch: _tabRenderEpoch
         };
         // 測試頁或熱載入情境可能已完成首次 DOM 建立；有有效角色時立即建立基準快照。
         captureTabSnapshot();
+        setTimeout(syncMobileDormancy, 0);   // 等後載 afk-mobile 把 m-mobile／mview-* class 補齊
         try {
-            console.log('[AFK-powersave-inventory] hooks OK — 戰鬥背包採數量增量更新，結構變動延遲合併。');
+            console.log('[AFK-powersave-inventory] hooks OK — 戰鬥背包採增量更新，手機離開背包後卸載隱藏 DOM。');
         } catch (e) {}
     }
 

@@ -107,19 +107,91 @@ function _lsRemove(k) { try { if (_FS) { _FS.remove(k); return; } localStorage.r
 // Web saves are written immediately, then compressed in a Worker so LZString cannot block
 // rendering or combat. A per-key revision plus raw-value guard prevents stale Worker output
 // from replacing a newer save, including writes made by another open tab/window.
-var _lzWorker = null, _lzWorkerSeq = 0, _lzWorkerRev = Object.create(null), _lzWorkerRaw = Object.create(null);
+var _lzWorker = null, _lzWorkerGen = 0, _lzWorkerSeq = 0, _lzWorkerRev = Object.create(null), _lzWorkerRaw = Object.create(null);
+var _lzWorkerPending = Object.create(null), _lzWorkerActive = null;
+var _lzWorkerWatchdog = null, _LZ_WORKER_TIMEOUT_MS = 15000;
+function _clearLzWorkerWatchdog() {
+  if (_lzWorkerWatchdog != null) {
+    clearTimeout(_lzWorkerWatchdog);
+    _lzWorkerWatchdog = null;
+  }
+}
+// 同一 key 的直接覆寫／刪除與同步壓縮都可呼叫：撤掉尚未送出的舊工作，並立即放掉主線 raw 參照。
+// 已 postMessage 的單一 active clone 無法取消，但 revision guard 會讓回覆失效；最多只剩這一份。
+function _cancelLzCompressionKey(key) {
+  var pending = _lzWorkerPending[key];
+  if (pending) {
+    delete _lzWorkerRaw[pending.token];
+    delete _lzWorkerPending[key];
+  }
+  if (_lzWorkerActive && _lzWorkerActive.key === key) delete _lzWorkerRaw[_lzWorkerActive.token];
+}
 // Direct raw replacements (backup restore / migration) must invalidate a queued compression
 // result for the same key, otherwise an older Worker reply can overwrite the restored value.
 function _lzSetStoredRaw(key, value) {
-  if (!_FS) _lzWorkerRev[key] = (_lzWorkerRev[key] || 0) + 1;
+  if (!_FS) {
+    _lzWorkerRev[key] = (_lzWorkerRev[key] || 0) + 1;
+    _cancelLzCompressionKey(key);
+  }
   return _lsSet(key, value);
 }
 function _lzRemoveStored(key) {
-  if (!_FS) _lzWorkerRev[key] = (_lzWorkerRev[key] || 0) + 1;
+  if (!_FS) {
+    _lzWorkerRev[key] = (_lzWorkerRev[key] || 0) + 1;
+    _cancelLzCompressionKey(key);
+  }
   _lsRemove(key);
+}
+function _resetLzCompressionQueue() {
+  _clearLzWorkerWatchdog();
+  _lzWorkerActive = null;
+  _lzWorkerPending = Object.create(null);
+  _lzWorkerRaw = Object.create(null);
+}
+function _resumeLzCompression() {
+  if (_FS || !Object.keys(_lzWorkerPending).length) return;
+  _getLzWorker();
+  _drainLzCompression();
+}
+function _drainLzCompression() {
+  if (_FS || _lzWorkerActive || !_lzWorker) return;
+  var keys = Object.keys(_lzWorkerPending);
+  if (!keys.length) return;
+  var job = _lzWorkerPending[keys[0]];
+  delete _lzWorkerPending[job.key];
+  var worker = _lzWorker;
+  job.id = ++_lzWorkerSeq;
+  job.worker = worker;
+  job.gen = _lzWorkerGen;
+  _lzWorkerActive = job;
+  try {
+    worker.postMessage({ id: job.id, key: job.key, rev: job.rev, value: job.value });
+    job.value = null;   // structured clone 已完成；active 不再重複持有整份主線字串
+    var activeToken = job.token;
+    var activeId = job.id;
+    _clearLzWorkerWatchdog();
+    _lzWorkerWatchdog = setTimeout(function() {
+      if (_lzWorker !== worker || _lzWorkerGen !== job.gen || !_lzWorkerActive ||
+          _lzWorkerActive.token !== activeToken || _lzWorkerActive.id !== activeId) return;
+      delete _lzWorkerRaw[activeToken];
+      _lzWorkerActive = null;
+      try { worker.terminate(); } catch (e) {}
+      _lzWorker = null;
+      _lzWorkerWatchdog = null;
+      _resumeLzCompression();
+    }, _LZ_WORKER_TIMEOUT_MS);
+  } catch (e) {
+    _clearLzWorkerWatchdog();
+    delete _lzWorkerRaw[job.token];
+    _lzWorkerActive = null;
+    try { worker.terminate(); } catch (e2) {}
+    if (_lzWorker === worker) _lzWorker = null;
+    setTimeout(_resumeLzCompression, 0);
+  }
 }
 function _getLzWorker() {
   if (_lzWorker || typeof Worker === 'undefined' || typeof Blob === 'undefined' || typeof URL === 'undefined') return _lzWorker;
+  var workerUrl = null;
   try {
     var source = [
       'var f=String.fromCharCode,LZString={};',
@@ -127,26 +199,58 @@ function _getLzWorker() {
       'LZString.compressToUTF16=' + LZString.compressToUTF16.toString() + ';',
       'self.onmessage=function(e){var d=e.data;try{self.postMessage({id:d.id,key:d.key,rev:d.rev,packed:"LZ1:"+LZString.compressToUTF16(d.value)});}catch(err){self.postMessage({id:d.id,key:d.key,rev:d.rev,error:true});}};'
     ].join('\n');
-    _lzWorker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
-    _lzWorker.onmessage = function(e) {
+    workerUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+    var worker = new Worker(workerUrl);
+    var workerGen = ++_lzWorkerGen;
+    _lzWorker = worker;
+    worker.onmessage = function(e) {
       var d = e.data || {};
-      var token = d.key + '@' + d.rev, raw = _lzWorkerRaw[token];
-      if (d.error || _lzWorkerRev[d.key] !== d.rev) { delete _lzWorkerRaw[token]; return; }
+      if (_lzWorker !== worker || _lzWorkerGen !== workerGen) return;
+      var active = _lzWorkerActive;
+      if (!active || active.id !== d.id || active.key !== d.key || active.rev !== d.rev) return;
+      _clearLzWorkerWatchdog();
+      _lzWorkerActive = null;
+      var token = active.token, raw = _lzWorkerRaw[token];
       delete _lzWorkerRaw[token];
-      if (raw == null || _lsGet(d.key) !== raw) return;
-      _lsSet(d.key, d.packed);
+      if (!d.error && active && active.key === d.key && active.rev === d.rev &&
+          _lzWorkerRev[d.key] === d.rev && raw != null && _lsGet(d.key) === raw) {
+        _lsSet(d.key, d.packed);
+      }
+      _drainLzCompression();
     };
-    _lzWorker.onerror = function() { try { _lzWorker.terminate(); } catch (e) {} _lzWorker = null; _lzWorkerRaw = Object.create(null); };
-  } catch (e) { _lzWorker = null; }
+    worker.onerror = function() {
+      if (_lzWorker !== worker || _lzWorkerGen !== workerGen) return;
+      _clearLzWorkerWatchdog();
+      var active = _lzWorkerActive;
+      if (active) delete _lzWorkerRaw[active.token];
+      _lzWorkerActive = null;
+      try { worker.terminate(); } catch (e) {}
+      _lzWorker = null;
+      _resumeLzCompression();
+    };
+  } catch (e) {
+    _lzWorker = null;
+    _resetLzCompressionQueue();
+  } finally {
+    if (workerUrl) {
+      try { URL.revokeObjectURL(workerUrl); } catch (e) {}
+    }
+  }
   return _lzWorker;
 }
 function _queueLzCompression(key, value, rev) {
   if (_FS) return;
   var worker = _getLzWorker();
   if (!worker) return;
+  var old = _lzWorkerPending[key];
+  if (old) delete _lzWorkerRaw[old.token];
+  // 新 revision 已使同 key 的 active 工作失效；主線 raw 可先放掉，Worker 內最多只剩一份 clone。
+  if (_lzWorkerActive && _lzWorkerActive.key === key) delete _lzWorkerRaw[_lzWorkerActive.token];
   var token = key + '@' + rev;
+  var job = { key: key, value: value, rev: rev, token: token };
+  _lzWorkerPending[key] = job;
   _lzWorkerRaw[token] = value;
-  try { worker.postMessage({ id: ++_lzWorkerSeq, key: key, rev: rev, value: value }); } catch (e) { delete _lzWorkerRaw[token]; }
+  _drainLzCompression();
 }
 // 一次性遷移：打包版首次啟用檔案存檔時，把舊版存在 Chromium localStorage(userdata/Local Storage)的所有資料複製進檔案存檔，避免玩家存檔「消失」。
 (function _migrateToFileStore() {
@@ -169,6 +273,7 @@ function _lzSet(key, jsonStr) {
   // compressed fallback below so an already-large save can still be written safely.
   var rev = (_lzWorkerRev[key] || 0) + 1;
   _lzWorkerRev[key] = rev; // Invalidate every older result before either write path starts.
+  _cancelLzCompressionKey(key); // raw 寫失敗轉同步 fallback 時，也不能留下同 key 舊工作白做完整壓縮。
   if (_lsSet(key, jsonStr)) { _queueLzCompression(key, jsonStr, rev); return true; }
   var packed = null;
   try { packed = 'LZ1:' + LZString.compressToUTF16(jsonStr); } catch (e) { packed = null; }

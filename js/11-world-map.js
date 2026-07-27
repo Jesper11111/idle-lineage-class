@@ -1180,6 +1180,7 @@ function changeMap(force) {
     }
     if (_changeTarget !== mapState.current && typeof npcClanOnLeaveBattleArea === 'function') npcClanOnLeaveBattleArea();
     if (typeof giltasKeepOnLeave === 'function' && document.getElementById('map-select').value !== mapState.current) giltasKeepOnLeave();   // 🌑 v3.4.16 離開受詛咒聖地（回村/戰敗復活/切圖統一經此·helper 自帶地圖 gate）→ 吉爾塔斯 HP 保留判定＋提示
+    if (_changeTarget !== mapState.current && typeof window.__afkMobileMemoryLifecycle === 'function') window.__afkMobileMemoryLifecycle('map-change');
     mapState.current = document.getElementById('map-select').value;
     if (!mapState.current.startsWith('town_')) player.lastBattleMap = mapState.current;   // 🔧 記住最後所在的戰鬥地圖，供村莊「出發」按鈕一鍵返回
     { let _c = mapRegionOf(mapState.current); if(_c) { if(!player.lastMapByCat) player.lastMapByCat = {}; player.lastMapByCat[_c] = mapState.current; } }   // 記住各「地區」分類最後到過的地圖（與下拉同鍵）
@@ -1517,6 +1518,7 @@ function sanctuaryEnter(mapKey, costId) {
     closeNpcInteraction();
     try { if (typeof closeWarehouseWindow === 'function') closeWarehouseWindow(); } catch (e) {}   // 🏦 v3.5.94 本函式複製 changeMap 的戰鬥進場流程但不經過 changeMap；closeNpcInteraction 刻意不負責關倉庫(見其開頭註解)，故此處自行補上，否則浮動倉庫視窗會殘留到聖地並遮住 battle-view
     saveSiegeBossHp();
+    if (typeof window.__afkMobileMemoryLifecycle === 'function') window.__afkMobileMemoryLifecycle('map-change');   // 🔌 隱藏聖地直接進圖也要形成圖片資源邊界
     mapState.current = mapKey;
     player.lastBattleMap = mapKey;
     mapState.mobs = [null, null, null, null, null];
@@ -1902,6 +1904,8 @@ function _npcSpriteKey(npc, usedSet) {
 
 let _npcFrameCache = {};
 function _npcFrames(key) {
+    let _mobileFrames = (typeof window.__afkMobileTownNpcFrames === 'function') ? window.__afkMobileTownNpcFrames(key, false) : null;
+    if (_mobileFrames) return _mobileFrames;   // 🔌 手機雙省電：DOM 已載 idle_0，不建立完整站立序列
     if (_npcFrameCache[key]) return _npcFrameCache[key];
     let cat = NPC_SPR[key], arr = [];
     if (cat) for (let i = 0; i < cat.f; i++) { let im = new Image(); im.src = 'assets/npc/' + cat.g + '/idle_' + i + '.png'; arr.push(im); }
@@ -1910,6 +1914,8 @@ function _npcFrames(key) {
 }
 let _npcWeaponFrameCache = {};
 function _npcWeaponFrames(key) {   // 🔥 火焰/武器疊層幀(idle_w_N)：僅 NPC_SPR 有 w 的（如宙斯之熔岩高崙）·與本體同幀數同步
+    let _mobileFrames = (typeof window.__afkMobileTownNpcFrames === 'function') ? window.__afkMobileTownNpcFrames(key, true) : null;
+    if (_mobileFrames) return _mobileFrames;   // 🔌 手機雙省電：DOM 已載 idle_w_0，不建立完整武器序列
     if (_npcWeaponFrameCache[key]) return _npcWeaponFrameCache[key];
     let cat = NPC_SPR[key], arr = [];
     if (cat && cat.w) for (let i = 0; i < cat.w; i++) { let im = new Image(); im.src = 'assets/npc/' + cat.g + '/idle_w_' + i + '.png'; arr.push(im); }
@@ -2306,6 +2312,7 @@ function _scheduleTownLabelResolve() {
 }
 
 function _townNpcAnimTick() {
+    if (typeof window.__afkMobileMemoryLite === 'function' && window.__afkMobileMemoryLite()) return;   // 🔌 手機雙省電：城鎮也停止 8fps
     let tv = document.getElementById('town-view');
     if (!tv || tv.classList.contains('hidden')) return;
     let map = document.getElementById('town-npc-map');

@@ -455,11 +455,21 @@ setInterval(function(){
 //    自動存檔是每 5 分鐘一次 → 關分頁最多會吐掉 5 分鐘進度。
 //    __fb5CloseFlush＝繞過下方 saveGame 的「補跑期間延後存檔」閘（背景節流喚醒間 _tickDebt 常 ≥100ms，
 //    不繞過＝最終進度不落地）。旗標名沿用 v3.7.31，由此處設定與清除。
+let _lastCloseFlushAt = -Infinity;
+function _closeFlushClock(){
+    return (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
+        ? performance.now() : Date.now();
+}
 function _flushSaveNow(){
     if(typeof player === 'undefined' || !player || !player.cls || typeof saveGame !== 'function') return;
+    let _flushNow = _closeFlushClock();
+    if(_flushNow - _lastCloseFlushAt < 250) return;   // visibilitychange/pagehide/beforeunload 同一輪只寫一次
+    let _flushSaved = false;
     if(typeof window !== 'undefined') window.__fb5CloseFlush = true;
-    try { saveGame(); } catch(e) {}
+    try { _flushSaved = saveGame() === true; } catch(e) {}
     finally { if(typeof window !== 'undefined') window.__fb5CloseFlush = false; }
+    if(_flushSaved) _lastCloseFlushAt = _flushNow;   // 失敗不鎖住後續 pagehide／beforeunload 的救援重試
+    return _flushSaved;
 }
 if(typeof document !== 'undefined' && document.addEventListener)
     document.addEventListener('visibilitychange', function(){ if(document.hidden) _flushSaveNow(); });
@@ -841,6 +851,7 @@ function returnToCharacterSelect(){
     _loadPage = currentSlot > 4 ? 1 : 0;
     _loadSelectedSlot = currentSlot;
     renderLoadSelect();
+    if (typeof window.__afkMobileMemoryLifecycle === 'function') window.__afkMobileMemoryLifecycle('character-select');
     try { if(typeof _bgmTick === 'function') { _bgmScene = null; _bgmTick(); } } catch(e) {}
     return true;
 }
@@ -970,7 +981,10 @@ function loadDeleteSelected(){
 (function animateLoadSelectPreview(){
     function tick(now){
         const panel = document.getElementById('load-select-panel');
-        if(panel && !panel.classList.contains('hidden') && !(typeof window.__afkMobileMemoryLite === 'function' && window.__afkMobileMemoryLite()) && now - _loadAnimState.lastAt >= _loadAnimState.stepMs){   // 🔌 手機雙省電：角色選擇停在首幀，避免逐職業解碼整套 PNG
+        const screen = document.getElementById('creation-screen');   // 🔌 父畫面隱藏時，子 panel 即使沒 hidden 也不可在遊戲背後逐幀解碼
+        const game = document.getElementById('game-screen');
+        if(panel && screen && !screen.classList.contains('hidden') && (!game || game.classList.contains('hidden')) &&
+           !panel.classList.contains('hidden') && !(typeof window.__afkMobileMemoryLite === 'function' && window.__afkMobileMemoryLite()) && now - _loadAnimState.lastAt >= _loadAnimState.stepMs){   // 🔌 手機雙省電：角色選擇停在首幀，避免逐職業解碼整套 PNG
             _loadAnimState.noneFrame = _loadAnimState.noneFrame >= LOAD_NONE_ANIM_FRAMES[1] ? LOAD_NONE_ANIM_FRAMES[0] : _loadAnimState.noneFrame + 1;
             document.querySelectorAll('.load-slot-card.empty img').forEach(img => { img.src = loadFrameSrc('none', _loadAnimState.noneFrame); });
             const selected = document.querySelector('.load-slot-card.selected.filled');
@@ -1231,6 +1245,7 @@ function startGame() {
     document.getElementById('creation-screen').classList.add('hidden');
     document.getElementById('game-screen').classList.remove('hidden');
     document.body.classList.add('game-bg-dim');   // 正式遊戲後：背景淡化
+    if (typeof window.__afkMobileMemoryLifecycle === 'function') window.__afkMobileMemoryLifecycle('role-start');
     if (typeof mercLedgerPurgeSlot === 'function') { try { mercLedgerPurgeSlot(currentSlot); } catch (e) {} }   // 🩹 v3.0.108 新角色覆蓋此存檔位→清除前一個角色的待領傭兵經驗（新角色不繼承）
     if (typeof petReleaseSlotAssignments === 'function') { try { petReleaseSlotAssignments(currentSlot); } catch (e) { console.warn('pet slot ownership cleanup', e); } }   // 🐾 覆蓋角色時，舊角色出戰寵物回保管，避免卡在不存在的角色名下
     
@@ -1357,6 +1372,7 @@ function startGame() {
     state.ticks = 0;   // 🔧 新角色從 0 tick 開始（避免承接前一場的計時）
     applySherineTheme();   // 🔮 新角色預設關閉席琳的世界，重置視覺主題
     startGameTimers();
+    if (typeof window.__afkMobileMemoryLifecycle === 'function') window.__afkMobileMemoryLifecycle('role-ready');
     logSys(`===== 歡迎來到天堂放置冒險 =====`);
     if (typeof applyGlobalAutoSellSettings === 'function') applyGlobalAutoSellSettings();   // 🔧 v2.6.91 功能5：新角色套用全域自動販賣設定（若已啟用共用）
     saveGame();   // 🔧 創角完成立即存檔：先前要等 5 分鐘自動存檔，期間關閉頁面角色會直接消失
@@ -1615,6 +1631,7 @@ function loadGame() {
         //    → 該欄位在載入畫面顯示為空、empty=true → 「匯入進度」可見而「刪除角色」被 hidden。
         //    舊文案多寫的「仍可用『刪除角色』清空」正好點名此情境唯一看不見的那顆按鈕，故移除。
         let d; try { d = JSON.parse(s); } catch(e){ alert('此存檔位的資料已毀損，無法載入。\n此欄位在載入畫面會顯示為空，請直接按「匯入進度」還原先前匯出的 .json 備份檔。'); return; }
+        if (typeof window.__afkMobileMemoryLifecycle === 'function') window.__afkMobileMemoryLifecycle('role-load');
         player = d.p; mapState = d.ms;
         delete player.offlineHunt;   // 🗑️ v3.7.94 離線掛機已移除：舊存檔的逐地圖速率快照沒有讀取者，載入即丟掉（否則每次存檔都白帶一份）
         normalizeFacingRefsForSave();   // 舊存檔若含 v3.2.12 面向物件副本，載入時立即轉為 UID／隊員鍵並移除物件參照
@@ -1629,6 +1646,7 @@ function loadGame() {
         { let b1 = document.getElementById('btn-revive'); if(b1) b1.classList.add('hidden');
           let b2 = document.getElementById('btn-revive-inplace'); if(b2) b2.classList.add('hidden'); }
         document.getElementById('creation-screen').classList.add('hidden');
+        { let _loadPanel = document.getElementById('load-select-panel'); if (_loadPanel) _loadPanel.classList.add('hidden'); }   // 🔌 進遊戲後子 panel 也明確隱藏，禁止背景逐幀與圖片回流
         document.getElementById('game-screen').classList.remove('hidden');
         document.body.classList.add('game-bg-dim');   // 正式遊戲後：背景淡化
         
@@ -1903,6 +1921,7 @@ function loadGame() {
         // 自然恢復（每 16 秒）已由主迴圈 tick() 內的 state.ticks % 160 統一驅動，不再額外 setInterval。
         // 計時器統一由 startGameTimers() 註冊（內含去重），含每 5 分鐘自動存檔。
         startGameTimers();
+        if (typeof window.__afkMobileMemoryLifecycle === 'function') window.__afkMobileMemoryLifecycle('role-ready');
         logSys(`===== 歡迎回來 =====`);
         if (_masteryRepair && _masteryRepair.reset) {
             if (_masteryRepair.reason === 'class-mismatch') {

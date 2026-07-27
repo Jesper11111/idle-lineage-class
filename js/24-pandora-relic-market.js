@@ -990,6 +990,8 @@
         let _sid = String((w && w.id) || ''), _h = 0;
         for (let i = 0; i < _sid.length; i++) _h = (_h * 31 + _sid.charCodeAt(i)) >>> 0;
         let folder = String((w && w.avatar) || '男騎士') + _dirs[_h % 3];
+        let _mobileStill = (typeof window.__afkMobileWanderingBuyerStill === 'function') ? window.__afkMobileWanderingBuyerStill(w, folder) : null;
+        if (_mobileStill) return _mobileStill;   // 🔌 手機雙省電：只交首幀 URL，不建立 body+shadow 完整序列
         let key = folder + '|idle';
         if (!_classFrameCache[key]) {
             let base = 'assets/classanim/' + folder;
@@ -1943,6 +1945,24 @@
     window.renderWanderBroadcastPins = renderWanderBroadcastPins;
     window.getWanderingBuyersForTown = getWanderingBuyersForTown;
     window.getWanderingBuyerForTown = getWanderingBuyerForTown;
+    window.__afkClearWanderingBuyerFrames = function () {
+        Object.keys(_classFrameCache).forEach(function (key) {
+            let entry = _classFrameCache[key];
+            [entry && entry.frames, entry && entry.shadows].forEach(function (list) {
+                (Array.isArray(list) ? list : []).forEach(function (img) {
+                    if (!img) return;
+                    img.onload = img.onerror = null;
+                    try {
+                        img.removeAttribute('src');
+                        img.removeAttribute('srcset');
+                    } catch (e) {
+                        try { img.src = ''; } catch (_) {}
+                    }
+                });
+            });
+        });
+        _classFrameCache = Object.create(null);   // 主動卸載 body+shadow Image，再丟棄快取
+    };
     window.wanderingBuyerSpriteData = wanderingBuyerSpriteData;
     window.openWanderingBuyerDialog = openWanderingBuyerDialog;
     window.openWanderingShoutMenu = openWanderingShoutMenu;

@@ -5,8 +5,9 @@
  *   1. 戰鬥中的純數量變動只更新角標，不完整重建。
  *   2. 新增/刪除等結構變動最多延遲 1 秒後完整重建。
  *   3. 隱藏欄位不重建，切回背包時立即同步。
- *   4. tick 外的玩家操作維持立即重建。
+ *   4. 桌機 tick 外操作維持立即重建；手機未開背包時 force／玩家操作也延後。
  *   5. 戰鬥中的自動整理只排序資料，不以 force=true 重建隱藏背包。
+ *   6. 手機隱藏背包後切回桌面版，立即重建一次，不能留下空白分頁。
  * ========================================================================== */
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -25,12 +26,14 @@ const fixture = `<!doctype html>
 <body>
   <button id="mobile-backpack" class="m-nav-btn" data-view="right">背包</button>
   <div id="m-nav"></div>
+  <main id="game-screen">
   <section id="tab-stats" class="hidden"></section>
   <section id="tab-items"></section>
   <section id="tab-weapons" class="hidden"></section>
   <section id="tab-armors" class="hidden"></section>
   <section id="tab-equip" class="hidden"></section>
   <section id="tab-skill" class="hidden"></section>
+  </main>
   <script>
     document.getElementById('m-nav').appendChild(document.getElementById('mobile-backpack'));
     var state = { inTick: false, ff: false, running: true, ticks: 0 };
@@ -54,6 +57,12 @@ const fixture = `<!doctype html>
       for (const id of ['items', 'weapons', 'armors', 'equip', 'skill']) {
         document.getElementById('tab-' + id).innerHTML = '';
       }
+      const equipHeader = document.createElement('div');
+      equipHeader.className = 'classic-list-toolbar';
+      const weight = document.createElement('span');
+      weight.textContent = '負重 ' + (player.d.weightPct || 0) + '%';
+      equipHeader.appendChild(weight);
+      document.getElementById('tab-equip').appendChild(equipHeader);
       for (const item of player.inv) {
         const d = DB.items[item.id];
         const tab = d.type === 'wpn' ? 'weapons' : ((d.type === 'arm' || d.type === 'acc') ? 'armors' : 'items');
@@ -132,6 +141,7 @@ try {
   assert.equal(hook?.countPatchMs, 250, '增量數量更新 hook 未載入');
   assert.equal(hook?.fullRebuildMs, 1000, '完整重建節流 hook 未載入');
   assert.equal(hook?.autoSortDeferred, true, '自動整理延遲重繪 hook 未載入');
+  assert.equal(hook?.mobileDormancy, true, '手機離開背包後的 DOM 休眠 hook 未載入');
   assert.equal(
     await page.evaluate(() => window.autoSortInventory?.__afkPsInventory),
     true,
@@ -232,6 +242,28 @@ try {
   assert.equal(await page.evaluate(() => coreCalls), 1, 'force=true 應保留核心的立即同步語意');
 
   await page.evaluate(() => {
+    window.switchTab('equip');
+    coreCalls = 0;
+    state.inTick = true;
+    player.d.weightPct = 83;
+    player.d.loadTier = 2;
+    window.renderTabs();
+  });
+  await page.waitForTimeout(350);
+  result = await page.evaluate(() => ({
+    coreCalls,
+    weight: document.querySelector('#tab-equip > .classic-list-toolbar span')?.textContent,
+    title: document.querySelector('#tab-equip > .classic-list-toolbar')?.title
+  }));
+  assert.equal(result.coreCalls, 0, '戰鬥掉落造成負重變化時不得完整重建五個背包分頁');
+  assert.equal(result.weight, '負重 83%', '裝備分頁負重必須以增量方式更新');
+  assert.match(result.title, /82%/, '負重階段提示必須同步更新');
+  await page.evaluate(() => {
+    state.inTick = false;
+    window.switchTab('items');
+  });
+
+  await page.evaluate(() => {
     document.body.className = 'm-mobile mview-mid';
     coreCalls = 0;
     state.inTick = true;
@@ -240,6 +272,18 @@ try {
   });
   await page.waitForTimeout(350);
   assert.equal(await page.evaluate(() => coreCalls), 0, '手機非背包欄時不應重建');
+  assert.equal(
+    await page.evaluate(() => ['items', 'weapons', 'armors', 'equip', 'skill']
+      .reduce((sum, id) => sum + document.getElementById('tab-' + id).childElementCount, 0)),
+    0,
+    '手機離開背包後必須卸下五個分頁 DOM，而不是只停止重繪'
+  );
+  await page.evaluate(() => {
+    state.inTick = false;
+    window.renderTabs(true);
+  });
+  assert.equal(await page.evaluate(() => coreCalls), 0,
+    '手機未顯示背包時，tick 外 force=true 也不得重建看不見的五個分頁');
   await page.click('#mobile-backpack');
   await page.waitForTimeout(50);
   result = await page.evaluate(() => ({
@@ -266,7 +310,56 @@ try {
   await page.waitForTimeout(50);
   assert.equal(await page.evaluate(() => coreCalls), 1, '自動整理後切回背包應立即補同步');
 
-  console.log('PASS powersave inventory: count patch / 1s rebuild / hidden lazy refresh / auto-sort deferral / immediate user refresh');
+  await page.evaluate(() => {
+    coreCalls = 0;
+    document.getElementById('game-screen').classList.add('hidden');
+  });
+  await page.waitForTimeout(50);
+  assert.equal(
+    await page.evaluate(() => ['items', 'weapons', 'armors', 'equip', 'skill']
+      .reduce((sum, id) => sum + document.getElementById('tab-' + id).childElementCount, 0)),
+    0,
+    '切到角色選擇畫面時，即使 body 仍是 mview-right 也必須卸下背包 DOM'
+  );
+  await page.evaluate(() => {
+    window.renderTabs(true);
+  });
+  assert.equal(await page.evaluate(() => coreCalls), 0,
+    '遊戲畫面隱藏時 force=true 也不得把背包重建到角色選擇畫面背後');
+  await page.evaluate(() => {
+    document.getElementById('game-screen').classList.remove('hidden');
+  });
+  await page.waitForTimeout(50);
+  result = await page.evaluate(() => ({
+    coreCalls,
+    hasRoleReturnRow: !!document.querySelector('#tab-items [data-tip-uid="d"]')
+  }));
+  assert.equal(result.coreCalls, 1, '從角色選擇返回遊戲且背包欄可見時必須只重建一次');
+  assert.equal(result.hasRoleReturnRow, true, '返回遊戲後背包不得留白');
+
+  await page.evaluate(() => {
+    document.body.className = 'm-mobile mview-mid';
+  });
+  await page.waitForTimeout(50);
+  assert.equal(
+    await page.evaluate(() => ['items', 'weapons', 'armors', 'equip', 'skill']
+      .reduce((sum, id) => sum + document.getElementById('tab-' + id).childElementCount, 0)),
+    0,
+    '手機隱藏狀態應先卸下背包 DOM'
+  );
+  await page.evaluate(() => {
+    coreCalls = 0;
+    document.body.className = '';
+  });
+  await page.waitForTimeout(50);
+  result = await page.evaluate(() => ({
+    coreCalls,
+    hasDesktopRow: !!document.querySelector('#tab-items [data-tip-uid="d"]')
+  }));
+  assert.equal(result.coreCalls, 1, '手機休眠後切回桌面版必須立即重建一次背包');
+  assert.equal(result.hasDesktopRow, true, '切回桌面版後不得留下空白背包');
+
+  console.log('PASS powersave inventory: count patch / hidden lazy refresh / auto-sort deferral / mobile-desktop restore');
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

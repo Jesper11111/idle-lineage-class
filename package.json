@@ -4,10 +4,20 @@
   "private": true,
   "scripts": {
     "test": "node scripts/smoke-hooks.mjs",
+    "check:core-patches": "node scripts/apply-core-patches.mjs --check",
+    "check:plugin-lifecycle": "node scripts/apply-plugin-lifecycle-patches.mjs --check",
+    "test:core-reapply": "node scripts/test-core-patch-reapply.mjs",
+    "test:sync-preflight": "node scripts/test-full-sync-preflight.mjs",
     "test:powersave-inventory": "node scripts/test-powersave-inventory.mjs",
     "test:mobile-memory": "node scripts/test-mobile-memory.mjs",
+    "test:mobile-stress": "node scripts/test-mobile-stability-stress.mjs",
+    "test:mobile-stress-webkit": "node scripts/test-mobile-stability-stress.mjs --webkit",
     "test:mobile-audio-memory": "node scripts/test-mobile-audio-memory.mjs",
+    "test:wiki-mobile-memory": "node scripts/test-wiki-mobile-memory.mjs",
+    "test:save-queue": "node scripts/test-save-compression-queue.mjs",
     "test:pwa-cache": "node scripts/test-pwa-versioned-cache.mjs",
+    "test:offline": "node scripts/test-offline-bossring.mjs",
+    "test:offline-integration": "node scripts/test-offline-bossring-integration.mjs",
     "test:backports": "node scripts/test-shines-backports.mjs"
   },
   "devDependencies": {

@@ -162,25 +162,37 @@
   //   - 背景(隱藏):走 Worker,且「算一段留一段空隙」(約 6 成工作週期=溫和),單分頁不吃滿一核、
   //     多隻角色多分頁同時背景跑也不會把 CPU 榨乾。
   //   - Worker 起不來(CSP / 本機 file://)→ 自動退回 setTimeout(最壞=跟以前一樣會被降速,不會更糟)。
-  var _ticker = null, _tickerBad = false;
+  var _ticker = null, _tickerBad = false, _tickerReq = 0;
   function ticker() {
     if (_ticker || _tickerBad) return _ticker;
+    var tickerUrl = null;
     try {
-      var src = 'onmessage=function(e){setTimeout(function(){postMessage(1)},(e.data&&e.data.gap)||0)}';
-      _ticker = new Worker(URL.createObjectURL(new Blob([src], { type: 'application/javascript' })));
+      var src = 'onmessage=function(e){var d=e.data||{};setTimeout(function(){postMessage({id:d.id})},d.gap||0)}';
+      tickerUrl = URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
+      _ticker = new Worker(tickerUrl);
     } catch (e) { _tickerBad = true; _ticker = null; }
+    finally { if (tickerUrl) { try { URL.revokeObjectURL(tickerUrl); } catch (e) {} } }
     return _ticker;
   }
   function killTicker() { try { if (_ticker) _ticker.terminate(); } catch (e) {} _ticker = null; }
   function workerGap(gap) {
     return new Promise(function (resolve) {
-      var w = ticker(), done = false;
-      var fin = function () { if (done) return; done = true; resolve(); };
+      var w = ticker(), done = false, timer = null, on = null, requestId = ++_tickerReq;
+      var fin = function () {
+        if (done) return;
+        done = true;
+        if (timer !== null) { try { clearTimeout(timer); } catch (e) {} timer = null; }
+        if (w && on) { try { w.removeEventListener('message', on); } catch (e) {} }
+        resolve();
+      };
       if (!w) { setTimeout(fin, gap); return; }   // Worker 不可用 → 退回 setTimeout
-      var on = function () { try { w.removeEventListener('message', on); } catch (e) {} fin(); };
+      on = function (event) {
+        if (!event || !event.data || event.data.id !== requestId) return;
+        fin();
+      };
       w.addEventListener('message', on);
-      setTimeout(fin, gap + 2000);                 // 保險:Worker 沒回(被凍/出錯)也不會卡死
-      try { w.postMessage({ gap: gap }); } catch (e) { fin(); }
+      timer = setTimeout(fin, gap + 2000);         // 保險:Worker 沒回(被凍/出錯)也不會卡死；逾時當下同步解除 listener
+      try { w.postMessage({ gap: gap, id: requestId }); } catch (e) { fin(); }
     });
   }
   // 結算進行中時指向當下那一輪的檢查點函式(結束時清成 null)。切到背景 / 關掉 App 前先存一次:

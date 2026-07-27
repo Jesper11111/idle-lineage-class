@@ -173,4 +173,116 @@ assert.equal(
   '快速事件、BOSS 真打、一般真模擬三條路都必須驅動離線召王'
 );
 
+// 背景結算 ticker 的 Worker 若收不到回覆，fallback timeout 必須在每個 slice
+// 當下解除 message listener；長結算不可累積到 finally 才靠 terminate 一次回收。
+{
+  const tickerStart = offlineSource.indexOf('  var _ticker = null, _tickerBad = false');
+  const tickerEnd = offlineSource.indexOf('  // 結算進行中時指向當下那一輪的檢查點函式', tickerStart);
+  assert.ok(tickerStart >= 0 && tickerEnd > tickerStart, '應能擷取現行離線 ticker 實作');
+
+  const scheduled = new Map();
+  let timerSeq = 0;
+  let createdUrls = 0;
+  let revokedUrls = 0;
+  let liveUrls = 0;
+  let peakUrls = 0;
+  const workers = [];
+
+  class FakeWorker {
+    constructor(url) {
+      this.url = url;
+      this.listeners = new Set();
+      this.peakListeners = 0;
+      this.throwOnPost = false;
+      this.terminated = false;
+      workers.push(this);
+    }
+    addEventListener(type, fn) {
+      if (type !== 'message') return;
+      this.listeners.add(fn);
+      this.peakListeners = Math.max(this.peakListeners, this.listeners.size);
+    }
+    removeEventListener(type, fn) {
+      if (type === 'message') this.listeners.delete(fn);
+    }
+    postMessage() {
+      if (this.throwOnPost) throw new Error('postMessage failed');
+      this.lastRequest = arguments[0];
+      // 刻意不回覆；測 fallback timeout 路徑。
+    }
+    emit(id = this.lastRequest && this.lastRequest.id) {
+      for (const listener of [...this.listeners]) listener({ data: { id } });
+    }
+    terminate() {
+      this.terminated = true;
+      this.listeners.clear();
+    }
+  }
+
+  const tickerContext = {
+    Blob: class Blob {},
+    Worker: FakeWorker,
+    URL: {
+      createObjectURL() {
+        createdUrls++;
+        liveUrls++;
+        peakUrls = Math.max(peakUrls, liveUrls);
+        return `blob:offline-${createdUrls}`;
+      },
+      revokeObjectURL() {
+        revokedUrls++;
+        liveUrls--;
+      }
+    },
+    setTimeout(fn) {
+      const id = ++timerSeq;
+      scheduled.set(id, fn);
+      return id;
+    },
+    clearTimeout(id) {
+      scheduled.delete(id);
+    },
+    Promise
+  };
+  tickerContext.window = tickerContext;
+  vm.createContext(tickerContext);
+  vm.runInContext(offlineSource.slice(tickerStart, tickerEnd), tickerContext, {
+    filename: 'afk-offline-ticker.js'
+  });
+
+  for (let slice = 0; slice < 100; slice++) {
+    const waiting = tickerContext.workerGap(16);
+    assert.equal(workers.length, 1, '同一輪結算只能共用一支 ticker Worker');
+    assert.equal(workers[0].listeners.size, 1, '等待中的 slice 恰有一支 listener');
+    assert.equal(scheduled.size, 1, '等待中的 slice 恰有一支 fallback timer');
+    const fallback = scheduled.values().next().value;
+    fallback();
+    await waiting;
+    assert.equal(workers[0].listeners.size, 0, `第 ${slice + 1} 個逾時 slice 必須立即解除 listener`);
+    assert.equal(scheduled.size, 0, `第 ${slice + 1} 個逾時 slice 不得留下 timer`);
+  }
+
+  const normalReply = tickerContext.workerGap(16);
+  workers[0].emit(workers[0].lastRequest.id - 1);
+  assert.equal(workers[0].listeners.size, 1, '上一個 slice 的延遲訊息不得提早完成目前等待');
+  assert.equal(scheduled.size, 1, '延遲訊息不得取消目前 slice 的 fallback timer');
+  workers[0].emit();
+  await normalReply;
+  assert.equal(workers[0].listeners.size, 0, '正常 Worker 回覆也必須立即解除 listener');
+  assert.equal(scheduled.size, 0, '正常 Worker 回覆必須取消 fallback timer');
+
+  workers[0].throwOnPost = true;
+  await tickerContext.workerGap(16);
+  assert.equal(workers[0].listeners.size, 0, 'postMessage 失敗必須立即解除 listener');
+  assert.equal(scheduled.size, 0, 'postMessage 失敗必須取消 fallback timer');
+
+  tickerContext.killTicker();
+  assert.equal(workers[0].terminated, true, '結算結束必須 terminate ticker Worker');
+  assert.equal(workers[0].peakListeners, 1, '任意時刻最多只允許一支 slice listener');
+  assert.equal(createdUrls, 1, '單次結算只建立一個 ticker Blob URL');
+  assert.equal(revokedUrls, 1, 'ticker Blob URL 必須同步撤銷');
+  assert.equal(liveUrls, 0, 'ticker() 返回後不得留 Blob URL');
+  assert.equal(peakUrls, 1, 'Blob URL 瞬時峰值應為一個');
+}
+
 console.log('PASS offline bossring: summon / buy / no double charge / mutex / cache / slot isolation');

@@ -33,6 +33,7 @@
   var view = [];       // 目前搜尋條件下顯示的子集（rows 的參照）
   var sel = Object.create(null);   // 已勾選的簽章
   var nameCache = Object.create(null);   // sig → { html, plain, icon, order }（名稱不會變，跨重建共用）
+  var nameCacheRole = '';   // 跨角色不共用：不同角色的數千筆歷史簽章不可在同頁永久累積
   var lastStart = -1, lastEnd = -1, rafPend = false, searchTimer = 0, layer = null;
 
   // ⚠ DB 是 `const DB`(全域語彙環境),不是 window 屬性 → 只能用裸識別字判斷,不可寫 window.DB
@@ -86,6 +87,15 @@
 
   // ---- 資料重建（O(標記數)）-----------------------------------------------
   function rebuild() {
+    var roleKey = '';
+    try {
+      roleKey = String((typeof currentSlot !== 'undefined' && currentSlot != null ? currentSlot : '') ||
+        player.enSeed || player._roleEpoch || player.name || 'role');
+    } catch (e) {}
+    if (roleKey !== nameCacheRole) {
+      nameCacheRole = roleKey;
+      nameCache = Object.create(null);
+    }
     var prefs = (player.junkPrefs = player.junkPrefs || {});
     var seen = Object.create(null);
     rows = [];
@@ -93,6 +103,9 @@
       if (!prefs[s] || seen[s]) return;
       seen[s] = 1;
       rows.push({ sig: s });
+    });
+    Object.keys(nameCache).forEach(function (s) {
+      if (!seen[s]) delete nameCache[s];   // 同角色解除標記後也立即回收，不累積歷史強化簽章
     });
     rows.forEach(function (r) {
       var c = infoOf(r.sig);

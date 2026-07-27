@@ -1420,8 +1420,11 @@ let _bgHeartbeatWorker = null;
         || typeof URL === 'undefined' || !URL.createObjectURL) return;
     try {
         let _u = URL.createObjectURL(new Blob(['setInterval(function(){postMessage(1);},1000);'], { type: 'text/javascript' }));
-        _bgHeartbeatWorker = new Worker(_u);
-        URL.revokeObjectURL(_u);
+        try {
+            _bgHeartbeatWorker = new Worker(_u);
+        } finally {
+            URL.revokeObjectURL(_u);   // Worker 建立同步失敗時也必須釋放 Blob URL
+        }
         _bgHeartbeatWorker.onmessage = function () {
             if (typeof document === 'undefined' || !document.hidden) return;   // 前景由 100ms 主迴圈驅動
             if (typeof gameLoop !== 'function' || !state.running) return;
