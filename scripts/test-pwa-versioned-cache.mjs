@@ -11,6 +11,7 @@ import { resolve, sep } from 'node:path';
 import { chromium } from 'playwright';
 
 const ROOT = resolve('.');
+const PAGES_BASE = '/idle-lineage-class';
 const swSource = readFileSync('sw.js', 'utf8');
 const pwaSource = readFileSync('afk-pwa.js', 'utf8');
 const versionMatch = swSource.match(/const ASSET_CACHE_VERSIONS = (\{[^\n]*\});/);
@@ -52,12 +53,12 @@ const server = createServer((req, res) => {
   let pathname;
   try { pathname = decodeURIComponent(new URL(req.url, 'http://127.0.0.1').pathname); }
   catch { res.writeHead(400).end(); return; }
-  if (pathname === '/' || pathname === '/test.html') {
+  if (pathname === '/' || pathname === '/test.html' || pathname === `${PAGES_BASE}/test.html`) {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
     res.end(fixture);
     return;
   }
-  const relative = pathname.replace(/^\/+/, '');
+  const relative = pathname.replace(new RegExp(`^${PAGES_BASE}/`), '/').replace(/^\/+/, '');
   const file = resolve(ROOT, relative);
   if (file !== ROOT && file.startsWith(ROOT + sep)) {
     try {
@@ -81,7 +82,7 @@ const browser = await chromium.launch({ headless: true });
 try {
   const context = await browser.newContext();
   const page = await context.newPage();
-  await page.goto(`${origin}/test.html`);
+  await page.goto(`${origin}${PAGES_BASE}/test.html`);
 
   await page.evaluate(async () => {
     const legacy = await caches.open('img-v3');
@@ -91,14 +92,14 @@ try {
   });
 
   await page.evaluate(async () => {
-    await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.register('/idle-lineage-class/sw.js');
     await navigator.serviceWorker.ready;
   });
   await page.waitForFunction(() => !!navigator.serviceWorker.controller);
 
   const responses = await page.evaluate(async ({ staticPath, animationPath }) => {
-    const a = await fetch('/' + staticPath);
-    const b = await fetch('/' + animationPath);
+    const a = await fetch('/idle-lineage-class/' + staticPath);
+    const b = await fetch('/idle-lineage-class/' + animationPath);
     return [a.status, b.status];
   }, { staticPath, animationPath });
   assert.deepEqual(responses, [200, 200], '資產請求沒有正常回應');

@@ -41,6 +41,8 @@ function _assetCacheGroup(pathname) {
   let clean = String(pathname || '');
   try { clean = decodeURIComponent(clean); } catch (err) {}
   clean = clean.replace(/^\/+/, '').replace(/^public\//, '');
+  const assetsAt = clean.indexOf('assets/');
+  if (assetsAt > 0) clean = clean.slice(assetsAt); // GitHub Pages 專案站：/<repo>/assets/...
   const animated = clean.match(/^assets\/(anim|classanim|morphanim)\/([^/]+)/);
   if (animated) return animated[1] + '-' + _assetCacheShard(animated[1] + '/' + animated[2]);
   const regular = clean.match(/^assets\/([^/]+)/);
