@@ -87,6 +87,7 @@ CI 版:GitHub Actions `sync-upstream.yml`(**只有 `workflow_dispatch`,無 GitHu
 | `afk-diag.js` | 快取診斷(全程唯讀;欄位各自包錯;產物自帶版本號) |
 | `afk-reissueid.js` | 換發身分證(角色身分碼重發) |
 | `afk-powersave.js` | 省電模式(關戰鬥動畫/降更新頻率;涵蓋寵/召 ticker=補丁4) |
+| `afk-mobile-memory.js` | 手機雙省電時以 CSS 漸層取代逐張 1920 場景圖，並停用角色預覽逐幀解碼；本地政策檔由同步腳本保留 |
 | `afk-statpts.js` | 能力值來源分解(能力圖下方單一區塊) |
 | `afk-statlist.js` | 能力分頁條列式(拿掉經典背景圖改大字卡片;純 CSS,DOM/updateUI 不動;配點中改單欄) |
 | `afk-autobuy.js` | 自動買肉/魔法屏障卷軸補貨(預設開;離線結算共用 `__afkAutobuyCheck`) |

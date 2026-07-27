@@ -16,6 +16,8 @@
  *      由 afk-offline-owner.js 在執行期確認後授權，避免同步／快取混搭時兩套引擎同時結算。
  *   9. PWA 圖片快取分片版本化 — 禁止每次啟動逐筆掃圖桶或 cache.keys()；由 manifest 內容
  *      產生類別／動畫分片快取名，上游更新只淘汰真的變動的分片。
+ *  10. 手機雙省電角色預覽閘門 — 選角／創角逐幀動畫與預載讀本地圖片記憶體政策掛點，
+ *      防止玩家已關動畫後，登入畫面仍解碼完整職業序列。
  *
  * 用法：node scripts/apply-core-patches.mjs        （--check 只驗證是否已全部補上、不寫檔）
  */
@@ -475,7 +477,41 @@ async function reconcileAnim(folders, client) {
   console.log(`[patch] PWA 圖片快取改為類別／動畫分片版本桶（${PWA_FILE}、${SW_FILE}）`);
 }
 
-const PATCHES = [patchMaybeSpawnMobs, patchTradEnHook, patch16Slots, patchPetAnimTicker, patchBossHuntEscape, patchUseItemKeepModal, patchSellNowNoForce, patchLegacyOfflineOwnership, patchVersionedAssetCaches];
+// ── 補丁 10：手機雙省電時停用角色選擇／創角逐幀預覽 ─────────────
+//   afk-mobile-memory.js 提供 __afkMobileMemoryLite()；沒有外掛或未同時開兩個省電選項時，
+//   條件恆 false，完全維持 PP 動畫。補丁只加閘門，不接管角色資料或登入流程。
+function patchMobileMemoryPreviewGate() {
+  const FILE = 'js/13-shop-save.js';
+  let s = readFileSync(FILE, 'utf8');
+  const gate = "!(typeof window.__afkMobileMemoryLite === 'function' && window.__afkMobileMemoryLite())";
+  const expectedCount = (s.match(/__afkMobileMemoryLite/g) || []).length;
+  if (expectedCount === 6) { already++; return; }   // 三個條件，每個掛點名稱在 typeof 與呼叫各出現一次
+  if (expectedCount !== 0) {
+    throw new Error(`[${FILE}] 手機圖片記憶體閘門只套了一部分（目前 ${expectedCount}/6 個掛點名稱），拒絕重複或不完整修改。`);
+  }
+
+  const loadAnchor = "if(panel && !panel.classList.contains('hidden') && now - _loadAnimState.lastAt >= _loadAnimState.stepMs){";
+  const preloadAnchor = "for(let n = range[0]; n <= Math.min(range[1], range[0] + 10); n++){\n        const pre = new Image(); pre.src = `assets/start/${key}/${n}.png`;\n    }";
+  const creationAnchor = "if(panel && img && !panel.classList.contains('hidden') && (!gs || gs.classList.contains('hidden')) && !creationClassAnim.static && now - creationClassAnim.lastAt >= creationClassAnim.stepMs){";
+  for (const [label, anchor] of [['選角逐幀', loadAnchor], ['創角預載', preloadAnchor], ['創角逐幀', creationAnchor]]) {
+    if (!s.includes(anchor)) throw new Error(`[${FILE}] 找不到「${label}」錨點，上游可能改寫角色預覽流程。`);
+  }
+  s = s.replace(loadAnchor,
+    "if(panel && !panel.classList.contains('hidden') && " + gate + " && now - _loadAnimState.lastAt >= _loadAnimState.stepMs){   // 🔌 手機雙省電：角色選擇停在首幀，避免逐職業解碼整套 PNG");
+  s = s.replace(preloadAnchor,
+    "if(" + gate + "){   // 🔌 手機雙省電：不預載後續創角幀\n" +
+    "        for(let n = range[0]; n <= Math.min(range[1], range[0] + 10); n++){\n" +
+    "            const pre = new Image(); pre.src = `assets/start/${key}/${n}.png`;\n" +
+    "        }\n" +
+    "    }");
+  s = s.replace(creationAnchor,
+    "if(panel && img && !panel.classList.contains('hidden') && (!gs || gs.classList.contains('hidden')) && !creationClassAnim.static && " + gate + " && now - creationClassAnim.lastAt >= creationClassAnim.stepMs){   // 🔌 手機雙省電：創角預覽停在首幀");
+  if (!CHECK) writeFileSync(FILE, s);
+  changed++;
+  console.log(`[patch] 手機雙省電角色預覽閘門（${FILE}）`);
+}
+
+const PATCHES = [patchMaybeSpawnMobs, patchTradEnHook, patch16Slots, patchPetAnimTicker, patchBossHuntEscape, patchUseItemKeepModal, patchSellNowNoForce, patchLegacyOfflineOwnership, patchVersionedAssetCaches, patchMobileMemoryPreviewGate];
 
 try {
   for (const p of PATCHES) p();

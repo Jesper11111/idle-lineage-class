@@ -970,7 +970,7 @@ function loadDeleteSelected(){
 (function animateLoadSelectPreview(){
     function tick(now){
         const panel = document.getElementById('load-select-panel');
-        if(panel && !panel.classList.contains('hidden') && now - _loadAnimState.lastAt >= _loadAnimState.stepMs){
+        if(panel && !panel.classList.contains('hidden') && !(typeof window.__afkMobileMemoryLite === 'function' && window.__afkMobileMemoryLite()) && now - _loadAnimState.lastAt >= _loadAnimState.stepMs){   // 🔌 手機雙省電：角色選擇停在首幀，避免逐職業解碼整套 PNG
             _loadAnimState.noneFrame = _loadAnimState.noneFrame >= LOAD_NONE_ANIM_FRAMES[1] ? LOAD_NONE_ANIM_FRAMES[0] : _loadAnimState.noneFrame + 1;
             document.querySelectorAll('.load-slot-card.empty img').forEach(img => { img.src = loadFrameSrc('none', _loadAnimState.noneFrame); });
             const selected = document.querySelector('.load-slot-card.selected.filled');
@@ -1072,8 +1072,10 @@ function setCreationClassAnimation(c){
         img.style.display = 'block';
     }
     if(typeof playCreationFrameSfx === 'function') playCreationFrameSfx(key, range[0]);
-    for(let n = range[0]; n <= Math.min(range[1], range[0] + 10); n++){
-        const pre = new Image(); pre.src = `assets/start/${key}/${n}.png`;
+    if(!(typeof window.__afkMobileMemoryLite === 'function' && window.__afkMobileMemoryLite())){   // 🔌 手機雙省電：不預載後續創角幀
+        for(let n = range[0]; n <= Math.min(range[1], range[0] + 10); n++){
+            const pre = new Image(); pre.src = `assets/start/${key}/${n}.png`;
+        }
     }
 }
 (function animateCreationClassPreview(){
@@ -1081,7 +1083,7 @@ function setCreationClassAnimation(c){
         const panel = document.getElementById('creation-panel');
         const img = document.getElementById('class-preview-img');
         const gs = document.getElementById('game-screen');   // 🔊 v3.4.17 已進遊戲→停創角動畫（防 creation-panel classList 殘留→動畫續跑並每 loop 重觸發創角音效）
-        if(panel && img && !panel.classList.contains('hidden') && (!gs || gs.classList.contains('hidden')) && !creationClassAnim.static && now - creationClassAnim.lastAt >= creationClassAnim.stepMs){
+        if(panel && img && !panel.classList.contains('hidden') && (!gs || gs.classList.contains('hidden')) && !creationClassAnim.static && !(typeof window.__afkMobileMemoryLite === 'function' && window.__afkMobileMemoryLite()) && now - creationClassAnim.lastAt >= creationClassAnim.stepMs){   // 🔌 手機雙省電：創角預覽停在首幀
             creationClassAnim.frame = creationClassAnim.frame >= creationClassAnim.last ? creationClassAnim.first : creationClassAnim.frame + 1;
             img.src = `assets/start/${creationClassAnim.key}/${creationClassAnim.frame}.png`;
             if(creationClassAnim.frame === creationClassAnim.first && typeof playCreationFrameSfx === 'function') playCreationFrameSfx(creationClassAnim.key, creationClassAnim.frame);

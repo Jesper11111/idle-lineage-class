@@ -116,6 +116,7 @@ if (missing.length) throw new Error(`[${FILE}] 傭兵混合獎勵政策驗證失
 
 const indexHtml = readFileSync('index.html', 'utf8');
 const mercPolicySrc = readFileSync('afk-merc-policy.js', 'utf8');
+const mobileMemorySrc = readFileSync('afk-mobile-memory.js', 'utf8');
 const powersaveInventorySrc = readFileSync('afk-powersave-inventory.js', 'utf8');
 const worldMapSrc = readFileSync('js/11-world-map.js', 'utf8');
 const WIKI_FILE = 'afk-wiki.js';
@@ -158,15 +159,26 @@ const powersaveInventoryMissing = powersaveInventoryMustHave.filter(x => !powers
 if (powersaveInventoryMissing.length) {
   throw new Error(`[afk-powersave-inventory.js] 背包增量更新契約不完整：${powersaveInventoryMissing.join(' | ')}`);
 }
+const mobileMemoryMustHave = [
+  'window.__afkMobileMemoryLite = lite',
+  "settingOn('noanim') && settingOn('lowfps')",
+  'window.applyAreaBackground.__afkMobileMemory = true',
+  'window._townMapBg.__afkMobileMemory = true'
+];
+const mobileMemoryMissing = mobileMemoryMustHave.filter(x => !mobileMemorySrc.includes(x));
+if (mobileMemoryMissing.length) {
+  throw new Error(`[afk-mobile-memory.js] 手機圖片記憶體政策不完整：${mobileMemoryMissing.join(' | ')}`);
+}
 const mobileBannerAt = indexHtml.indexOf('<script src="afk-mobile-banner.js');
 const ownerAt = indexHtml.indexOf('<script src="afk-offline-owner.js');
 const mercAt = indexHtml.indexOf('<script src="afk-merc-policy.js');
+const mobileMemoryAt = indexHtml.indexOf('<script src="afk-mobile-memory.js');
 const powersaveInventoryAt = indexHtml.indexOf('<script src="afk-powersave-inventory.js');
 const offlineAt = indexHtml.indexOf('<script src="afk-offline.js');
-if (mobileBannerAt < 0 || ownerAt < 0 || mercAt < 0 || powersaveInventoryAt < 0 || offlineAt < 0 ||
-    mobileBannerAt > ownerAt || ownerAt > mercAt || mercAt > powersaveInventoryAt ||
+if (mobileBannerAt < 0 || ownerAt < 0 || mercAt < 0 || mobileMemoryAt < 0 || powersaveInventoryAt < 0 || offlineAt < 0 ||
+    mobileBannerAt > ownerAt || ownerAt > mercAt || mercAt > mobileMemoryAt || mobileMemoryAt > powersaveInventoryAt ||
     powersaveInventoryAt > offlineAt) {
-  throw new Error('[index.html] 載入順序必須是 afk-mobile-banner → afk-offline-owner → afk-merc-policy → afk-powersave-inventory → afk-offline。');
+  throw new Error('[index.html] 載入順序必須是 afk-mobile-banner → afk-offline-owner → afk-merc-policy → afk-mobile-memory → afk-powersave-inventory → afk-offline。');
 }
 
 if (CHECK) {
