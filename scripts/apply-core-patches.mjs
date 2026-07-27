@@ -18,6 +18,8 @@
  *      產生類別／動畫分片快取名，上游更新只淘汰真的變動的分片。
  *  10. 手機雙省電角色預覽閘門 — 選角／創角逐幀動畫與預載讀本地圖片記憶體政策掛點，
  *      防止玩家已關動畫後，登入畫面仍解碼完整職業序列。
+ *  11. 手機雙省電怪物縮圖閘門 — 戰鬥渲染在原尺寸 URL 進 DOM 前詢問本地政策掛點；
+ *      簡化模式改用 96×96 單層辨識圖，並禁止載入原尺寸影子／武器圖層。
  *
  * 用法：node scripts/apply-core-patches.mjs        （--check 只驗證是否已全部補上、不寫檔）
  */
@@ -511,7 +513,45 @@ function patchMobileMemoryPreviewGate() {
   console.log(`[patch] 手機雙省電角色預覽閘門（${FILE}）`);
 }
 
-const PATCHES = [patchMaybeSpawnMobs, patchTradEnHook, patch16Slots, patchPetAnimTicker, patchBossHuntEscape, patchUseItemKeepModal, patchSellNowNoForce, patchLegacyOfflineOwnership, patchVersionedAssetCaches, patchMobileMemoryPreviewGate];
+// ── 補丁 11：手機雙省電怪物改走 96×96 單層辨識圖 ───────────────
+//   關動畫只會停止逐幀 ticker；原核心仍把 spawn/idle 本體、影子、武器與第二武器 URL 放進 DOM，
+//   Safari 因此照樣解碼原尺寸 PNG 並把不同怪物留在 decoded-image cache。必須在 innerHTML 寫入前
+//   詢問 afk-mobile-memory 的 __afkMobileMobStill()，事後 display:none 或換 src 都已來不及。
+function patchMobileMobThumbGate() {
+  const FILE = 'js/09-vfx-render.js';
+  let s = readFileSync(FILE, 'utf8');
+  if (s.includes('__afkMobileMobStill')) { already++; return; }
+
+  const stillAnchor = '            let _mi = mobStillImg(m.n, m.img, true);   // 🎬 戰鬥初始幀：有動畫→優先 spawn_0（無 spawn 退 idle_0·再退舊靜態）；無動畫→舊靜態';
+  const shadowAnchor = "            let _spriteShadow = MOB_ANIM_NAMES.has(m.n) && (typeof MOB_ANIM_SPRITE_SHADOW !== 'undefined') && MOB_ANIM_SPRITE_SHADOW.has(m.n);";
+  const weaponAnchor = "            let _weaponFx = MOB_ANIM_NAMES.has(m.n) && (typeof MOB_ANIM_WEAPON_FX !== 'undefined') && MOB_ANIM_WEAPON_FX.has(m.n);";
+  const weapon2Anchor = "            let _weaponFx2 = MOB_ANIM_NAMES.has(m.n) && (typeof MOB_ANIM_WEAPON_FX2 !== 'undefined') && MOB_ANIM_WEAPON_FX2.has(m.n);";
+  for (const [label, anchor] of [
+    ['怪物靜態圖', stillAnchor],
+    ['怪物影子圖層', shadowAnchor],
+    ['怪物武器圖層', weaponAnchor],
+    ['怪物第二武器圖層', weapon2Anchor]
+  ]) {
+    if (!s.includes(anchor)) throw new Error(`[${FILE}] 找不到「${label}」錨點，上游可能改寫戰鬥怪物渲染。`);
+  }
+
+  s = s.replace(stillAnchor,
+    "            let _mobileLiteStill = (typeof window.__afkMobileMobStill === 'function') ? window.__afkMobileMobStill(m.n, m.img, true) : null;   // 🔌 手機雙省電：在原尺寸 URL 進 DOM／開始解碼前，換成 96×96 單層辨識圖\n" +
+    "            let _mi = _mobileLiteStill || mobStillImg(m.n, m.img, true);   // 🎬 戰鬥初始幀：一般模式維持 spawn/idle；手機雙省電走有上限的縮圖\n" +
+    "            let _fullMobLayers = !_mobileLiteStill;   // 雙省電縮圖已是完整單層畫面；禁止再載原尺寸影子／武器圖層");
+  s = s.replace(shadowAnchor,
+    "            let _spriteShadow = _fullMobLayers && MOB_ANIM_NAMES.has(m.n) && (typeof MOB_ANIM_SPRITE_SHADOW !== 'undefined') && MOB_ANIM_SPRITE_SHADOW.has(m.n);");
+  s = s.replace(weaponAnchor,
+    "            let _weaponFx = _fullMobLayers && MOB_ANIM_NAMES.has(m.n) && (typeof MOB_ANIM_WEAPON_FX !== 'undefined') && MOB_ANIM_WEAPON_FX.has(m.n);");
+  s = s.replace(weapon2Anchor,
+    "            let _weaponFx2 = _fullMobLayers && MOB_ANIM_NAMES.has(m.n) && (typeof MOB_ANIM_WEAPON_FX2 !== 'undefined') && MOB_ANIM_WEAPON_FX2.has(m.n);");
+
+  if (!CHECK) writeFileSync(FILE, s);
+  changed++;
+  console.log(`[patch] 手機雙省電怪物縮圖閘門（${FILE}）`);
+}
+
+const PATCHES = [patchMaybeSpawnMobs, patchTradEnHook, patch16Slots, patchPetAnimTicker, patchBossHuntEscape, patchUseItemKeepModal, patchSellNowNoForce, patchLegacyOfflineOwnership, patchVersionedAssetCaches, patchMobileMemoryPreviewGate, patchMobileMobThumbGate];
 
 try {
   for (const p of PATCHES) p();
