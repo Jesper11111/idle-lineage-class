@@ -265,6 +265,7 @@
     var msSnap = {}; for (var bk in mapState) msSnap[bk] = mapState[bk];
     backup = { ms: msSnap };
     if (player.dead) { player.dead = false; player.hp = player.mhp; }
+    if (typeof window.__afkMobileMemoryLifecycle === 'function') window.__afkMobileMemoryLifecycle('map-change');   // 🔌 假地圖同樣先釋放上一張圖與在途動畫 probe
     mapState.current = TRAIN_MAP;   // ← 設了這個 inTrain() 就成立(零旗標)
     mapState.mobs = [null, null, null, null, null];
     mapState.spawnAt = [null, null, null, null, null];

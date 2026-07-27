@@ -148,21 +148,36 @@ if (!worldMapSrc.includes("if (typeof refreshAllAllies === 'function') refreshAl
   throw new Error('[js/11-world-map.js] 找不到進安全區的 refreshAllAllies 單一掛點，拒絕繼續。');
 }
 const powersaveInventoryMustHave = [
-  "version: '1.2.0-local'",
+  "version: '1.3.0-local'",
   'TAB_COUNT_PATCH_MS = 250',
   'TAB_FULL_REBUILD_MS = 1000',
   '_autoSortInventoryWrapped.__afkPsInventory = true',
   'autoSortDeferred: true',
+  'mobileDormancy: true',
+  'function mobileBackpackVisible()',
+  'function patchEquipWeightHeader(root)',
+  "if (tab === 'equip') patchEquipWeightHeader(root);",
   'document.addEventListener(\'DOMContentLoaded\', install'
 ];
 const powersaveInventoryMissing = powersaveInventoryMustHave.filter(x => !powersaveInventorySrc.includes(x));
-if (powersaveInventoryMissing.length) {
-  throw new Error(`[afk-powersave-inventory.js] 背包增量更新契約不完整：${powersaveInventoryMissing.join(' | ')}`);
+const tabContextBlock = (powersaveInventorySrc.match(/function tabContextSig\(\) \{[\s\S]*?\n        \}/) || [''])[0];
+if (powersaveInventoryMissing.length || /\b(?:weightPct|loadTier)\b/.test(tabContextBlock)) {
+  throw new Error(`[afk-powersave-inventory.js] 背包增量更新契約不完整：${powersaveInventoryMissing.join(' | ') || '負重不可放進結構簽章'}`);
 }
 const mobileMemoryMustHave = [
   'window.__afkMobileMemoryLite = lite',
   "settingOn('noanim') && settingOn('lowfps')",
-  'window.applyAreaBackground.__afkMobileMemory = true',
+  'window.__afkMobileTownNpcFrames',
+  'window.__afkMobileWanderingBuyerStill',
+  'window.__afkMobileMemoryProbeCurrent',
+  'window.__afkMobileMemoryLifecycle',
+  'function releasePanelBody(id)',
+  'function closeAndReleaseImagePanels()',
+  "installBookCloseGuard('closeNpcInteraction', 'interaction-content');",
+  "releasePanelBody('m-wiki-body');",
+  'function renderStaticActors()',
+  'releaseActiveActorDom();',
+  'wrapped.__afkMobileMemoryOuter = true',
   'window._townMapBg.__afkMobileMemory = true'
 ];
 const mobileMemoryMissing = mobileMemoryMustHave.filter(x => !mobileMemorySrc.includes(x));

@@ -325,11 +325,12 @@ const offlineEngineProblems = await page.evaluate(() => {
 const powersaveInventoryProblems = await page.evaluate(() => {
   const bad = [];
   const p = window.__afkPsInventory;
-  if (!p || p.version !== '1.2.0-local') bad.push('背包增量更新模組未啟動');
+  if (!p || p.version !== '1.3.0-local') bad.push('背包增量更新模組未啟動');
   if (p && (p.countPatchMs !== 250 || p.fullRebuildMs !== 1000)) {
     bad.push(`背包增量更新節流參數異常（${p.countPatchMs}/${p.fullRebuildMs}ms）`);
   }
   if (!p || p.autoSortDeferred !== true ||
+      p.mobileDormancy !== true ||
       typeof window.autoSortInventory !== 'function' ||
       window.autoSortInventory.__afkPsInventory !== true) {
     bad.push('自動整理仍可繞過背包增量更新');

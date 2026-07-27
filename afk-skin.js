@@ -155,6 +155,7 @@
 
   // ---- 手機:入口直接排在 #main-menu(不包外框,與原版按鈕同樣式)-----------
   var _busy = false;
+  var _modalEscBound = false;
   function ensureInline(menu) {
     var els = [];
     FRAME_ORDER.forEach(function (s) { var el = menu.querySelector(':scope > ' + s); if (el) els.push(el); });
@@ -183,7 +184,14 @@
     function closeModal() { modal.classList.remove('is-open'); }
     close.addEventListener('click', closeModal);
     modal.addEventListener('click', function (e) { if (e.target === modal) closeModal(); });   // 點背景關
-    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });
+    if (!_modalEscBound) {
+      _modalEscBound = true;
+      document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Escape') return;
+        var current = document.getElementById('afk-plugin-modal');
+        if (current) current.classList.remove('is-open');
+      });
+    }
     return modal;
   }
   function ensureButton(menu) {
@@ -233,6 +241,10 @@
     if (menu && window.MutationObserver) {
       var obs = new MutationObserver(function () { apply(); });
       obs.observe(menu, { childList: true });
+      if (document.body) {
+        var modeObs = new MutationObserver(function () { apply(); });
+        modeObs.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+      }
     }
     // 後援:外掛可能延遲 append,前幾秒多試幾次
     var n = 0, iv = setInterval(function () { apply(); if (++n > 20) clearInterval(iv); }, 300);

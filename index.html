@@ -11,6 +11,17 @@
          DESIGN_W/isMobileDevice/window.__mobileScaling 全專案零呼叫；唯一實際效果 viewport-fit=cover 直接併入上方 meta。
          （width=1180 手機縮放已於桌機專注決策時移除·本作 desktop-only） -->
 
+    <!-- 🔌 加掛版補丁：在大型 CSS 圖進入 computed style 前讀取既有雙省電設定，避免先解碼 3344×1882 body 背景。 -->
+    <script>
+      try {
+        if (localStorage.getItem('afk_ps_noanim') === '1' && localStorage.getItem('afk_ps_lowfps') === '1' &&
+            innerWidth <= 900 && matchMedia('(pointer:coarse)').matches) {
+          document.documentElement.classList.add('afk-memory-lite-boot');
+        }
+      } catch (e) {}
+    </script>
+    <style>html.afk-memory-lite-boot body{background-image:linear-gradient(135deg,#172033 0%,#101827 48%,#080d18 100%)!important;background-attachment:scroll!important;}</style>
+
     <title>放置天堂 - 日出之國</title>
     <link rel="icon" type="image/png" href="assets/favicon.png">   <!-- 🖼️ 瀏覽器分頁圖示(favicon)：把你的圖放到 assets/favicon.png 即生效；可改 href 路徑或副檔名(.ico/.svg) -->
 
@@ -51,9 +62,9 @@
 
         <div id="load-select-panel" class="hidden" aria-label="角色選擇">
           <div id="load-art-stage">
-            <img id="load-select-bg" src="public/assets/login/load.png" alt="角色選擇背景" draggable="false">
+            <img id="load-select-bg" loading="lazy" decoding="async" data-afk-mobile-lazy="1" src="public/assets/login/load.png" alt="角色選擇背景" draggable="false">
             <div id="load-slot-grid" aria-label="存檔角色"></div>
-            <img id="load-select-overlay" src="public/assets/login/load1.png" alt="" aria-hidden="true" draggable="false">
+            <img id="load-select-overlay" loading="lazy" decoding="async" data-afk-mobile-lazy="1" src="public/assets/login/load1.png" alt="" aria-hidden="true" draggable="false">
             <div id="load-page-tabs" aria-label="存檔頁切換">
                 <button onclick="loadSetPage(1)" id="load-page-1" type="button" aria-label="存檔 1 到 4"></button>
                 <button onclick="loadSetPage(2)" id="load-page-2" type="button" aria-label="存檔 5 到 8"></button>
@@ -86,7 +97,7 @@
         </div>
 
                 <div id="creation-panel" class="hidden" aria-label="創建角色">
-            <img id="creation-bg-image" src="public/assets/login/824.png" alt="創角背景" draggable="false">
+            <img id="creation-bg-image" loading="lazy" decoding="async" data-afk-mobile-lazy="1" src="public/assets/login/824.png" alt="創角背景" draggable="false">
 
             <section id="creation-class-desc-frame" aria-live="polite">
                 <h2 id="creation-class-title">王子</h2>
@@ -94,17 +105,17 @@
             </section>
 
             <div id="creation-avatar-stage" aria-hidden="true">
-                <img id="class-preview-img" src="assets/start/prince/714.png" alt="職業預覽" draggable="false">
+                <img id="class-preview-img" loading="lazy" decoding="async" data-afk-mobile-lazy="1" src="assets/start/prince/714.png" alt="職業預覽" draggable="false">
             </div>
             <nav id="creation-class-list" aria-label="職業選擇">
-                <button onclick="selectClassBase('royal')" id="btn-class-base-royal" class="creation-class-btn class-left class-pos-1" type="button" title="王族"><img src="assets/logo/王族logo.png" alt="王族"></button>
-                <button onclick="selectClassBase('knight')" id="btn-class-base-knight" class="creation-class-btn class-left class-pos-2" type="button" title="騎士"><img src="assets/logo/騎士logo.png" alt="騎士"></button>
-                <button onclick="selectClassBase('mage')" id="btn-class-base-mage" class="creation-class-btn class-left class-pos-3" type="button" title="法師"><img src="assets/logo/法師logo.png" alt="法師"></button>
-                <button onclick="selectClassBase('elf')" id="btn-class-base-elf" class="creation-class-btn class-left class-pos-4" type="button" title="妖精"><img src="assets/logo/妖精logo.png" alt="妖精"></button>
-                <button onclick="selectClassBase('dark')" id="btn-class-base-dark" class="creation-class-btn class-right class-pos-1" type="button" title="黑暗妖精"><img src="assets/logo/黑暗妖精logo.png" alt="黑暗妖精"></button>
-                <button onclick="selectClassBase('illusionist')" id="btn-class-base-illusionist" class="creation-class-btn class-right class-pos-2" type="button" title="幻術士"><img src="assets/logo/幻術士logo.png" alt="幻術士"></button>
-                <button onclick="selectClassBase('Dknight')" id="btn-class-base-Dknight" class="creation-class-btn class-right class-pos-3" type="button" title="龍騎士"><img src="assets/logo/龍騎士logo.png" alt="龍騎士"></button>
-                <button onclick="selectClassBase('warrior')" id="btn-class-base-warrior" class="creation-class-btn class-right class-pos-4" type="button" title="戰士"><img src="assets/logo/戰士logo.png" alt="戰士"></button>
+                <button onclick="selectClassBase('royal')" id="btn-class-base-royal" class="creation-class-btn class-left class-pos-1" type="button" title="王族"><img loading="lazy" decoding="async" data-afk-mobile-lazy="1" src="assets/logo/王族logo.png" alt="王族"></button>
+                <button onclick="selectClassBase('knight')" id="btn-class-base-knight" class="creation-class-btn class-left class-pos-2" type="button" title="騎士"><img loading="lazy" decoding="async" data-afk-mobile-lazy="1" src="assets/logo/騎士logo.png" alt="騎士"></button>
+                <button onclick="selectClassBase('mage')" id="btn-class-base-mage" class="creation-class-btn class-left class-pos-3" type="button" title="法師"><img loading="lazy" decoding="async" data-afk-mobile-lazy="1" src="assets/logo/法師logo.png" alt="法師"></button>
+                <button onclick="selectClassBase('elf')" id="btn-class-base-elf" class="creation-class-btn class-left class-pos-4" type="button" title="妖精"><img loading="lazy" decoding="async" data-afk-mobile-lazy="1" src="assets/logo/妖精logo.png" alt="妖精"></button>
+                <button onclick="selectClassBase('dark')" id="btn-class-base-dark" class="creation-class-btn class-right class-pos-1" type="button" title="黑暗妖精"><img loading="lazy" decoding="async" data-afk-mobile-lazy="1" src="assets/logo/黑暗妖精logo.png" alt="黑暗妖精"></button>
+                <button onclick="selectClassBase('illusionist')" id="btn-class-base-illusionist" class="creation-class-btn class-right class-pos-2" type="button" title="幻術士"><img loading="lazy" decoding="async" data-afk-mobile-lazy="1" src="assets/logo/幻術士logo.png" alt="幻術士"></button>
+                <button onclick="selectClassBase('Dknight')" id="btn-class-base-Dknight" class="creation-class-btn class-right class-pos-3" type="button" title="龍騎士"><img loading="lazy" decoding="async" data-afk-mobile-lazy="1" src="assets/logo/龍騎士logo.png" alt="龍騎士"></button>
+                <button onclick="selectClassBase('warrior')" id="btn-class-base-warrior" class="creation-class-btn class-right class-pos-4" type="button" title="戰士"><img loading="lazy" decoding="async" data-afk-mobile-lazy="1" src="assets/logo/戰士logo.png" alt="戰士"></button>
             </nav>
 
             <div id="creation-gender-panel" aria-label="性別選擇">
@@ -131,24 +142,62 @@
     </div>
 
     <script>
-      // 登入頁逐幀動畫：273.png～300.png，使用相對路徑，GitHub Pages 可直接部署。
+      // 登入頁逐幀動畫：273.png～300.png；雙省電可中止在途預載，關閉後從斷點恢復。
       (function(){
         var first=273,last=300,frame=first,lastAt=0,stepMs=90,ready=false;
+        var nextFrame=first+1,preloadRunning=false,preloadTimer=0,preloadImage=null;
         var base='public/assets/login/';
-        // 首頁 BGM 優先；頁面載入完成後再逐張載入動畫，避免 28 張圖片同時與音樂搶讀取／解碼資源。
-        function preloadFrame(n){
-          if(n>last){ready=true;return;}
-          var p=new Image();
-          p.onload=p.onerror=function(){preloadFrame(n+1);};
+        function memoryLite(){
+          return typeof window.__afkMobileMemoryLite==='function'&&window.__afkMobileMemoryLite();
+        }
+        function creationVisible(){
+          var screen=document.getElementById('creation-screen');
+          return !!(screen&&!screen.classList.contains('hidden'));
+        }
+        function preloadNext(){
+          if(ready||memoryLite()||!creationVisible()){preloadRunning=false;return;}
+          if(nextFrame>last){ready=true;preloadRunning=false;return;}
+          preloadRunning=true;
+          var n=nextFrame,p=new Image();
+          preloadImage=p;
+          var settle=function(){
+            if(preloadImage!==p)return;
+            p.onload=p.onerror=null;
+            preloadImage=null;
+            nextFrame=n+1;
+            preloadRunning=false;
+            preloadNext();
+          };
+          p.onload=p.onerror=settle;
           p.src=base+n+'.png';
         }
-        function beginPreload(){setTimeout(function(){preloadFrame(first+1);},500);}
-        if(document.readyState==='complete') beginPreload();
+        function beginPreload(){
+          if(ready||preloadRunning||preloadTimer||memoryLite()||!creationVisible())return;
+          preloadTimer=setTimeout(function(){preloadTimer=0;preloadNext();},500);
+        }
+        function pausePreload(){
+          if(preloadTimer){clearTimeout(preloadTimer);preloadTimer=0;}
+          if(preloadImage){
+            preloadImage.onload=preloadImage.onerror=null;
+            try{preloadImage.removeAttribute('src');}catch(e){}
+            preloadImage=null;
+          }
+          preloadRunning=false;
+        }
+        if(document.readyState==='complete')beginPreload();
         else window.addEventListener('load',beginPreload,{once:true});
+        window.addEventListener('afk-mobile-memory-change',function(event){
+          if(event&&event.detail&&event.detail.active)pausePreload();
+          else beginPreload();
+        });
+        window.addEventListener('afk-mobile-memory-login',function(event){
+          if(event&&event.detail&&event.detail.visible)beginPreload();
+          else pausePreload();
+        });
         function animateLogin(now){
           var screen=document.getElementById('creation-screen');
           var img=document.getElementById('login-anim-image');
-          if(ready&&img&&screen&&!screen.classList.contains('hidden')&&now-lastAt>=stepMs){
+          if(ready&&img&&screen&&!screen.classList.contains('hidden')&&!memoryLite()&&now-lastAt>=stepMs){
             frame=frame>=last?first:frame+1;
             img.src=base+frame+'.png';
             lastAt=now;
@@ -551,22 +600,22 @@
     </script>
 
     <script src="js/anim-manifest.js?v=8168f3d2c7.7.65"></script>
-    <script src="js/00-data.js?v=26a4a6279e.8.3-dancefire-team"></script>
-<script src="js/01-drops-config.js?v=a681360248.8.3-dancefire-team"></script>
+    <script src="js/00-data.js?v=35f815833e.8.3-dancefire-team"></script>
+<script src="js/01-drops-config.js?v=c21d356456.8.3-dancefire-team"></script>
 <script src="js/02-stats-recompute.js?v=c22970acac.8.3-dancefire-team"></script>
     <script src="js/03-combat-core.js?v=b12e65052e.8.4-guard-support"></script>
     <script src="js/04-combat-attack.js?v=ed0ee8d89c.8.3-dancefire-team"></script>
-<script src="js/05-kill-progression.js?v=67d7290092.8.2-main-gear"></script>
+<script src="js/05-kill-progression.js?v=8fe7658e77.8.2-main-gear"></script>
     <script src="js/06-status-allies.js?v=d5ae2d06a9.8.5-merc-elf-ele"></script>
     <script src="js/07-skills-cast.js?v=1997ce1b05.7.97-threat"></script>
 <script src="js/08-items-equip.js?v=80932441b1.7.96"></script>
-<script src="js/09-vfx-render.js?v=d9b3b19853.7.95"></script>
+<script src="js/09-vfx-render.js?v=0cd1c85320.7.95"></script>
 <script src="js/10-ui-tabs.js?v=96e2515955.8.5-merc-elf-ele"></script>
-<script src="js/11-world-map.js?v=efda91943e.7.99-wino-sprite"></script>
+<script src="js/11-world-map.js?v=fec23b17e1.7.99-wino-sprite"></script>
 <script src="js/12-npc-quests.js?v=f217242165.7.56"></script>
-<script src="js/13-shop-save.js?v=9dfdaa8358.8.2-merc-exp-monotonic"></script>
+<script src="js/13-shop-save.js?v=c1147549c9.8.2-merc-exp-monotonic"></script>
 <script src="js/14-craft-pandora.js?v=528dc95d26.7.75"></script>
-<script src="js/15-cards.js?v=b1159fb025.7.66"></script>
+<script src="js/15-cards.js?v=d2525cd3a8.7.66"></script>
 <script src="js/16-equip-book.js?v=b65ee3ef7a.5.100-audit-tail"></script>
 <script src="js/18-misc-book.js?v=efb9d0a866.5.100-audit-tail"></script>
 <script src="js/17-audio.js?v=07c972f6fe.8.1-monia-sfx"></script>
@@ -574,8 +623,8 @@
 <script src="js/20-warehouse-window.js?v=f0ce1aeb02.5.100-audit-tail"></script>
 <script src="js/21-relic-book.js?v=7d118874fb.5.100-audit-tail"></script>
     <script src="js/23-summons.js?v=ae7ec8f2aa.8.3-dancefire-team"></script>
-    <script src="js/22-pets.js?v=665accdc36.8.3-dancefire-team"></script>
-    <script src="js/24-pandora-relic-market.js?v=e6bd019fcb.7.70"></script>
+    <script src="js/22-pets.js?v=8e36922cec.8.3-dancefire-team"></script>
+    <script src="js/24-pandora-relic-market.js?v=f50c6e518f.7.70"></script>
     <script src="js/25-clan-system.js?v=5186224489.7.96-castle-guards"></script>
     <script src="js/26-world-channel.js?v=6fca57ef71.8.4-npc-language"></script>
 <script src="js/28-pvp-arena.js?v=6891d40660.7.89-stage33-host-sign"></script>
@@ -592,7 +641,7 @@
     <!-- 存檔解壓快取：必須排在所有會讀 localStorage 的外掛之前（核心每殺一隻怪都重解壓一次血盟狀態） -->
     <script src="afk-lzcache.js?v=b96581473d"></script>
     <!-- afk-synccompress：存檔即時壓縮（預設關）——開啟後把 _lzSet 換回同步壓縮，根治登出/多開後存檔未壓縮爆滿。緊接 lzcache、在任何會存檔的外掛之前 -->
-    <script src="afk-synccompress.js?v=47b1cdd7aa"></script>
+    <script src="afk-synccompress.js?v=9dbbae5efd"></script>
     <!-- 共用基礎：自製彈窗/確認、dex/wiki 共用資料表（其他外掛依賴，排前面） -->
     <script src="afk-ui.js?v=c90fb61e51"></script>
     <script src="afk-extradata.js?v=a069862188"></script>
@@ -601,11 +650,11 @@
     <script src="afk-mobile-banner.js?v=ec574f91b7"></script>
     <script src="afk-offline-owner.js?v=d90b67cc85"></script>
     <script src="afk-merc-policy.js?v=ffce686695"></script>
-    <script src="afk-mobile-memory.js?v=97e204b78d"></script>
+    <script src="afk-mobile-memory.js?v=b9f1c6fc82"></script>
     <script src="afk-mobile-audio-memory.js?v=82fefa462d"></script>
     <!-- 先載入、DOMContentLoaded 才安裝，確保包在 PP 後續 renderTabs wrappers 的最外層。 -->
-    <script src="afk-powersave-inventory.js?v=849abe3731"></script>
-    <script src="afk-offline.js?v=31c4605f96"></script>
+    <script src="afk-powersave-inventory.js?v=30aa4b8b5a"></script>
+    <script src="afk-offline.js?v=d218f5b92b"></script>
     <!-- 手機版面 / 返回鍵 -->
     <script src="afk-mobile.js?v=ff7ce7f3b0"></script>
     <script src="afk-backnav.js?v=a02389afc7"></script>
@@ -616,7 +665,7 @@
     <script src="afk-slotinfo.js?v=7c70639588"></script>
     <script src="afk-loadslots.js?v=a43834b125"></script>
     <script src="afk-dex.js?v=3579200061"></script>
-    <script src="afk-wiki.js?v=4b68faed6c"></script>
+    <script src="afk-wiki.js?v=ae3f631ea5"></script>
     <!-- 設定選單 / 存檔 / 診斷 / 離線紀錄 -->
     <script src="afk-storage.js?v=302890a0df"></script>
     <!-- 存檔空間警告：localStorage 用量 >80% 時首頁紅色警告(唯讀;與 afk-storage 同一套估算) -->
@@ -626,15 +675,15 @@
     <script src="afk-history.js?v=a562ed31c4"></script>
     <script src="afk-reissueid.js?v=1fbdc00067"></script>
     <script src="afk-diag.js?v=731c2dc5b6"></script>
-    <script src="afk-powersave.js?v=7bce060db9"></script>
+    <script src="afk-powersave.js?v=c70adf22c6"></script>
     <!-- 遊戲內小工具 -->
     <script src="afk-statpts.js?v=4e96609d8d"></script>
     <!-- 能力分頁條列式：拿掉背景圖改大字卡片(純 CSS,DOM/updateUI 不動) -->
     <script src="afk-statlist.js?v=6fd13eddb6"></script>
     <script src="afk-autobuy.js?v=c5ef3debdd"></script>
-    <script src="afk-training.js?v=7b5c7e666a"></script>
+    <script src="afk-training.js?v=7b5cb022f0"></script>
     <!-- 廢品標記管理：入口排在木人場鈕下方（自己 insertAdjacentElement，不靠載入順序） -->
-    <script src="afk-junkmgr.js?v=b943ff4f8a"></script>
+    <script src="afk-junkmgr.js?v=014c4cf961"></script>
     <script src="afk-mercguard.js?v=ecf4d9a46d"></script>
     <script src="afk-bossring.js?v=a3e62355d7"></script>
     <script src="afk-itemsearch.js?v=82c78d7bda"></script>
@@ -665,7 +714,7 @@
     <script src="afk-sw.js?v=0c1440decf"></script>
     <script src="afk-syncinfo.js?v=9a0c3de601"></script>
     <script src="afk-analytics.js?v=25e209371f"></script>
-    <script src="afk-skin.js?v=a86ce97ad1"></script>
+    <script src="afk-skin.js?v=82095064cd"></script>
     <!-- ═══════════ 加掛版外掛層 END ═══════════ -->
 </body>
 </html>

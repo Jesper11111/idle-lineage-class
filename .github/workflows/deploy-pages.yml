@@ -5,10 +5,10 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - '.github/**'
-      - 'CLAUDE.md'
-      - 'README.md'
-      - 'cf-sync-trigger/**'
+      - ".github/**"
+      - "CLAUDE.md"
+      - "README.md"
+      - "cf-sync-trigger/**"
   workflow_dispatch: {}
 
 permissions:
@@ -30,6 +30,42 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 安裝鎖定版測試依賴
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium webkit
+
+      - name: 部署前版本與手機穩定性閘門
+        run: |
+          node scripts/stamp-code-versions.mjs --check
+          node scripts/stamp-sw-version.mjs
+          git diff --exit-code -- index.html sw.js version.json
+          node scripts/apply-core-patches.mjs --check
+          node scripts/apply-plugin-lifecycle-patches.mjs --check
+          node scripts/apply-shines-backports.mjs --check
+          node scripts/apply-policy-patches.mjs --check
+          node scripts/apply-offline-safety-patches.mjs --check
+          node scripts/check-save-io.mjs --patched
+          npm test
+          npm run test:save-queue
+          npm run test:mobile-memory
+          npm run test:mobile-stress
+          npm run test:mobile-stress-webkit
+          npm run test:mobile-audio-memory
+          npm run test:powersave-inventory
+          npm run test:wiki-mobile-memory
+          npm run test:pwa-cache
+          npm run test:offline
+          npm run test:backports
+
+      - name: 移除測試依賴後再打包
+        run: rm -rf node_modules
 
       - name: 設定 GitHub Pages
         uses: actions/configure-pages@v5

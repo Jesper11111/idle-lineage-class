@@ -1361,14 +1361,16 @@ const PET_ANIM_FPS = 8, PET_ANIM_MAXF = 40;
 function _pet8Probe(form, dir) {
     let key = form + '#' + dir;
     if (_pet8Cache[key] !== undefined) return;
+    let _petMemoryEpoch = (typeof window.__afkMobileMemoryFrameEpoch === 'function') ? window.__afkMobileMemoryFrameEpoch() : null;
+    let _petMemoryCurrent = () => typeof window.__afkMobileMemoryProbeCurrent !== 'function' || window.__afkMobileMemoryProbeCurrent(_petMemoryEpoch);
     _pet8Cache[key] = 'probing';
     let folder = 'assets/anim/' + encodeURIComponent(form) + '/d' + dir + '/';
     let out = { shadow: {} };
     let acts = ['walk', 'idle', 'attack', 'skill', 'hurt', 'death'];
     let pending = acts.length * 2;
-    let finish = () => { if (--pending > 0) return; _pet8Cache[key] = out.idle ? out : null; };
+    let finish = () => { if (--pending > 0) return; if (typeof window.__afkMobileMemoryAcceptFrames === 'function' && !window.__afkMobileMemoryAcceptFrames(_petMemoryEpoch)) { if (typeof window.__afkMobileMemoryProbeCurrent !== 'function' || window.__afkMobileMemoryProbeCurrent(_petMemoryEpoch)) delete _pet8Cache[key]; return; } _pet8Cache[key] = out.idle ? out : null; };
     let probeSeq = (target, k, pfx, minF) => {   // 🚀 v3.4.37 平行探測（滑動窗口·共用 js/09 _probeFramesWin）
-        _probeFramesWin(i => folder + pfx + i + '.png', PET_ANIM_MAXF, minF || 2, frames => { target[k] = frames; finish(); });
+        _probeFramesWin(i => folder + pfx + i + '.png', PET_ANIM_MAXF, minF || 2, frames => { target[k] = frames; finish(); }, _petMemoryCurrent);
     };
     acts.forEach(a => { probeSeq(out, a, a + '_', a === 'hurt' ? 1 : 2); probeSeq(out.shadow, a, a + '_s_', 1); });
 }

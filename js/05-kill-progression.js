@@ -665,6 +665,7 @@ function prideTeleportBlocked() {
 function enterPrideFloor(n) {
     if (typeof mercenaryRoleBattleBlocked === 'function' && mercenaryRoleBattleBlocked('pride_f' + n)) return false;
     saveSiegeBossHp();
+    if (typeof window.__afkMobileMemoryLifecycle === 'function') window.__afkMobileMemoryLifecycle('map-change');   // 🔌 直接進圖也必須釋放上一層圖片
     mapState.current = 'pride_f' + n;
     player.lastBattleMap = mapState.current;   // 🗼 記錄攀登位置：回村後點「出發」會被導回傲慢之塔1樓（見 departToLastBattle）
     state.prideFloor = n;
@@ -741,6 +742,7 @@ function prideEndClimb(msg) {
 function enterOblivionMap(mapKey) {
     if (typeof mercenaryRoleBattleBlocked === 'function' && mercenaryRoleBattleBlocked(mapKey)) return false;
     saveSiegeBossHp();
+    if (typeof window.__afkMobileMemoryLifecycle === 'function') window.__afkMobileMemoryLifecycle('map-change');   // 🔌 直接進圖也必須釋放上一張圖片
     mapState.current = mapKey;
     player.lastBattleMap = mapKey;
     mapState.mobs = [null, null, null, null, null];
@@ -1060,6 +1062,7 @@ function enterRift() {
 function enterRiftMap() {   // 仿 enterPrideFloor 的戰鬥進場（不走 changeMap，避免清掉 riftRun）
     if (typeof mercenaryRoleBattleBlocked === 'function' && mercenaryRoleBattleBlocked('rift_battle')) return false;
     saveSiegeBossHp();
+    if (typeof window.__afkMobileMemoryLifecycle === 'function') window.__afkMobileMemoryLifecycle('map-change');   // 🔌 直接進圖也必須釋放上一張圖片
     mapState.current = 'rift_battle';
     player.lastBattleMap = 'rift_battle';
     mapState.mobs = [null, null, null, null, null];

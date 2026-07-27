@@ -39,7 +39,10 @@
     // 開關關 / 讀不到開關中樞 / 打包版 → 完全用回上游原版(非同步)行為,不改任何 byte
     if (!window.AFK_TOGGLES || !AFK_TOGGLES.enabled('synccompress') || window.fableStore) return _orig(key, jsonStr);
     // 同步壓縮(還原作者 d8e583539 之前的版本):存檔當下就壓成 LZ1,無非同步空窗
-    try { if (typeof _lzWorkerRev !== 'undefined' && _lzWorkerRev) _lzWorkerRev[key] = (_lzWorkerRev[key] || 0) + 1; } catch (e) {}   // 讓任何在途的舊 Worker 結果失效(rev 不符→其 onmessage 放棄),不會回頭用舊原文蓋掉我們剛壓好的版本
+    try {
+      if (typeof _lzWorkerRev !== 'undefined' && _lzWorkerRev) _lzWorkerRev[key] = (_lzWorkerRev[key] || 0) + 1;
+      if (typeof _cancelLzCompressionKey === 'function') _cancelLzCompressionKey(key);
+    } catch (e) {}   // 讓任何在途／待處理的舊 Worker 結果失效並放掉 raw 參照，不會回頭蓋掉同步壓縮版
     var packed = null;
     try { packed = 'LZ1:' + LZString.compressToUTF16(jsonStr); } catch (e) { packed = null; }
     if (packed != null && _lsSet(key, packed)) return true;

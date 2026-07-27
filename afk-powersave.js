@@ -76,7 +76,12 @@
         ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
         card.querySelector('#afk-ps-close').addEventListener('click', close);
         card.querySelectorAll('input[data-ps]').forEach(function (cb) {
-            cb.addEventListener('change', function () { set(cb.getAttribute('data-ps'), cb.checked); });
+            cb.addEventListener('change', function () {
+                set(cb.getAttribute('data-ps'), cb.checked);
+                if (typeof window.__afkMobileMemoryRefresh === 'function') {
+                    window.__afkMobileMemoryRefresh(false);
+                }
+            });
         });
     }
 

@@ -742,6 +742,7 @@ function _codexMobThumbHtml(nm, mi, silh) {
     let fb = mi.fb.concat(['https://placehold.co/64x64/1e293b/334155?text=%3F']).join('|');
     let single = `<img src="${mi.src}" data-fb="${fb}" alt="${nm}" class="w-16 h-16 object-contain${silh}" onerror="_mobImgErr(this)">`;
     if (silh) return single;   // 剪影(未收集)：黑影單張即可
+    if (typeof window.__afkMobileMemoryLite === 'function' && window.__afkMobileMemoryLite()) return single;   // 🔌 手機雙省電縮圖已含完整單層，不疊回原尺寸影子／武器
     if (!(typeof MOB_ANIM_NAMES !== 'undefined' && MOB_ANIM_NAMES.has(nm))) return single;
     let hasS = (typeof MOB_ANIM_SPRITE_SHADOW !== 'undefined') && MOB_ANIM_SPRITE_SHADOW.has(nm);
     let hasW = (typeof MOB_ANIM_WEAPON_FX !== 'undefined') && MOB_ANIM_WEAPON_FX.has(nm);

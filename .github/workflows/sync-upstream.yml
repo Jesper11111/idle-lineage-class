@@ -45,7 +45,7 @@ jobs:
         if: steps.chk.outputs.changed == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Clone 新版基準（pp771007）
         if: steps.chk.outputs.changed == 'true'
@@ -58,36 +58,39 @@ jobs:
           echo "ver=$VER" >> "$GITHUB_OUTPUT"
           echo "title=$TITLE" >> "$GITHUB_OUTPUT"
 
-      - name: 鏡像資產（assets / public；保留核准的 Shines 回移資產）
+      - name: 預驗乾淨上游可完整重套核心、外掛與離線補丁
         if: steps.chk.outputs.changed == 'true'
+        id: preflight
+        continue-on-error: true
+        run: node scripts/test-full-sync-preflight.mjs --source-dir /tmp/upstream
+
+      - name: 鏡像資產（assets / public；保留核准的 Shines 回移資產）
+        if: steps.chk.outputs.changed == 'true' && steps.preflight.outcome == 'success'
         run: |
           rsync -a --delete --exclude-from=scripts/shines-backport-assets.txt /tmp/upstream/assets/ assets/
           if [ -d /tmp/upstream/public ]; then rsync -a --delete /tmp/upstream/public/ public/; fi
 
-      # smoke 需要 playwright；repo 刻意無 package.json（外掛是 vanilla JS），CI 臨時裝、commit 時用
-      # 「路徑白名單」add，node_modules/package.json 不會被收進去。
-      - name: 安裝 Playwright（smoke 用）
-        if: steps.chk.outputs.changed == 'true'
+      # 同步內的手機記憶體、PWA、離線整合與 smoke 都需要 Playwright。
+      # package-lock 已鎖版；CI 不改寫 package.json。
+      - name: 安裝鎖定版依賴與 Playwright Chromium
+        if: steps.chk.outputs.changed == 'true' && steps.preflight.outcome == 'success'
         run: |
-          npm init -y > /dev/null
-          npm i -D playwright > /dev/null
-          npx playwright install --with-deps chromium
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium webkit
 
       - name: 鏡像 PP 完成品 + 套本地政策 + 重產 manifest/版本 + 更新 checkpoint
-        if: steps.chk.outputs.changed == 'true'
+        if: steps.chk.outputs.changed == 'true' && steps.preflight.outcome == 'success'
         id: merge
-        continue-on-error: true   # 失敗（多半是錨點被上游改壞）→ 下面開 issue，不讓整包紅得無聲無息
+        continue-on-error: true # 失敗（多半是錨點被上游改壞）→ 下面開 issue，不讓整包紅得無聲無息
         env:
-          AFK_SKIP_SMOKE: '1'     # smoke 拆成獨立 step（失敗要走「開 issue、不推」而非腳本 exit 1）
+          AFK_SKIP_SMOKE: "1" # smoke 拆成獨立 step（失敗要走「開 issue、不推」而非腳本 exit 1）
         run: node scripts/sync-upstream.mjs /tmp/upstream
 
       - name: 外掛掛點冒煙測試（Playwright）
         if: steps.chk.outputs.changed == 'true' && steps.merge.outcome == 'success'
         id: smoke
         continue-on-error: true
-        run: |
-          node scripts/smoke-hooks.mjs
-          node scripts/test-shines-backports.mjs
+        run: node scripts/smoke-hooks.mjs
 
       - name: 建立上游同步 PR（全綠才建立；不直推 main）
         if: steps.chk.outputs.changed == 'true' && steps.merge.outcome == 'success' && steps.smoke.outcome == 'success'
@@ -144,7 +147,7 @@ jobs:
           fi
 
       - name: 同步失敗（錨點/腳本）→ 開 issue 通知
-        if: steps.chk.outputs.changed == 'true' && steps.merge.outcome == 'failure'
+        if: steps.chk.outputs.changed == 'true' && (steps.preflight.outcome == 'failure' || steps.merge.outcome == 'failure')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -152,7 +155,7 @@ jobs:
           if [ "$existing" = "0" ]; then
             gh issue create \
               --title "⚠️ 同步腳本失敗（上游 ${{ steps.up.outputs.ver }}），可能是核心補丁錨點被改壞" \
-              --body "自動同步在 sync-upstream.mjs 階段失敗。常見原因：①PP 改寫了本地政策補丁依賴的錨點；②check-save-io.mjs 擋下存檔 I/O 變更。未建立同步 PR，請人工比對 PP 最新版後修正，詳見本次 workflow run log。"
+              --body "自動同步在乾淨上游補丁預演或 sync-upstream.mjs 階段失敗。常見原因：①PP 改寫了核心／外掛生命週期／本地政策補丁依賴的錨點；②check-save-io.mjs 擋下存檔 I/O 變更；③手機記憶體、PWA、離線或回移回歸測試未通過。資產不會在預演失敗時先被鏡像，也未建立同步 PR，請依本次 workflow run log 修正。"
           else
             echo "已有開啟中的同名 issue，略過。"
           fi

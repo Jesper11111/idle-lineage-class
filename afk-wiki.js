@@ -1066,7 +1066,7 @@
     { k: 'mode', n: '遊戲模式' },
     { k: 'npc', n: 'NPC總覽' }
   ];
-  var state = { tab: 'equipbook', cls: 'knight', q: '', magicCls: 'all', magicChar: '', collMode: null, equipCls: 'all', equipSlot: 'all', equipRegion: 'all', relicRegion: 'all' };   // 預設分頁=分頁列第一個(收藏-裝備)。equipSlot 必須是 EQUIP_GROUPS 的 key 或 'all'(舊值 'wpn' 已無此分組→整頁空白)
+  var state = { tab: 'equipbook', cls: 'knight', q: '', magicCls: 'all', magicChar: '', collMode: null, equipCls: 'all', equipSlot: 'all', equipRegion: 'all', equipPage: 0, relicRegion: 'all' };   // 預設分頁=分頁列第一個(收藏-裝備)。equipSlot 必須是 EQUIP_GROUPS 的 key 或 'all'(舊值 'wpn' 已無此分組→整頁空白)
   // 搜尋打字防抖:每次按鍵只重設計時器,停手這麼久才真的過濾+重渲染(降低逐字輸入的 INP)。
   var SEARCH_DEBOUNCE_MS = 150;
   var _searchTimer = null;
@@ -1142,18 +1142,40 @@
       var eqHead = e.target.closest ? e.target.closest('[data-eq]') : null;
       if (eqHead) {
         var det = eqHead.parentNode ? eqHead.parentNode.querySelector('.m-eq-detail') : null;
-        if (det) det.style.display = (det.style.display === 'none') ? '' : 'none';
+        if (det) {
+          var opening = det.style.display === 'none';
+          document.querySelectorAll('#m-wiki-body .m-eq-detail').forEach(function (other) {
+            if (other === det) return;
+            other.querySelectorAll('img[src],img[srcset]').forEach(function (img) {
+              img.removeAttribute('src'); img.removeAttribute('srcset');
+            });
+            other.innerHTML = '';
+            other.style.display = 'none';
+          });
+          if (opening) {
+            det.innerHTML = linkifyTabs(equipDetailHTML(eqHead.getAttribute('data-eq')), 'equip');
+            det.style.display = '';
+          } else {
+            det.querySelectorAll('img[src],img[srcset]').forEach(function (img) {
+              img.removeAttribute('src'); img.removeAttribute('srcset');
+            });
+            det.innerHTML = '';
+            det.style.display = 'none';
+          }
+        }
         return;
       }
       // 裝備分頁的「部位篩選」
       var eqslot = e.target.closest ? e.target.closest('[data-equipslot]') : null;
-      if (eqslot) { state.equipSlot = eqslot.getAttribute('data-equipslot'); render(); return; }
+      if (eqslot) { state.equipSlot = eqslot.getAttribute('data-equipslot'); state.equipPage = 0; render(); return; }
       // 裝備分頁的「職業篩選」
       var eqcls = e.target.closest ? e.target.closest('[data-equipcls]') : null;
-      if (eqcls) { state.equipCls = eqcls.getAttribute('data-equipcls'); render(); return; }
+      if (eqcls) { state.equipCls = eqcls.getAttribute('data-equipcls'); state.equipPage = 0; render(); return; }
       // 🗺️ 遺物檢視的「掉落區域篩選」
       var eqrg = e.target.closest ? e.target.closest('[data-equipregion]') : null;
-      if (eqrg) { state.equipRegion = eqrg.getAttribute('data-equipregion'); render(); return; }
+      if (eqrg) { state.equipRegion = eqrg.getAttribute('data-equipregion'); state.equipPage = 0; render(); return; }
+      var eqpage = e.target.closest ? e.target.closest('[data-equippage]') : null;
+      if (eqpage) { state.equipPage = Math.max(0, Number(eqpage.getAttribute('data-equippage')) || 0); render(); return; }
       // 🗺️ 收藏-遺物的「掉落區域篩選」(按區域看收集進度/缺哪些)
       var rlrg = e.target.closest ? e.target.closest('[data-relicregion]') : null;
       if (rlrg) { state.relicRegion = rlrg.getAttribute('data-relicregion'); render(); return; }
@@ -1420,6 +1442,40 @@
     return h;
   }
 
+  // 裝備列表改分頁後，搜尋不能再靠 renderEquip() 的第一頁 DOM。
+  // 直接掃 DB 的文字欄位與精簡數值；命中卡不放圖片，點擊時才沿用既有 equipDetailHTML 載入詳情。
+  function equipSearchRows(terms) {
+    var rows = [];
+    if (typeof DB === 'undefined' || !DB.items) return rows;
+    Object.keys(DB.items).forEach(function (id) {
+      var d = DB.items[id];
+      if (!d || !d.n || (d.type !== 'wpn' && d.type !== 'arm' && d.type !== 'acc')) return;
+      var group = equipGroupKey(id, d);
+      var groupName = group;
+      for (var gi = 0; gi < EQUIP_GROUPS.length; gi++) {
+        if (EQUIP_GROUPS[gi].k === group) { groupName = EQUIP_GROUPS[gi].n; break; }
+      }
+      var text = [
+        id, d.n, d.d || '', d.req || '', d.slot || '', d.type || '',
+        groupName, equipCompact(d), JSON.stringify(d)
+      ].join(' ').toLowerCase();
+      if (terms.every(function (word) { return text.indexOf(word) >= 0; })) {
+        rows.push({ id: id, d: d, groupName: groupName });
+      }
+    });
+    rows.sort(function (a, b) { return String(a.d.n).localeCompare(String(b.d.n)); });
+    return rows;
+  }
+  function equipSearchCard(row) {
+    var relic = isRelicItem(row.d);
+    var nameCls = relic ? 'c-relic' : (row.d.legend ? 'c-legend' : 'text-slate-100');
+    return '<div class="m-wiki-card m-eq-card" data-eqsearch-card="1">' +
+      '<div class="m-eq-head" data-eq="' + esc(row.id) + '" style="cursor:pointer;display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">' +
+        '<span class="' + nameCls + ' font-bold">' + esc(row.d.n) + (relic ? ' 🏺' : (row.d.legend ? ' ✦' : '')) + '</span>' +
+        '<span class="m-eq-compact" style="color:#94a3b8;font-size:12px;text-align:right;">' + esc(row.groupName + '　' + equipCompact(row.d)) + '</span>' +
+      '</div><div class="m-eq-detail" style="display:none;border-top:1px solid #1e293b;margin-top:6px;padding-top:6px;"></div></div>';
+  }
+
   // 供掉落查詢統一搜尋呼叫:輕量回傳「哪些分頁/區塊」含關鍵字(只取標題,不渲染整頁結果)
   function searchHits(q, max) {
     q = String(q || '').trim().toLowerCase();
@@ -1431,6 +1487,12 @@
     try {
       SEARCH_SOURCES.forEach(function (s) {
         if (out.length >= max) return;
+        if (s.key === 'equip') {
+          equipSearchRows(terms).slice(0, max - out.length).forEach(function (row) {
+            out.push({ tab: 'equip', cls: null, label: s.label, title: row.d.n });
+          });
+          return;
+        }
         var clsList = s.cls ? (s.key === 'quest' ? [{ k: 'all', n: '全職業共通' }].concat(CLASSES) : CLASSES) : [null];
         clsList.forEach(function (c) {
           if (out.length >= max) return;
@@ -1455,6 +1517,19 @@
     var terms = q.split(/\s+/).filter(Boolean);   // 空白分詞=AND:每個詞都要出現(玩家常打「娃娃 兌換」這種多詞,整串當一個字面值會全空)
     if (!terms.length) terms = [q];
     SEARCH_SOURCES.forEach(function (s) {
+      if (s.key === 'equip') {
+        var equipRows = equipSearchRows(terms);
+        if (equipRows.length) {
+          var equipVisible = equipRows.slice(0, 80);
+          parts.push('<div class="m-wiki-sub">' + esc(s.label) +
+            ' <span class="m-wiki-cnt">' + equipRows.length + '</span></div>' +
+            equipVisible.map(equipSearchCard).join('') +
+            (equipRows.length > equipVisible.length
+              ? '<div class="m-wiki-hint">結果過多，僅顯示前 ' + equipVisible.length + ' 件；請再加一個關鍵字縮小範圍。</div>'
+              : ''));
+        }
+        return;
+      }
       // cls 分頁逐職業各搜一次;任務分頁另含「全職業共通」桶(QUEST_COMMON：雷德/希米哲等只在 cls='all' 渲染,否則搜不到)
       var clsList = s.cls ? (s.key === 'quest' ? [{ k: 'all', n: '全職業共通' }].concat(CLASSES) : CLASSES) : [null];
       clsList.forEach(function (c) {
@@ -1508,7 +1583,7 @@
     clsRow.style.display = showCls ? 'flex' : 'none';
     var _allBtn = clsRow.querySelector('.m-wiki-clsbtn-all'); if (_allBtn) _allBtn.style.display = (state.tab === 'quest') ? '' : 'none';   // 全職業鈕只在任務分頁
     document.querySelectorAll('#m-wiki-cls .m-wiki-clsbtn').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-cls') === state.cls); });
-    body.innerHTML = linkifyTabs((state.tab === 'magic') ? renderMagic(state.magicCls) : (state.tab === 'equip') ? renderEquip(state.equipCls, state.equipSlot, state.equipRegion) : tabHTML(state.tab, state.cls), state.tab);
+    body.innerHTML = linkifyTabs((state.tab === 'magic') ? renderMagic(state.magicCls) : (state.tab === 'equip') ? renderEquip(state.equipCls, state.equipSlot, state.equipRegion, state.equipPage) : tabHTML(state.tab, state.cls), state.tab);
   }
 
   // 📐 各專精「實際數據」——逐條從 js/ 原始碼查證(2026-07-05,含未精通基準值對照與描述沒講的細節);
@@ -2036,7 +2111,7 @@
 
   // 裝備總覽:直接讀遊戲 DB.items 依部位分組。數值用遊戲自己的 buildItemDescHTML(永遠與遊戲一致、作者新增自動跟上),
   // 取得方式接掉落查詢的 AFK_DEX_API.acquireHTML。每件「詳情」常駐 DOM(display:none)→ 連完整數值/特效都進統一搜尋;
-  // 詳情與整頁 HTML 都建一次就快取(_equipDetail/_equipHtml)→ 搜尋每次重渲染 441 件也不卡。
+  // 詳情只在玩家實際展開時建立；列表每頁固定數量，避免一次把所有裝備的取得圖與怪物圖塞進 DOM。
   var EQUIP_FILTERS = [['all', '全部'], ['royal', '王族'], ['knight', '騎士'], ['mage', '法師'], ['elf', '妖精'], ['dark', '黑暗妖精'], ['illusion', '幻術士'], ['dragon', '龍騎士'], ['warrior', '戰士']];   // 順序＝全部＋創角職業序(同 CLASSES)
   // 武器部位依「裝備圖鑑」細分(作者 EQUIP_CATEGORIES,分類用 equipCatKey/EQUIP_ITEM_CAT);防具/飾品維持原本粗分。
   var RELIC_SLOT = '__relic';   // 「遺物」虛擬部位的 key:刻意用 __ 開頭,不可能撞到真實 slot
@@ -2111,9 +2186,7 @@
     return true;
   }
   // 詳情:直接重用掉落查詢的完整物品詳情(itemDetailHTML),與掉落查詢一模一樣(類型/數值/攻速/賣價/製作/商店/取得/怪物掉落),只去掉它的名稱列與互動鈕;建一次快取
-  var _equipDetail = {};
   function equipDetailHTML(id) {
-    if (_equipDetail[id] !== undefined) return _equipDetail[id];
     var html = '';
     try {
       if (window.AFK_DEX_API && AFK_DEX_API.itemDetailHTML) {
@@ -2126,7 +2199,6 @@
         if (window.AFK_DEX_API && AFK_DEX_API.acquireHTML) html += '<div style="margin-top:6px;">' + AFK_DEX_API.acquireHTML(id) + '</div>';
       }
     } catch (e) {}
-    _equipDetail[id] = html;
     return html;
   }
   // 列表精簡行(一眼看重點);詳情常駐隱藏故搜尋仍涵蓋全部內容
@@ -2137,12 +2209,10 @@
     if (d.req && d.req !== 'all') bits.push(String(d.req).split(',').map(function (x) { return EQUIP_REQ_CN[x] || x; }).join('／') + '專用');   // 多職業 req(如 knight,elf,dark)逐一轉中文
     return bits.join('　');
   }
-  var _equipHtml = {};
-  function renderEquip(cls, slot, region) {
-    cls = cls || 'all'; slot = slot || 'all'; region = region || 'all';
+  var EQUIP_PAGE_SIZE = 48;
+  function renderEquip(cls, slot, region, page) {
+    cls = cls || 'all'; slot = slot || 'all'; region = region || 'all'; page = Math.max(0, Number(page) || 0);
     if (slot !== RELIC_SLOT) region = 'all';   // 區域篩選只在遺物檢視有意義;其餘部位固定 all,避免生出一堆同內容的快取
-    var ckey = cls + '|' + slot + '|' + region;
-    if (_equipHtml[ckey] !== undefined) return _equipHtml[ckey];
     var _ridx = (slot === RELIC_SLOT) ? relicDropIndex() : null;   // 遺物→掉落區域索引(見 relicDropIndex);null=降級成純部位分類
     // 部位 tag 列(全部＋各部位):一次只看一個部位,避免整頁太長
     //   「🏺 遺物」是虛擬部位(不是真的 slot):跨所有部位只留遺物,但仍照部位分組 → 一頁看完、又不會亂成一坨。
@@ -2161,7 +2231,7 @@
       regionRow = '<div class="m-wiki-mfilter"><button type="button" class="m-wiki-mfbtn' + (region === 'all' ? ' on' : '') + '" data-equipregion="all">全部區域</button>' +
         _ridx.regions.map(function (rg) { return '<button type="button" class="m-wiki-mfbtn' + (rg === region ? ' on' : '') + '" data-equipregion="' + esc(rg) + '">' + esc(rg) + '</button>'; }).join('') + '</div>';
     }
-    var note = '<div class="m-wiki-note">選<b>部位</b>與<b>職業</b>篩選;<b>點任一件展開完整數值與取得方式</b>。搜尋會跨全部裝備、連展開內容一起命中。'
+    var note = '<div class="m-wiki-note">選<b>部位</b>與<b>職業</b>篩選;<b>點任一件才載入完整數值與取得方式</b>。列表固定分頁，避免手機一次載入數千張取得來源圖片。'
       + '<br>💍 <b>飾品欄會隨等級解鎖</b>：戒指一開始 2 個，<b>Lv76 開第 3 個、Lv81 開第 4 個</b>；耳環一開始 1 個，<b>Lv59 開第 2 個</b>。'
       + '<br>🔒 <b>把裝備穿上身會自動取消它的「廢品」標記</b>（穿上＝你要留著），不會再被自動賣出賣掉。</div>';
     // 🏺 遺物總說明(手動維護;規則對應 js/01 掉落表、js/08 裝備/強化守衛、js/14 gachaWeight=0、js/21 收集冊)
@@ -2206,19 +2276,39 @@
           '<span style="display:flex;align-items:center;gap:7px;min-width:0;">' + icImg + '<span class="' + nameCls + ' font-bold">' + esc(d.n) + (isRelic_ ? ' 🏺' : (d.legend ? ' ✦' : '')) + '</span></span>' +
           '<span class="m-eq-compact" style="color:#94a3b8;font-size:12px;text-align:right;flex-shrink:1;min-width:0;">' + esc(compact) + '</span>' +
         '</div>' +
-        '<div class="m-eq-detail" style="display:none;border-top:1px solid #1e293b;margin-top:6px;padding-top:6px;">' + equipDetailHTML(id) + '</div>' +
+        '<div class="m-eq-detail" style="display:none;border-top:1px solid #1e293b;margin-top:6px;padding-top:6px;"></div>' +
       '</div>';
     }
     var html = slotRow + clsRow + regionRow + note + relicCard;
-    var total = 0;
+    var ordered = [];
     EQUIP_GROUPS.forEach(function (g) {
       var list = buckets[g.k]; if (!list || !list.length) return;
       list.sort(function (a, b) { return (b.d.p || 0) - (a.d.p || 0) || String(a.d.n).localeCompare(String(b.d.n)); });
-      total += list.length;
-      html += '<div class="m-wiki-sub">' + g.n + '（' + list.length + '）</div>' + list.map(card).join('');
+      list.forEach(function (entry) { ordered.push({ group: g, groupCount: list.length, entry: entry }); });
     });
+    var total = ordered.length;
+    var pageCount = Math.max(1, Math.ceil(total / EQUIP_PAGE_SIZE));
+    page = Math.min(page, pageCount - 1);
+    var controls = '';
+    if (pageCount > 1) {
+      controls = '<div class="m-wiki-mfilter m-eq-pages">' +
+        '<button type="button" class="m-wiki-mfbtn" data-equippage="' + Math.max(0, page - 1) + '"' + (page <= 0 ? ' disabled' : '') + '>上一頁</button>' +
+        '<span style="align-self:center;color:#94a3b8;font-size:12px;">' + (page + 1) + ' / ' + pageCount + '（共 ' + total + ' 件）</span>' +
+        '<button type="button" class="m-wiki-mfbtn" data-equippage="' + Math.min(pageCount - 1, page + 1) + '"' + (page >= pageCount - 1 ? ' disabled' : '') + '>下一頁</button>' +
+        '</div>';
+      html += controls;
+    }
+    var visible = ordered.slice(page * EQUIP_PAGE_SIZE, (page + 1) * EQUIP_PAGE_SIZE);
+    var lastGroup = '';
+    visible.forEach(function (row) {
+      if (lastGroup !== row.group.k) {
+        lastGroup = row.group.k;
+        html += '<div class="m-wiki-sub">' + row.group.n + '（' + row.groupCount + '）</div>';
+      }
+      html += card(row.entry);
+    });
+    if (controls) html += controls;
     if (!total) html += '<div class="m-wiki-hint">沒有符合的裝備。</div>';
-    _equipHtml[ckey] = html;
     return html;
   }
 
