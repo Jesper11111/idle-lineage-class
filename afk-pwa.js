@@ -131,15 +131,7 @@
     });
   }
 
-  // ----- 圖桶對帳(不下載圖,只清作者換過的舊圖,下次 on-demand 抓新版)-----------
-  // 抓最新對帳清單(走網路、永遠最新),交給 cb 用。
-  function withJson(url, cb) {
-    fetch(url, { cache: 'no-cache' })
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (data) { if (data && data.length) cb(data); })
-      .catch(function () {});
-  }
-  // 首次安裝尚未接管(無 controller)→ 等接管後再把 fn 跑起來。
+  // 首次安裝尚未接管（無 controller）時，等接管後再做小型程式桶清理。
   function whenController(fn) {
     var ctrl = navigator.serviceWorker.controller;
     if (ctrl) { fn(ctrl); return; }
@@ -148,24 +140,7 @@
       whenController(fn);
     });
   }
-  // 每次載入把最新 assets-manifest 送給 SW reconcile:只清掉 sha 對不上的舊圖(作者換一張只清那一張,
-  //   下次用到才 on-demand 抓新版),不下載整包。
-  function reconcileImages() {
-    whenController(function (ctrl) {
-      withJson('assets-manifest.json', function (manifest) {
-        ctrl.postMessage({ type: 'reconcile-images', manifest: manifest });
-      });
-    });
-  }
-  // 怪物動畫幀「一怪一雜湊」對帳:anim/ 幀太多不進 assets-manifest,改用 anim-manifest.json(每個怪資料夾一個合併 sha),
-  //   送給 SW 逐「怪」比對——某怪的幀被作者換過 → 該怪快取整包清掉、下次看到時 on-demand 抓新版。不下載整包。
-  function reconcileAnim() {
-    whenController(function (ctrl) {
-      withJson('anim-manifest.json', function (folders) {
-        ctrl.postMessage({ type: 'reconcile-anim', folders: folders });
-      });
-    });
-  }
+
   // 程式桶對帳:程式桶桶名固定不隨版本換(檔案以 ?v= 定址,換版即換 URL、快取續用),代價是
   //   「舊 ?v= 的 js/css」會殘留在桶裡 → 把「本頁實際引用的 js/css URL 清單」送給 SW,清掉不在清單上的殘留。
   //   清單從 DOM 收集(script[src] + link[rel=stylesheet]),永遠跟當下載入的 index.html 一致,零手動維護。
@@ -180,15 +155,14 @@
     });
   }
 
-  // ----- SW 觀察:nudge 重抓 sw.js 比對 + 圖桶對帳(更新接管交給瀏覽器,本檔不主導)-----------
+  // ----- SW 觀察：nudge 重抓 sw.js；圖片版本由 SW 分片桶自行處理 ----------------
   function watchUpdates() {
     navigator.serviceWorker.ready.then(function (r) {
       reg = r;
       // 載入時 nudge 瀏覽器重抓 sw.js 比對。更新接管走瀏覽器標準流程即可(導覽已 network-first,
       //   使用者看到的程式碼本來就一律最新,不需頁面端 skip-waiting/強制 reload)。
       reg.update().catch(function () {});
-      reconcileImages();   // 每次載入:清掉作者換過的舊圖(下次用到才 on-demand 抓新版)
-      reconcileAnim();     // 同上,但針對怪物動畫幀(逐「怪」對帳,見 reconcileAnim)
+      // 🔌 AFK_VERSIONED_ASSET_CACHES：圖片失效改由 SW 的 manifest 版本分片桶處理；載入時不再抓／傳 24k 筆清單。
       reconcileCode();     // 程式桶:清掉換版後殘留的舊 ?v= js/css(桶名固定不倒桶,見 sw.js reconcileCode)
     }).catch(function () {});
   }
@@ -200,7 +174,7 @@
     if (pwaCapable()) {
       watchUpdates();
     }
-    console.log('[AFK-pwa] hooks OK — PWA 安裝/圖桶對帳已就緒(不預抓,圖片用到才抓)。');
+    console.log('[AFK-pwa] hooks OK — PWA 安裝/資產版本分片已就緒(不預抓,圖片用到才抓)。');
   }
 
   ready(init);

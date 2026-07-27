@@ -147,9 +147,11 @@ if (!worldMapSrc.includes("if (typeof refreshAllAllies === 'function') refreshAl
   throw new Error('[js/11-world-map.js] 找不到進安全區的 refreshAllAllies 單一掛點，拒絕繼續。');
 }
 const powersaveInventoryMustHave = [
-  "version: '1.1.0-local'",
+  "version: '1.2.0-local'",
   'TAB_COUNT_PATCH_MS = 250',
   'TAB_FULL_REBUILD_MS = 1000',
+  '_autoSortInventoryWrapped.__afkPsInventory = true',
+  'autoSortDeferred: true',
   'document.addEventListener(\'DOMContentLoaded\', install'
 ];
 const powersaveInventoryMissing = powersaveInventoryMustHave.filter(x => !powersaveInventorySrc.includes(x));

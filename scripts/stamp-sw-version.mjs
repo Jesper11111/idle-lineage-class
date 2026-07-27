@@ -15,6 +15,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const SW_FILE = 'sw.js';
+const ASSET_CACHE_SHARDS = 8;
 
 // 台灣時間 MMDD-HHMM(畫面辨識版本用)
 function nowTaipei() {
@@ -34,6 +35,52 @@ function nowTaipeiFull() {
   const o = {};
   p.forEach((x) => { o[x.type] = x.value; });
   return `${o.year}-${o.month}-${o.day} ${o.hour}:${o.minute}`;
+}
+
+function assetShard(value) {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) {
+    hash = Math.imul(hash ^ value.charCodeAt(i), 16777619);
+  }
+  return (hash >>> 0) % ASSET_CACHE_SHARDS;
+}
+
+function assetCacheGroup(path) {
+  const clean = String(path || '').replace(/^public\//, '').replace(/^\/+/, '');
+  const animated = clean.match(/^assets\/(anim|classanim|morphanim)\/([^/]+)/);
+  if (animated) return `${animated[1]}-${assetShard(animated[1] + '/' + animated[2])}`;
+  const regular = clean.match(/^assets\/([^/]+)/);
+  return regular ? `static-${regular[1]}` : null;
+}
+
+function buildAssetCacheVersions() {
+  const groups = new Map();
+  const add = (path, sha) => {
+    const group = assetCacheGroup(path);
+    if (!group || !sha) return;
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group).push(String(path) + '\0' + String(sha));
+  };
+  try {
+    for (const entry of JSON.parse(readFileSync('assets-manifest.json', 'utf8'))) {
+      if (Array.isArray(entry)) add(entry[0], entry[1]);
+    }
+  } catch (e) {
+    throw new Error('無法建立靜態資產快取版本：' + e.message);
+  }
+  try {
+    for (const entry of JSON.parse(readFileSync('anim-manifest.json', 'utf8'))) {
+      if (Array.isArray(entry)) add(entry[0], entry[1]);
+    }
+  } catch (e) {
+    throw new Error('無法建立動畫資產快取版本：' + e.message);
+  }
+  const versions = {};
+  for (const group of [...groups.keys()].sort()) {
+    const body = groups.get(group).sort().join('\n');
+    versions[group] = createHash('sha1').update(body).digest('hex').slice(0, 12);
+  }
+  return versions;
 }
 
 export function stampSwVersion() {
@@ -58,8 +105,17 @@ export function stampSwVersion() {
   const codeChanged = m[1] !== version;
 
   let next = sw.replace(m[0], `const CODE_VERSION = '${version}';`);
+  const assetCacheVersions = buildAssetCacheVersions();
+  const assetCacheJson = JSON.stringify(assetCacheVersions);
+  const assetCacheMatch = next.match(/const ASSET_CACHE_VERSIONS = (\{[^\n]*\});/);
+  if (!assetCacheMatch) {
+    throw new Error('sw.js 找不到 ASSET_CACHE_VERSIONS；請先套用 apply-core-patches.mjs');
+  }
+  const assetCacheChanged = assetCacheMatch[1] !== assetCacheJson;
+  next = next.replace(assetCacheMatch[0], `const ASSET_CACHE_VERSIONS = ${assetCacheJson};`);
+  const swChanged = codeChanged || assetCacheChanged;
   // BUILD_ID 只在「程式真的變了」時才更新成現在時間,避免自動同步每小時都改 sw.js(內容沒變卻被當改版)。
-  if (codeChanged) {
+  if (swChanged) {
     const build = nowTaipei();
     next = next.replace(/const BUILD_ID\s*=\s*'[^']*';/, `const BUILD_ID     = '${build}';`);
     console.log('[stamp] BUILD_ID →', build);
@@ -75,14 +131,15 @@ export function stampSwVersion() {
   let app = '', oldBuildAt = '';
   try { const _ov = JSON.parse(readFileSync('version.json', 'utf8')); app = _ov.app || ''; oldBuildAt = _ov.buildAt || ''; } catch { /* 首次沒有就留空 */ }
   // buildAt=完整台灣時間戳（YYYY-MM-DD HH:MM），供首頁「最後更新時間」顯示。與 build 同步：程式真的變了才更新成現在時間，沒變沿用舊值（首次沒有就補生成）。
-  const buildAt = codeChanged ? nowTaipeiFull() : (oldBuildAt || nowTaipeiFull());
+  const buildAt = swChanged ? nowTaipeiFull() : (oldBuildAt || nowTaipeiFull());
   // upstreamAt =「最後一次真的同步上游」,不能用每次重蓋檔都會變的 buildAt 冒充。
   let upstreamAt = '';
   try {
     const _cp = JSON.parse(readFileSync('upstream-checkpoint.json', 'utf8'));
     upstreamAt = String(_cp.syncedAt || '').replace(/\s*\(UTC\+8\)\s*$/, '').trim();
   } catch { /* 沒有 checkpoint 就留空，頁面端自己退回 buildAt */ }
-  const vjson = JSON.stringify({ code: version, build: buildNow, buildAt, ...(upstreamAt ? { upstreamAt } : {}), ...(app ? { app } : {}) }) + '\n';
+  const assetCache = createHash('sha1').update(assetCacheJson).digest('hex').slice(0, 12);
+  const vjson = JSON.stringify({ code: version, assets: assetCache, build: buildNow, buildAt, ...(upstreamAt ? { upstreamAt } : {}), ...(app ? { app } : {}) }) + '\n';
   if (!existsSync('version.json') || readFileSync('version.json', 'utf8') !== vjson) {
     writeFileSync('version.json', vjson);
     console.log('[stamp] version.json →', version, buildNow);

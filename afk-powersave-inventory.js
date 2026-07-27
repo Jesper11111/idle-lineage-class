@@ -4,6 +4,7 @@
  * PP 會在同步時鏡像覆蓋 afk-powersave.js，因此把本站的重背包效能優化獨立保存：
  *   - 戰鬥 tick 的純數量變動只更新目前分頁的角標。
  *   - 新增、刪除、排序、強化、鎖定、裝備與技能變動最多每秒完整重建一次。
+ *   - 自動整理仍立即排序資料，但不再用 force=true 重建手機看不到的五個分頁。
  *   - 隱藏分頁與手機非背包欄不重建，切回時立即同步。
  *   - tick 外操作與 force=true 維持核心的立即重建語意。
  *
@@ -32,6 +33,7 @@
         var _tabLastFullAt = 0;
         var _tabFlushing = false;
         var _tabRenderEpoch = 0;
+        var _autoSortDepth = 0;
 
         function noteForwardedTabRender() {
             _tabRenderEpoch++;
@@ -271,6 +273,12 @@
             }
             var inCombatTick = false;
             try { inCombatTick = typeof state !== 'undefined' && !!state.inTick; } catch (e) {}
+            // 核心 autoSortInventory 每 10 秒固定 renderTabs(true)，會繞過本外掛的戰鬥／隱藏欄保護。
+            // 只有這個已知來源降級成延遲同步；其他 force=true（玩家操作、裝備、載入）仍立即放行。
+            if (inCombatTick && arguments[0] === true && _autoSortDepth > 0) {
+                if (activeManagedTab()) scheduleTabInspection();
+                return;
+            }
             // force=true 是核心明確要求立即同步，例如自動販售後；保留原語意。
             if (inCombatTick && arguments[0] !== true) {
                 if (activeManagedTab()) scheduleTabInspection();
@@ -284,6 +292,20 @@
         };
         _renderTabsWrapped.__afkPsInventory = true;
         window.renderTabs = _renderTabsWrapped;
+
+        if (typeof window.autoSortInventory === 'function' && !window.autoSortInventory.__afkPsInventory) {
+            var _autoSortInventoryOrig = window.autoSortInventory;
+            var _autoSortInventoryWrapped = function () {
+                _autoSortDepth++;
+                try {
+                    return _autoSortInventoryOrig.apply(this, arguments);
+                } finally {
+                    _autoSortDepth--;
+                }
+            };
+            _autoSortInventoryWrapped.__afkPsInventory = true;
+            window.autoSortInventory = _autoSortInventoryWrapped;
+        }
 
         if (typeof window.switchTab === 'function' && !window.switchTab.__afkPsInventory) {
             var _switchTabOrig = window.switchTab;
@@ -303,9 +325,10 @@
         });
 
         window.__afkPsInventory = {
-            version: '1.1.0-local',
+            version: '1.2.0-local',
             countPatchMs: TAB_COUNT_PATCH_MS,
             fullRebuildMs: TAB_FULL_REBUILD_MS,
+            autoSortDeferred: true,
             renderEpoch: _tabRenderEpoch
         };
         // 測試頁或熱載入情境可能已完成首次 DOM 建立；有有效角色時立即建立基準快照。

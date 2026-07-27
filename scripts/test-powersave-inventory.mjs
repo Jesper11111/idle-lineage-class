@@ -6,6 +6,7 @@
  *   2. 新增/刪除等結構變動最多延遲 1 秒後完整重建。
  *   3. 隱藏欄位不重建，切回背包時立即同步。
  *   4. tick 外的玩家操作維持立即重建。
+ *   5. 戰鬥中的自動整理只排序資料，不以 force=true 重建隱藏背包。
  * ========================================================================== */
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -32,7 +33,7 @@ const fixture = `<!doctype html>
   <section id="tab-skill" class="hidden"></section>
   <script>
     document.getElementById('m-nav').appendChild(document.getElementById('mobile-backpack'));
-    var state = { inTick: false, ff: false };
+    var state = { inTick: false, ff: false, running: true, ticks: 0 };
     var DB = { items: {
       arrow: { type: 'misc' }, meat: { type: 'misc' }, scroll: { type: 'misc' },
       gem: { type: 'misc' }, blade: { type: 'wpn' }
@@ -77,6 +78,18 @@ const fixture = `<!doctype html>
         document.getElementById('tab-' + id).classList.toggle('hidden', id !== name);
       }
     }
+    var _autoSortAt = -99999;
+    function invSortCmp(a, b) { return String(a.id).localeCompare(String(b.id)); }
+    function resetCatchupGainItemIndex() {}
+    function autoSortInventory() {
+      if (!player || !Array.isArray(player.inv) || !state.running) return;
+      if (player.inventoryAutoSort === false) return;
+      if (state.ticks - _autoSortAt < 100) return;
+      _autoSortAt = state.ticks;
+      player.inv.sort(invSortCmp);
+      resetCatchupGainItemIndex();
+      renderTabs(true);
+    }
     document.getElementById('mobile-backpack').addEventListener('click', function () {
       document.body.classList.remove('mview-left', 'mview-mid');
       document.body.classList.add('mview-right');
@@ -118,6 +131,12 @@ try {
   const hook = await page.evaluate(() => window.__afkPsInventory);
   assert.equal(hook?.countPatchMs, 250, '增量數量更新 hook 未載入');
   assert.equal(hook?.fullRebuildMs, 1000, '完整重建節流 hook 未載入');
+  assert.equal(hook?.autoSortDeferred, true, '自動整理延遲重繪 hook 未載入');
+  assert.equal(
+    await page.evaluate(() => window.autoSortInventory?.__afkPsInventory),
+    true,
+    'autoSortInventory 未由背包省電層包裝'
+  );
 
   await page.evaluate(() => {
     coreCalls = 0;
@@ -230,7 +249,24 @@ try {
   assert.equal(result.coreCalls, 1, '手機切回背包欄時應立即補同步');
   assert.equal(result.hasMobileRow, true, '手機切回背包欄後應顯示延遲內容');
 
-  console.log('PASS powersave inventory: count patch / 1s rebuild / hidden lazy refresh / immediate user refresh');
+  await page.evaluate(() => {
+    document.body.className = 'm-mobile mview-mid';
+    window.switchTab('items');
+    window.renderTabs(true);
+    coreCalls = 0;
+    state.inTick = true;
+    state.ticks += 100;
+    player.inv.reverse();
+    window.autoSortInventory();
+    state.inTick = false;
+  });
+  await page.waitForTimeout(1100);
+  assert.equal(await page.evaluate(() => coreCalls), 0, '手機非背包欄的自動整理不應強制重建');
+  await page.click('#mobile-backpack');
+  await page.waitForTimeout(50);
+  assert.equal(await page.evaluate(() => coreCalls), 1, '自動整理後切回背包應立即補同步');
+
+  console.log('PASS powersave inventory: count patch / 1s rebuild / hidden lazy refresh / auto-sort deferral / immediate user refresh');
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
