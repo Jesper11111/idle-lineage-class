@@ -5,7 +5,7 @@
  *   缺的是我方原本在核心加的「自動」——場上沒 BOSS 時自動用瞬移卷軸召來、清掉後再瞬移。這支把它做成外掛。
  *
  * 行為（比照我方 main 設計）：
- *   - 遊戲內有一個勾選框「傳送控制戒指自動找BOSS」(比照舊 main 的 #set-teleport-boss)，勾了才自動。
+ *   - 遊戲內有一個勾選框「傳戒自動找BOSS」(比照舊 main 的 #set-teleport-boss)，勾了才自動。
  *     插在設定面板「藥水不足自動買」(#set-auto-buy-pot) 下方；狀態**依存檔位(角色)分開**存
  *     localStorage afk_bossring_on_<slot>(沒設定過時沿用舊的全域鍵 afk_bossring_on，預設開)。
  *   - 線上前景與本站離線掛機都適用；離線由結算引擎按虛擬時間主動呼叫，跟遇 BOSS 自動逃離互斥＝有王就不瞬移。
@@ -79,7 +79,7 @@
         }
         var lbl = document.createElement('label');
         lbl.className = 'cursor-pointer flex items-center gap-2';
-        lbl.innerHTML = '<input type="checkbox" id="set-teleport-boss" class="w-4 h-4"><span class="text-rose-300">傳送控制戒指自動找BOSS</span><span class="text-xs text-slate-500">需帶戒指·線上/離線皆適用·每角色分開</span>';
+        lbl.innerHTML = '<input type="checkbox" id="set-teleport-boss" class="w-4 h-4"><span class="text-rose-300">傳戒自動找BOSS</span><span class="text-xs text-slate-500">戒指放背包即生效（不必裝備）·線上/離線皆適用·每角色分開</span>';
         var barrier = document.getElementById('set-auto-buy-magicbarrier');
         var abBox = barrier && barrier.closest('#afk-autobuy-box');
         if (abBox) {

@@ -18,7 +18,9 @@
     "test:pwa-cache": "node scripts/test-pwa-versioned-cache.mjs",
     "test:offline": "node scripts/test-offline-bossring.mjs",
     "test:offline-integration": "node scripts/test-offline-bossring-integration.mjs",
-    "test:backports": "node scripts/test-shines-backports.mjs"
+    "test:backports": "node scripts/test-shines-backports.mjs",
+    "test:training": "node scripts/test-pp-training.mjs",
+    "test:role-switch": "node scripts/test-pp-role-switch.mjs"
   },
   "devDependencies": {
     "playwright": "^1.62.0"

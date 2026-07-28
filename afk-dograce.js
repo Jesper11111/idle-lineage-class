@@ -338,11 +338,15 @@
         updateVisibility();
     }
 
-    function isMobileNonBattle() {
+    function isMobileHidden() {
         // ⚠ afk-mobile 的檢視 class 是 mview-left/center/right,「戰鬥」=mview-center(沒有 mview-battle 這個名字——
         //   之前寫錯害手機上圓球永遠被藏,玩家在奇岩看不到入口)。
+        // 浮動日誌開著時也要藏:日誌面板 z-index 9500 遠高於本視窗/圓球(74),留著只是埋在底下的一塊,
+        //   矮螢幕上實測下注鈕直接點不到(elementFromPoint 打到日誌的關閉鈕)。拉高 z-index 不對——
+        //   日誌是玩家自己叫出來的覆蓋層,不該被賽狗視窗壓過去。
         var b = document.body;
-        return b.classList.contains('m-mobile') && !b.classList.contains('mview-center');
+        if (!b.classList.contains('m-mobile')) return false;
+        return !b.classList.contains('mview-center') || b.classList.contains('mlog-open');
     }
     // 手機切檢視(body class 變動)→重算顯示;球與視窗共用。⚠ 要在「純圓球」路徑也註冊(原本只在開過視窗才註冊,
     // 玩家只出圓球沒開視窗的話,切到戰鬥檢視也不會重新顯示/切走也不會藏)。
@@ -353,7 +357,7 @@
         _visObs.observe(document.body, { attributes: true, attributeFilter: ['class'] });
     }
     function updateVisibility() {
-        var hide = isMobileNonBattle();
+        var hide = isMobileHidden();
         var win = el('dograce-win'), ball = el('dograce-ball');
         if (win && win.style.display !== 'none') win.style.visibility = hide ? 'hidden' : '';
         if (ball && ball.style.display !== 'none') ball.style.visibility = hide ? 'hidden' : '';
