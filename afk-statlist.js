@@ -9,8 +9,9 @@
  *   ・詳細能力:左右兩張卡片(近戰/遠程 | 魔法/抗性),字級拉到 14px。
  *   ・狀態(增益)與重置配點列改為一般卡片,不再釘在圖的固定位置。
  *
- * 作法:純 CSS——給 #tab-stats 加一個 class,整套規則都掛在它底下;
+ * 作法:以 CSS 為主——給 #tab-stats 加一個 class,整套規則都掛在它底下;
  *   DOM 結構、id(dt-*)、核心的 updateUI/配點流程完全不動。
+ *   唯一的 JS 是包 updateUI 後幫「按下去不會有反應的 ± 按鈕」加一個灰化 class(純視覺,不攔點擊)。
  *   關閉外掛(或本檔沒載到)= class 不加,原版圖面原封不動。
  *   afk-statpts 的「點數來源」區塊插在 shell 後面,不受影響。
  *
@@ -33,8 +34,10 @@
     '#tab-stats.afk-sl .ability-window-shell{background:none;aspect-ratio:auto;height:auto;max-width:560px;width:100%;margin:0 auto;overflow:visible;container-type:normal;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 6px;padding:8px 8px 14px;box-sizing:border-box;}',
 
     /* ── 六大能力(2 欄 × 3 列;名稱原本印在背景圖裡,用 ::before 補回) ──
-       ± 欄用 auto:按鈕平常是 .hidden,固定寬會讓窄面板(桌機分頁區約 300px)爆版 */
-    '#tab-stats.afk-sl .ability-primary-control{position:static;width:auto;height:auto;min-width:0;grid-template-columns:auto auto minmax(0,1fr) auto;gap:4px;' + CARD + 'padding:6px 8px;font:600 16px/1 Arial,"Microsoft JhengHei",sans-serif;text-shadow:none;white-space:nowrap;}',
+       ± 欄用 auto:按鈕平常是 .hidden,固定寬會讓窄面板(桌機分頁區約 300px)爆版
+       min-height 撐到「有按鈕」那一版的高度(按鈕 30 ＋ 上下 padding 12 ＋ 邊框 2),
+       否則卡片會隨 ±(.hidden 切換)忽高忽低 */
+    '#tab-stats.afk-sl .ability-primary-control{position:static;width:auto;height:auto;min-height:44px;box-sizing:border-box;min-width:0;grid-template-columns:auto auto minmax(0,1fr) auto;gap:4px;' + CARD + 'padding:6px 8px;font:600 16px/1 Arial,"Microsoft JhengHei",sans-serif;text-shadow:none;white-space:nowrap;}',
     '#tab-stats.afk-sl .ability-primary-control::before{grid-column:1;grid-row:1;font:700 14px/1 "Microsoft JhengHei",Arial,sans-serif;white-space:nowrap;}',
     '#tab-stats.afk-sl .ability-primary-str::before{content:"力量"}',
     '#tab-stats.afk-sl .ability-primary-dex::before{content:"敏捷"}',
@@ -46,6 +49,9 @@
     '#tab-stats.afk-sl .ability-primary-control .alloc-minus{grid-column:2;grid-row:1;}',
     '#tab-stats.afk-sl .ability-primary-control .alloc-plus{grid-column:4;grid-row:1;}',
     '#tab-stats.afk-sl .ability-primary-control button{width:32px;height:30px;font:700 17px/1 Arial,sans-serif;border-radius:6px;}',
+    /* 按不動的 ±(＋滿上限、−退到底):核心 adjAlloc 會安靜吞掉,這裡至少讓玩家看得出來 */
+    '#tab-stats.afk-sl .ability-primary-control button.afk-sl-cap{filter:grayscale(1);opacity:.4;cursor:not-allowed;}',
+    '#tab-stats.afk-sl .ability-primary-control button.afk-sl-cap:hover{border-color:#71644d;filter:grayscale(1);}',
     '#tab-stats.afk-sl .ability-primary-str{grid-column:1;grid-row:1}',
     '#tab-stats.afk-sl .ability-primary-dex{grid-column:1;grid-row:2}',
     '#tab-stats.afk-sl .ability-primary-con{grid-column:1;grid-row:3}',
@@ -88,6 +94,65 @@
     '}'
   ].join('\n');
 
+  /* ── 按不動的 ± 灰化 ──
+     核心 adjAlloc/adjBonusStat 的上限是「自然值(base+配點+萬能藥,不含裝備/buff)< 60」,
+     滿了就什麼都不做、也不給訊息(上游原版行為);這裡只補視覺,不攔點擊。
+     ＋:一般狀態比 naturalStat;蠟燭重置中核心比的是「Lv1 基礎＋草稿」,而那個值就是 updateUI
+        剛寫進 #dt-<s> 的數字,直接讀(textContent 不觸發 layout)最不會跟核心算法走鐘。
+     −:只有重置中才出現,核心條件是「草稿 > 0」→ 顯示值退到職業起始值(createBase)就按不動。 */
+  var STATS = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
+  var CAP = 60;
+  var btns = null;      // s -> { plus, minus }(靜態 DOM,查一次重用)
+  var lastSig = null;
+
+  function naturalOf(s) {
+    if (typeof naturalStat === 'function') return naturalStat(s);
+    return (player.base[s] || 0) + ((player.alloc && player.alloc[s]) || 0) + ((player.panacea && player.panacea[s]) || 0);
+  }
+
+  // updateUI 戰鬥中每秒被叫上百次 → 用簽章短路,值沒變就零 DOM 返回
+  function syncCaps(tab) {
+    if (typeof player === 'undefined' || !player || !player.base) return;
+    var respecOn = tab.classList.contains('is-respec');
+    // 重置中的下限＝該職業起始值;讀不到 createBase 就不灰化 −(維持原樣,不亂猜)
+    var floors = null;
+    if (respecOn && typeof createBase !== 'undefined' && player.cls) floors = createBase[player.cls] || null;
+    var vals = [], sig = (respecOn ? 'r' : 'n') + (floors ? player.cls : '');
+    for (var i = 0; i < STATS.length; i++) {
+      var el = respecOn ? document.getElementById('dt-' + STATS[i]) : null;
+      var v = respecOn ? (parseInt(el && el.textContent, 10) || 0) : naturalOf(STATS[i]);
+      vals.push(v); sig += '|' + v;
+    }
+    if (sig === lastSig) return;
+    lastSig = sig;
+    if (!btns) {
+      btns = {};
+      STATS.forEach(function (s) {
+        var ctl = tab.querySelector('.ability-primary-' + s);
+        btns[s] = { plus: ctl && ctl.querySelector('.alloc-plus'), minus: ctl && ctl.querySelector('.alloc-minus') };
+      });
+    }
+    STATS.forEach(function (s, i) {
+      var b = btns[s];
+      if (b.plus) b.plus.classList.toggle('afk-sl-cap', vals[i] >= CAP);
+      if (b.minus) b.minus.classList.toggle('afk-sl-cap', !!floors && vals[i] <= (floors[s] || 0));
+    });
+  }
+
+  function hookUpdateUI(tab) {
+    if (typeof window.updateUI !== 'function') return false;
+    if (window.updateUI.__afkStatlist) return true;
+    var orig = window.updateUI;
+    window.updateUI = function () {
+      var r = orig.apply(this, arguments);
+      if (typeof catchupActive === 'function' && catchupActive()) return r;   // 離線補跑期間畫面沒人看
+      try { syncCaps(tab); } catch (e) {}
+      return r;
+    };
+    window.updateUI.__afkStatlist = true;
+    return true;
+  }
+
   function init() {
     var tab = document.getElementById('tab-stats');
     if (!tab || !tab.querySelector('.ability-window-shell')) {
@@ -99,6 +164,14 @@
     st.textContent = css;
     (document.head || document.documentElement).appendChild(st);
     tab.classList.add('afk-sl');
+
+    var tries = 0;
+    (function tryHook() {
+      if (hookUpdateUI(tab)) { try { syncCaps(tab); } catch (e) {} return; }
+      if (++tries < 40) setTimeout(tryHook, 250);
+      else console.warn('[AFK-statlist] 找不到 updateUI,配點上限灰化停用(版面照常)。');
+    })();
+
     console.log('[AFK-statlist] hooks OK — 能力分頁已改為條列式版面。');
   }
 
