@@ -192,8 +192,9 @@ function patchBossring() {
   const oldDescs = [
     "desc: '持傳送控制戒指時，場上無 BOSS 自動用瞬移卷軸召來（線上前景；排名/裂痕/軍王/攻城不套用）'",
     "desc: '帶著傳送控制戒指時，場上沒 BOSS 就自動用瞬移卷軸找一隻'",
+    "desc: '持傳送控制戒指時，場上無 BOSS 自動用瞬移卷軸召來（線上/離線；排名/裂痕/軍王/攻城不套用）'",
   ];
-  const newDesc = "desc: '持傳送控制戒指時，場上無 BOSS 自動用瞬移卷軸召來（線上/離線；排名/裂痕/軍王/攻城不套用）'";
+  const newDesc = "desc: '戒指放背包即生效（不必裝備）；場上無 BOSS 自動用瞬移卷軸召來（線上/離線；排名/裂痕/軍王/攻城不套用）'";
   if (!toggles.includes(newDesc)) {
     const matches = oldDescs.filter(desc => toggles.includes(desc));
     if (matches.length !== 1) {
