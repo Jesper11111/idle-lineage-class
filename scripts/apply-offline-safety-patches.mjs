@@ -40,10 +40,18 @@ function patchBossring() {
       '檔頭適用範圍說明'
     );
 
+    const uiScopeAnchors = [
+      '<span class="text-xs text-slate-500">需帶戒指·離線不套用·每角色分開</span>',
+      '<span class="text-xs text-slate-500">離線不套用</span>',
+    ];
+    const uiScopeMatches = uiScopeAnchors.filter(anchor => src.includes(anchor));
+    if (uiScopeMatches.length !== 1) {
+      throw new Error(`[${BOSSRING_FILE}] 「玩家介面適用範圍說明」錨點數量錯誤：${uiScopeMatches.length}`);
+    }
     src = replaceOne(
       src,
-      '<span class="text-xs text-slate-500">需帶戒指·離線不套用·每角色分開</span>',
-      '<span class="text-xs text-slate-500">需帶戒指·線上/離線皆適用·每角色分開</span>',
+      uiScopeMatches[0],
+      '<span class="text-xs text-slate-500">戒指放背包即生效（不必裝備）·線上/離線皆適用·每角色分開</span>',
       BOSSRING_FILE,
       '玩家介面適用範圍說明'
     );
@@ -192,6 +200,7 @@ function patchBossring() {
   const oldDescs = [
     "desc: '持傳送控制戒指時，場上無 BOSS 自動用瞬移卷軸召來（線上前景；排名/裂痕/軍王/攻城不套用）'",
     "desc: '帶著傳送控制戒指時，場上沒 BOSS 就自動用瞬移卷軸找一隻'",
+    "desc: '傳送控制戒指放背包就生效（不必裝備）；場上沒 BOSS 就自動用瞬移卷軸找一隻'",
     "desc: '持傳送控制戒指時，場上無 BOSS 自動用瞬移卷軸召來（線上/離線；排名/裂痕/軍王/攻城不套用）'",
   ];
   const newDesc = "desc: '戒指放背包即生效（不必裝備）；場上無 BOSS 自動用瞬移卷軸召來（線上/離線；排名/裂痕/軍王/攻城不套用）'";
