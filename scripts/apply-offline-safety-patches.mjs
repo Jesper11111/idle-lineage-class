@@ -6,6 +6,7 @@
  *   - 每存檔位首次切換只建立新錨點，不補算凍結區間
  *   - 安塔瑞斯／攻城 V2 特殊副本禁止離線模擬
  *   - 遷移完成前，選角頁不顯示歷史殘留的掛機地圖／時間
+ *   - 瘋狂席琳的 Boss 不讀寫名稱殺速快取，每隻皆逐拍實測
  *
  * 所有替換皆以 PP 完成品的明確錨點定位；錨點改寫時直接失敗，不靜默降級。
  */
@@ -21,6 +22,7 @@ const SLOTINFO_MARKER = '// 🔒 Jesper offline migration visibility guard';
 const OFFSTATS_MARKER = '// 🔒 Jesper offline cache contract v5';
 const BOSSRING_MARKER = '// 🔒 Jesper offline boss hunt bridge v1';
 const OFFLINE_BOSSRING_MARKER = '// 🔒 Jesper offline boss hunt settlement bridge v1';
+const CRAZY_BOSS_CACHE_MARKER = '// 🔒 Jesper Crazy Sherine Boss cache safety v1';
 
 function replaceOne(src, from, to, file, label) {
   const at = src.indexOf(from);
@@ -574,18 +576,141 @@ function patchOffline() {
     );
   }
 
+  if (!src.includes(CRAZY_BOSS_CACHE_MARKER)) {
+    src = replaceOne(
+      src,
+      "OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r2-bossring'",
+      "OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r3-grace-boss'",
+      OFFLINE_FILE,
+      '瘋狂席琳 Boss 快取規則版'
+    );
+
+    src = replaceOne(
+      src,
+      "    var fastBossUid = null, fastBossName = '', fastBossStart = 0, fastBossMinHp = 1, fastBossKills0 = 0;\n" +
+      "    var BOSS_REVERIFY_P = 0.05;",
+      "    var fastBossUid = null, fastBossName = '', fastBossStart = 0, fastBossMinHp = 1, fastBossKills0 = 0;\n" +
+      "    " + CRAZY_BOSS_CACHE_MARKER + "\n" +
+      "    // 瘋狂席琳的 BOSS 可能在對打途中才被恩賜並回滿、HP×10；名稱快取無法表示轉變時點。\n" +
+      "    // 因此只讓 BOSS 逐拍真打，小怪與其他快速統計仍照常使用快取。\n" +
+      "    var bossCacheEnabled = !player.sherineMad;\n" +
+      "    var BOSS_REVERIFY_P = 0.05;",
+      OFFLINE_FILE,
+      '瘋狂席琳 Boss 快取總閘'
+    );
+
+    src = replaceOne(
+      src,
+      "player._offStats = { v: OFFSTATS_SCHEMA, sig: offStatsSig(), svcE: svcPerEvent, batch: batchPerEvent, consume: consumePerTick || {}, boss: bossStats, savedAt: Date.now() };",
+      "player._offStats = { v: OFFSTATS_SCHEMA, sig: offStatsSig(), svcE: svcPerEvent, batch: batchPerEvent, consume: consumePerTick || {}, boss: bossCacheEnabled ? bossStats : {}, savedAt: Date.now() };",
+      OFFLINE_FILE,
+      '瘋狂席琳儲存時清空 Boss 快取'
+    );
+
+    src = replaceOne(
+      src,
+      "      bossStats = player._offStats.boss || {};\n" +
+      "      fastMode = true;",
+      "      if (bossCacheEnabled) bossStats = player._offStats.boss || {};\n" +
+      "      else { bossStats = {}; player._offStats.boss = {}; }   // 清掉同規則版中任何意外殘留的污染值\n" +
+      "      fastMode = true;",
+      OFFLINE_FILE,
+      '瘋狂席琳載入時忽略 Boss 快取'
+    );
+
+    src = replaceOne(
+      src,
+      "          var _bs = bossStats[_m0.n];\n" +
+      "          if (_bs && _bs.safe && Math.random() >= BOSS_REVERIFY_P) {",
+      "          var _bs = bossCacheEnabled ? bossStats[_m0.n] : null;\n" +
+      "          if (_bs && _bs.safe && Math.random() >= BOSS_REVERIFY_P) {",
+      OFFLINE_FILE,
+      '瘋狂席琳 Boss 禁止快取擊殺'
+    );
+
+    src = replaceOne(
+      src,
+      "          console.info('[AFK] ⚔ 快速結算遇到 BOSS「' + fastBossName + '」(' + (_bs && _bs.safe ? '抽驗' : '首次') + ')→ 切回真模擬對打,倒下後同名 BOSS 才可快轉。');",
+      "          console.info('[AFK] ⚔ 快速結算遇到 BOSS「' + fastBossName + '」(' + (!bossCacheEnabled ? '瘋狂席琳,每隻皆實測' : (_bs && _bs.safe ? '抽驗' : '首次')) + ')→ 切回真模擬對打' + (!bossCacheEnabled ? ',本模式不寫入 BOSS 快取。' : ',倒下後同名 BOSS 才可快轉。'));",
+      OFFLINE_FILE,
+      '瘋狂席琳 Boss 真打說明'
+    );
+
+    src = replaceOne(
+      src,
+      "                var _prevB = bossStats[fastBossName];\n" +
+      "                // 🐲 移動平均:抽驗(已有安全實測)→ 與舊值各半混合;首次/上次不安全 → 直接採用本次。\n" +
+      "                //   單一樣本的對打耗時變異極大(同 BOSS 27 vs 316 拍),平均化避免一次幸運/倒楣樣本外推整晚。\n" +
+      "                bossStats[fastBossName] = (_prevB && _prevB.safe && _safeB)\n" +
+      "                  ? { ticks: (_prevB.ticks + _durB) / 2, safe: true, minor: Math.round(((_prevB.minor || 0) + _minorB) / 2) }\n" +
+      "                  : { ticks: _durB, safe: _safeB, minor: _minorB };\n" +
+      "                saveOffStats();   // 💾 新量到的 BOSS 實測 → 更新統計快取(下次同簽章連首打都免)\n" +
+      "                console.info('[AFK] ⚔ BOSS「' + fastBossName + '」倒下:實測 ' + Math.round(_durB) + ' 拍、同場小怪 ' + _minorB + ' 隻' + (_safeB ? ',之後同名 BOSS 即殺、時間按實測(移動平均)推進並補回小怪。' : ',對打時血量偏低(' + Math.round(fastBossMinHp * 100) + '%) → 之後每次都真打。'));",
+      "                if (bossCacheEnabled) {\n" +
+      "                  var _prevB = bossStats[fastBossName];\n" +
+      "                  // 🐲 移動平均:抽驗(已有安全實測)→ 與舊值各半混合;首次/上次不安全 → 直接採用本次。\n" +
+      "                  //   單一樣本的對打耗時變異極大,平均化避免一次幸運/倒楣樣本外推整晚。\n" +
+      "                  bossStats[fastBossName] = (_prevB && _prevB.safe && _safeB)\n" +
+      "                    ? { ticks: (_prevB.ticks + _durB) / 2, safe: true, minor: Math.round(((_prevB.minor || 0) + _minorB) / 2) }\n" +
+      "                    : { ticks: _durB, safe: _safeB, minor: _minorB };\n" +
+      "                  saveOffStats();   // 💾 新量到的 BOSS 實測 → 更新統計快取(下次同簽章連首打都免)\n" +
+      "                }\n" +
+      "                console.info('[AFK] ⚔ BOSS「' + fastBossName + '」倒下:實測 ' + Math.round(_durB) + ' 拍、同場小怪 ' + _minorB + ' 隻' + (!bossCacheEnabled ? ',瘋狂席琳模式不快取 BOSS,下一隻仍逐拍真打。' : (_safeB ? ',之後同名 BOSS 即殺、時間按實測(移動平均)推進並補回小怪。' : ',對打時血量偏低(' + Math.round(fastBossMinHp * 100) + '%) → 之後每次都真打。')));",
+      OFFLINE_FILE,
+      '瘋狂席琳 Boss 實測禁止寫回快取'
+    );
+  }
+
+  // v1 補丁已在工作樹時的冪等收斂：把早期「只擋命中」版本提升成嚴格不讀、載入即清與正確日誌。
+  if (src.includes("      bossStats = bossCacheEnabled ? (player._offStats.boss || {}) : {};\n")) {
+    src = replaceOne(
+      src,
+      "      bossStats = bossCacheEnabled ? (player._offStats.boss || {}) : {};\n",
+      "      if (bossCacheEnabled) bossStats = player._offStats.boss || {};\n" +
+      "      else { bossStats = {}; player._offStats.boss = {}; }   // 清掉同規則版中任何意外殘留的污染值\n",
+      OFFLINE_FILE,
+      '瘋狂席琳 Boss 快取載入嚴格清理'
+    );
+  }
+  if (src.includes("          var _bs = bossStats[_m0.n];\n          if (bossCacheEnabled && _bs && _bs.safe && Math.random() >= BOSS_REVERIFY_P) {")) {
+    src = replaceOne(
+      src,
+      "          var _bs = bossStats[_m0.n];\n          if (bossCacheEnabled && _bs && _bs.safe && Math.random() >= BOSS_REVERIFY_P) {",
+      "          var _bs = bossCacheEnabled ? bossStats[_m0.n] : null;\n          if (_bs && _bs.safe && Math.random() >= BOSS_REVERIFY_P) {",
+      OFFLINE_FILE,
+      '瘋狂席琳 Boss 快取嚴格不讀'
+    );
+  }
+  if (src.includes("          console.info('[AFK] ⚔ 快速結算遇到 BOSS「' + fastBossName + '」(' + (_bs && _bs.safe ? '抽驗' : '首次') + ')→ 切回真模擬對打,倒下後同名 BOSS 才可快轉。');")) {
+    src = replaceOne(
+      src,
+      "          console.info('[AFK] ⚔ 快速結算遇到 BOSS「' + fastBossName + '」(' + (_bs && _bs.safe ? '抽驗' : '首次') + ')→ 切回真模擬對打,倒下後同名 BOSS 才可快轉。');",
+      "          console.info('[AFK] ⚔ 快速結算遇到 BOSS「' + fastBossName + '」(' + (!bossCacheEnabled ? '瘋狂席琳,每隻皆實測' : (_bs && _bs.safe ? '抽驗' : '首次')) + ')→ 切回真模擬對打' + (!bossCacheEnabled ? ',本模式不寫入 BOSS 快取。' : ',倒下後同名 BOSS 才可快轉。'));",
+      OFFLINE_FILE,
+      '瘋狂席琳 Boss 快取真打日誌收斂'
+    );
+  }
+
   const required = [
     MARKER,
     "MIGRATION_PREFIX = 'afk_offline_legacy_migrated_v'",
     OFFSTATS_MARKER,
     OFFLINE_BOSSRING_MARKER,
+    CRAZY_BOSS_CACHE_MARKER,
     "OFFSTATS_SCHEMA = 2",
-    "OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r2-bossring'",
+    "OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r3-grace-boss'",
     "return 'v5|' + offStatsHash",
     'bossring:offlineBossHuntSignature()',
     "if (k === 'scroll_teleport' && offlineBossHuntActive()) continue",
     'if (offlineBossHuntActive()) return false',
     'offlineBossHuntStep(totalTicks - done)',
+    'var _bs = bossCacheEnabled ? bossStats[_m0.n] : null',
+    'if (_bs && _bs.safe && Math.random() >= BOSS_REVERIFY_P)',
+    'boss: bossCacheEnabled ? bossStats : {}',
+    'else { bossStats = {}; player._offStats.boss = {}; }',
+    'if (bossCacheEnabled) {\n                  var _prevB = bossStats[fastBossName]',
+    '瘋狂席琳模式不快取 BOSS',
+    '瘋狂席琳,每隻皆實測',
     'player._offStats = { v: OFFSTATS_SCHEMA',
     'player._offStats.v === OFFSTATS_SCHEMA',
     'function blockedInstanceMap(map)',
@@ -597,6 +722,13 @@ function patchOffline() {
   ];
   const missing = required.filter(x => !src.includes(x));
   if (missing.length) throw new Error(`[${OFFLINE_FILE}] 安全補丁驗證失敗：${missing.join(' | ')}`);
+  const forbidden = [
+    'boss: bossStats,',
+    'bossStats = player._offStats.boss || {};\n      fastMode = true;',
+    'var _bs = bossStats[_m0.n];'
+  ];
+  const leaked = forbidden.filter(x => src.includes(x));
+  if (leaked.length) throw new Error(`[${OFFLINE_FILE}] 瘋狂席琳 Boss 快取隔離不完整：${leaked.join(' | ')}`);
   if (!CHECK) writeFileSync(OFFLINE_FILE, src);
 }
 

@@ -173,6 +173,45 @@ assert.equal(
   '快速事件、BOSS 真打、一般真模擬三條路都必須驅動離線召王'
 );
 
+// 瘋狂席琳的 Boss 可能在戰鬥途中才取得恩賜並回滿、HP ×10；
+// 名稱殺速快取無法表達取得恩賜的時點，因此本模式必須嚴格不讀、不寫 Boss 快取。
+assert.ok(
+  offlineSource.includes('// 🔒 Jesper Crazy Sherine Boss cache safety v1'),
+  '瘋狂席琳 Boss 快取隔離補丁必須存在'
+);
+assert.ok(
+  offlineSource.includes("OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r3-grace-boss'"),
+  '規則版必須提升，讓舊的 3131 tick 等污染快取失效'
+);
+assert.ok(
+  offlineSource.includes('var bossCacheEnabled = !player.sherineMad'),
+  '只有瘋狂席琳要停用 Boss 快取'
+);
+assert.ok(
+  offlineSource.includes('boss: bossCacheEnabled ? bossStats : {}'),
+  '瘋狂席琳儲存統計時不得留下 Boss 快取'
+);
+assert.ok(
+  offlineSource.includes('else { bossStats = {}; player._offStats.boss = {}; }'),
+  '瘋狂席琳命中一般統計快取時也必須清掉 Boss 子快取'
+);
+assert.ok(
+  offlineSource.includes('var _bs = bossCacheEnabled ? bossStats[_m0.n] : null'),
+  '瘋狂席琳遇到 Boss 時不得讀取名稱快取'
+);
+assert.ok(
+  /if \(bossCacheEnabled\) \{\r?\n\s+var _prevB = bossStats\[fastBossName\]/.test(offlineSource),
+  '只有一般模式可把 Boss 實測寫回快取'
+);
+assert.ok(
+  offlineSource.includes('瘋狂席琳模式不快取 BOSS,下一隻仍逐拍真打'),
+  '結算日誌必須明確說明每隻 Boss 都會逐拍真打'
+);
+assert.ok(
+  !offlineSource.includes('var _bs = bossStats[_m0.n];'),
+  '不得殘留先讀取 Boss 快取再判斷模式的舊路徑'
+);
+
 // 背景結算 ticker 的 Worker 若收不到回覆，fallback timeout 必須在每個 slice
 // 當下解除 message listener；長結算不可累積到 finally 才靠 terminate 一次回收。
 {
@@ -285,4 +324,4 @@ assert.equal(
   assert.equal(peakUrls, 1, 'Blob URL 瞬時峰值應為一個');
 }
 
-console.log('PASS offline bossring: summon / buy / no double charge / mutex / cache / slot isolation');
+console.log('PASS offline bossring: summon / buy / no double charge / mutex / cache / slot isolation / Crazy Sherine boss isolation');
