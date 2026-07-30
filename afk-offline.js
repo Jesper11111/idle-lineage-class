@@ -510,7 +510,7 @@
   // 快取必須隨真正影響戰力的資料失效。舊簽章只有地圖/等級/裝備 id+強化，會漏掉
   // 配點、自動技能、套裝詞綴、傭兵與寵物；內容更新後甚至可能沿用舊版殺速與 BOSS 結果。
   var OFFSTATS_SCHEMA = 2;
-  var OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r2-bossring';
+  var OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r3-grace-boss';
   function offStatsStable(v) {
     if (v == null || typeof v === 'number' || typeof v === 'boolean' || typeof v === 'string') return v;
     if (Array.isArray(v)) return v.map(offStatsStable);
@@ -706,6 +706,10 @@
     //   之後同名 BOSS:安全的 → 即殺但時間按「該 BOSS 實測耗時」推進(不是小怪均速);對打時血量掉太深的 → 每次都真打。
     //   打輸=外層撞死即停;打不動=照實耗完時間。純 BOSS 圖因此自然接近全真模擬。
     var fastBossUid = null, fastBossName = '', fastBossStart = 0, fastBossMinHp = 1, fastBossKills0 = 0;
+    // 🔒 Jesper Crazy Sherine Boss cache safety v1
+    // 瘋狂席琳的 BOSS 可能在對打途中才被恩賜並回滿、HP×10；名稱快取無法表示轉變時點。
+    // 因此只讓 BOSS 逐拍真打，小怪與其他快速統計仍照常使用快取。
+    var bossCacheEnabled = !player.sherineMad;
     var BOSS_REVERIFY_P = 0.05;   // 🐲 抽驗:每 ~20 隻「已驗證安全」的同名 BOSS 抽 1 隻真打,實測耗時/同場小怪數做移動平均——單一首打樣本變異極大(同隻 BOSS 兩輪量到 27 vs 316 拍),外推整晚會嚴重失真
     var bossStats = {};   // {怪名: {ticks:實測耗時(移動平均), safe:對打全程血量未低於安全線, minor:對戰期間同場被清掉的小怪數(移動平均)}}
     // ⚡ 批次擊殺模型:AOE 角色一次法術同時清多隻,「一次殺一隻、每殺推進一次」的串行模型會把清場速度壓低、
@@ -729,7 +733,7 @@
       try {
         if (!(svcPerEvent > 0)) return;
         if (hpFloorFixed) return;   // 斷貨後的「質變戰局」統計不寫快取:簽章不含消耗品庫存,隔天補貨後會拿沒藥的殺速亂算
-        player._offStats = { v: OFFSTATS_SCHEMA, sig: offStatsSig(), svcE: svcPerEvent, batch: batchPerEvent, consume: consumePerTick || {}, boss: bossStats, savedAt: Date.now() };
+        player._offStats = { v: OFFSTATS_SCHEMA, sig: offStatsSig(), svcE: svcPerEvent, batch: batchPerEvent, consume: consumePerTick || {}, boss: bossCacheEnabled ? bossStats : {}, savedAt: Date.now() };
       } catch (e) {}
     }
     // ═══ 結算統計快取(宣告結束) ═══════════════════════════════════════════════
@@ -952,7 +956,7 @@
         var _m0 = mapState.mobs[ti];
         if (_m0.boss) {   // 🐲 BOSS:第一次(或未驗證安全、或 5% 抽驗)→ 真模擬對打;其餘 → 即殺但時間按「該 BOSS 實測耗時」推進
           if (fastTeleportAwayBoss(_m0)) return fastAdvance(1);   // 🌀 勾了自動瞬移且該圖可瞬移 → 甩掉不打(約當一拍;下輪排程重出)
-          var _bs = bossStats[_m0.n];
+          var _bs = bossCacheEnabled ? bossStats[_m0.n] : null;
           if (_bs && _bs.safe && Math.random() >= BOSS_REVERIFY_P) {
             // 🐲 秒殺(時間按實測移動平均推進)。順序刻意是「先補小怪 → 推進視窗時間 → 最後才殺 BOSS」:
             //   對打視窗期間 BOSS 留在場上,補殺與視窗內的出怪抽選經過核心 spawnMob 的
@@ -968,7 +972,7 @@
             return _okAdv;
           }
           fastBossUid = _m0.uid; fastBossName = _m0.n || '?'; fastBossStart = done; fastBossMinHp = 1; fastBossKills0 = tallySum(killTally);   // 記真打起始殺數 → 倒下時算對戰期間清掉的小怪數
-          console.info('[AFK] ⚔ 快速結算遇到 BOSS「' + fastBossName + '」(' + (_bs && _bs.safe ? '抽驗' : '首次') + ')→ 切回真模擬對打,倒下後同名 BOSS 才可快轉。');
+          console.info('[AFK] ⚔ 快速結算遇到 BOSS「' + fastBossName + '」(' + (!bossCacheEnabled ? '瘋狂席琳,每隻皆實測' : (_bs && _bs.safe ? '抽驗' : '首次')) + ')→ 切回真模擬對打' + (!bossCacheEnabled ? ',本模式不寫入 BOSS 快取。' : ',倒下後同名 BOSS 才可快轉。'));
           return true;   // 不推進時間、不扣消耗品——接下來的真模擬拍會照實計(場上其他怪由真模擬一併處理)
         }
         // ⚡ 批次擊殺:一個「死亡事件」殺 batchPerEvent 隻(小數位用機率補整),AOE 角色一次清一批與線上一致;
@@ -998,7 +1002,8 @@
       batchPerEvent = Math.max(1, player._offStats.batch || 1);
       consumePerTick = {}; for (var _ck in player._offStats.consume) consumePerTick[_ck] = player._offStats.consume[_ck];
       consumeAcc = {};
-      bossStats = player._offStats.boss || {};
+      if (bossCacheEnabled) bossStats = player._offStats.boss || {};
+      else { bossStats = {}; player._offStats.boss = {}; }   // 清掉同規則版中任何意外殘留的污染值
       fastMode = true;
       console.info('[AFK] 💾 統計快取命中:跳過取樣與 BOSS 首打,直接快速結算(每事件 ' + svcPerEvent.toFixed(1) + ' 拍×' + batchPerEvent.toFixed(2) + ' 隻,BOSS 快取 ' + Object.keys(bossStats).length + ' 種)。');
     }
@@ -1098,14 +1103,16 @@
                 var _durB = Math.max(1, done - fastBossStart);
                 var _safeB = fastBossMinHp >= hpFloorNow();   // 安全線跟取樣共用同一條門檻(隨存活時間降到 0):撐滿 20 分鐘後 BOSS 首遇打得贏就 safe → 秒殺
                 var _minorB = Math.max(0, (tallySum(killTally) - fastBossKills0) - 1);   // 對戰期間總殺數 − BOSS 本身 1 = 同場被 AOE/傭兵/寵物清掉的小怪數
-                var _prevB = bossStats[fastBossName];
-                // 🐲 移動平均:抽驗(已有安全實測)→ 與舊值各半混合;首次/上次不安全 → 直接採用本次。
-                //   單一樣本的對打耗時變異極大(同 BOSS 27 vs 316 拍),平均化避免一次幸運/倒楣樣本外推整晚。
-                bossStats[fastBossName] = (_prevB && _prevB.safe && _safeB)
-                  ? { ticks: (_prevB.ticks + _durB) / 2, safe: true, minor: Math.round(((_prevB.minor || 0) + _minorB) / 2) }
-                  : { ticks: _durB, safe: _safeB, minor: _minorB };
-                saveOffStats();   // 💾 新量到的 BOSS 實測 → 更新統計快取(下次同簽章連首打都免)
-                console.info('[AFK] ⚔ BOSS「' + fastBossName + '」倒下:實測 ' + Math.round(_durB) + ' 拍、同場小怪 ' + _minorB + ' 隻' + (_safeB ? ',之後同名 BOSS 即殺、時間按實測(移動平均)推進並補回小怪。' : ',對打時血量偏低(' + Math.round(fastBossMinHp * 100) + '%) → 之後每次都真打。'));
+                if (bossCacheEnabled) {
+                  var _prevB = bossStats[fastBossName];
+                  // 🐲 移動平均:抽驗(已有安全實測)→ 與舊值各半混合;首次/上次不安全 → 直接採用本次。
+                  //   單一樣本的對打耗時變異極大,平均化避免一次幸運/倒楣樣本外推整晚。
+                  bossStats[fastBossName] = (_prevB && _prevB.safe && _safeB)
+                    ? { ticks: (_prevB.ticks + _durB) / 2, safe: true, minor: Math.round(((_prevB.minor || 0) + _minorB) / 2) }
+                    : { ticks: _durB, safe: _safeB, minor: _minorB };
+                  saveOffStats();   // 💾 新量到的 BOSS 實測 → 更新統計快取(下次同簽章連首打都免)
+                }
+                console.info('[AFK] ⚔ BOSS「' + fastBossName + '」倒下:實測 ' + Math.round(_durB) + ' 拍、同場小怪 ' + _minorB + ' 隻' + (!bossCacheEnabled ? ',瘋狂席琳模式不快取 BOSS,下一隻仍逐拍真打。' : (_safeB ? ',之後同名 BOSS 即殺、時間按實測(移動平均)推進並補回小怪。' : ',對打時血量偏低(' + Math.round(fastBossMinHp * 100) + '%) → 之後每次都真打。')));
               }
               if (fastBossUid == null && player.lv !== lastLv) {   // BOSS 經驗大,常直接升級 → 重新取樣殺速
                 lastLv = player.lv;

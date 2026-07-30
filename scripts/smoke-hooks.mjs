@@ -238,8 +238,9 @@ const offlineEngineProblems = await page.evaluate(() => {
     if (typeof blocked !== 'function' || !blocked(id)) bad.push(`攻城 V2 暫態地圖未禁止離線：${id}`);
   }
   if (typeof blocked === 'function' && blocked('dragon_valley')) bad.push('一般狩獵圖被誤判為禁止離線');
-  if (!window.__afk || __afk.offStatsSchema !== 2 ||
-      __afk.offStatsRuleset !== 'pp-v3.8.5+shines-v3.8.27-content-r2-bossring' ||
+  if (!window.__afk || __afk.engineRev !== 3 ||
+      __afk.offStatsSchema !== 2 ||
+      __afk.offStatsRuleset !== 'pp-v3.8.5+shines-v3.8.27-content-r3-grace-boss' ||
       typeof __afk.offStatsSignature !== 'function') {
     bad.push('離線 _offStats v5 完整簽章契約未啟動');
   } else {
