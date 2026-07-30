@@ -118,6 +118,7 @@ const indexHtml = readFileSync('index.html', 'utf8');
 const mercPolicySrc = readFileSync('afk-merc-policy.js', 'utf8');
 const mobileMemorySrc = readFileSync('afk-mobile-memory.js', 'utf8');
 const powersaveInventorySrc = readFileSync('afk-powersave-inventory.js', 'utf8');
+const junkAutosellPolicySrc = readFileSync('afk-junk-autosell-policy.js', 'utf8');
 const worldMapSrc = readFileSync('js/11-world-map.js', 'utf8');
 const WIKI_FILE = 'afk-wiki.js';
 let wikiSrc = readFileSync(WIKI_FILE, 'utf8');
@@ -164,6 +165,21 @@ const tabContextBlock = (powersaveInventorySrc.match(/function tabContextSig\(\)
 if (powersaveInventoryMissing.length || /\b(?:weightPct|loadTier)\b/.test(tabContextBlock)) {
   throw new Error(`[afk-powersave-inventory.js] 背包增量更新契約不完整：${powersaveInventoryMissing.join(' | ') || '負重不可放進結構簽章'}`);
 }
+const junkAutosellPolicyMustHave = [
+  "var VERSION = '1.0.0-local'",
+  'toggleJunkPolicy.__afkJunkAutosellPolicy = true',
+  'runQuickJunkPolicy.__afkJunkAutosellPolicy = true',
+  'applyAutoSellRulesPolicy.__afkJunkAutosellPolicy = true',
+  'autoSellJunkPolicy.__afkJunkAutosellPolicy = true',
+  'window.AFK_JUNK_AUTOSELL_POLICY = Object.freeze',
+  'immediatePersistence: true',
+  'manualPreferenceWins: true',
+  'offlineVirtualGrace: true'
+];
+const junkAutosellPolicyMissing = junkAutosellPolicyMustHave.filter(x => !junkAutosellPolicySrc.includes(x));
+if (junkAutosellPolicyMissing.length) {
+  throw new Error(`[afk-junk-autosell-policy.js] 廢品自動販賣安全契約不完整：${junkAutosellPolicyMissing.join(' | ')}`);
+}
 const mobileMemoryMustHave = [
   'window.__afkMobileMemoryLite = lite',
   "settingOn('noanim') && settingOn('lowfps')",
@@ -189,11 +205,12 @@ const ownerAt = indexHtml.indexOf('<script src="afk-offline-owner.js');
 const mercAt = indexHtml.indexOf('<script src="afk-merc-policy.js');
 const mobileMemoryAt = indexHtml.indexOf('<script src="afk-mobile-memory.js');
 const powersaveInventoryAt = indexHtml.indexOf('<script src="afk-powersave-inventory.js');
+const junkAutosellAt = indexHtml.indexOf('<script src="afk-junk-autosell-policy.js');
 const offlineAt = indexHtml.indexOf('<script src="afk-offline.js');
-if (mobileBannerAt < 0 || ownerAt < 0 || mercAt < 0 || mobileMemoryAt < 0 || powersaveInventoryAt < 0 || offlineAt < 0 ||
+if (mobileBannerAt < 0 || ownerAt < 0 || mercAt < 0 || mobileMemoryAt < 0 || powersaveInventoryAt < 0 || junkAutosellAt < 0 || offlineAt < 0 ||
     mobileBannerAt > ownerAt || ownerAt > mercAt || mercAt > mobileMemoryAt || mobileMemoryAt > powersaveInventoryAt ||
-    powersaveInventoryAt > offlineAt) {
-  throw new Error('[index.html] 載入順序必須是 afk-mobile-banner → afk-offline-owner → afk-merc-policy → afk-mobile-memory → afk-powersave-inventory → afk-offline。');
+    powersaveInventoryAt > junkAutosellAt || junkAutosellAt > offlineAt) {
+  throw new Error('[index.html] 載入順序必須是 afk-mobile-banner → afk-offline-owner → afk-merc-policy → afk-mobile-memory → afk-powersave-inventory → afk-junk-autosell-policy → afk-offline。');
 }
 
 if (CHECK) {

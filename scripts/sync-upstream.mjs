@@ -60,7 +60,8 @@ const localAfkFiles = new Set([
   'afk-merc-policy.js',
   'afk-mobile-memory.js',
   'afk-mobile-audio-memory.js',
-  'afk-powersave-inventory.js'
+  'afk-powersave-inventory.js',
+  'afk-junk-autosell-policy.js'
 ]);
 const ppAfkFiles = readdirSync(UP).filter(f => /^afk-.+\.js$/.test(f) && !localAfkFiles.has(f));
 for (const f of ppAfkFiles) copyFileSync(join(UP, f), f);
@@ -114,7 +115,7 @@ try {
   const t = new Date(Date.now() + 8 * 3600 * 1000);
   ck.syncedAt = t.toISOString().slice(0, 16).replace('T', ' ') + ' (UTC+8)';
   ck.note = '由 sync-upstream.mjs 自動更新；新版基準=pp771007/main，PP 內含原版 ' + upVer +
-    '。同步後固定套用 Jesper 舊傭兵獎勵政策、回城免費更新快照、離線安全政策、妖精傭兵不受目前屬性限制與全裝置隱藏來源橫幅。';
+    '。同步後固定套用 Jesper 舊傭兵獎勵政策、回城免費更新快照、離線安全政策、廢品標記／自動販賣安全政策、妖精傭兵不受目前屬性限制與全裝置隱藏來源橫幅。';
   writeFileSync('upstream-checkpoint.json', JSON.stringify(ck, null, 2) + '\n');
   console.log('[sync] upstream-checkpoint.json → pp771007 ' + upSha.slice(0, 10) + '（原版 ' + upVer + '）');
 } catch (e) {
@@ -132,6 +133,7 @@ const regressionTests = [
   ['scripts/test-mobile-stability-stress.mjs', '--webkit'],
   ['scripts/test-mobile-audio-memory.mjs'],
   ['scripts/test-powersave-inventory.mjs'],
+  ['scripts/test-junk-autosell-policy.mjs'],
   ['scripts/test-wiki-mobile-memory.mjs'],
   ['scripts/test-pwa-versioned-cache.mjs'],
   ['scripts/test-offline-bossring.mjs'],

@@ -28,6 +28,7 @@ const LOCAL_POLICY_FILES = [
   'afk-mobile-memory.js',
   'afk-mobile-audio-memory.js',
   'afk-powersave-inventory.js',
+  'afk-junk-autosell-policy.js',
 ];
 const UPSTREAM_ASSET_FILES = [
   'assets/icons/items/無限火藥爆裂矢.png',
