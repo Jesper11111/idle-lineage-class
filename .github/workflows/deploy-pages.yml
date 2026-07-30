@@ -59,6 +59,7 @@ jobs:
           npm run test:mobile-stress-webkit
           npm run test:mobile-audio-memory
           npm run test:powersave-inventory
+          npm run test:junk-autosell
           npm run test:wiki-mobile-memory
           npm run test:pwa-cache
           npm run test:offline
