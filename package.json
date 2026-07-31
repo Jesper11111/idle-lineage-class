@@ -20,6 +20,7 @@
     "test:offline": "node scripts/test-offline-bossring.mjs",
     "test:offline-integration": "node scripts/test-offline-bossring-integration.mjs",
     "test:offline-grace": "node scripts/test-offline-grace-boss-cache.mjs",
+    "test:offline-rift": "node scripts/test-offline-rift.mjs",
     "test:backports": "node scripts/test-shines-backports.mjs",
     "test:training": "node scripts/test-pp-training.mjs",
     "test:role-switch": "node scripts/test-pp-role-switch.mjs"

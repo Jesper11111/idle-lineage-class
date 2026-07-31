@@ -99,6 +99,182 @@
   function mapKey()     { return 'afk_map_' + currentSlot; }
   function prideKey()   { return 'afk_pride_' + currentSlot; }
   function oblKey()     { return 'afk_obl_' + currentSlot; }
+  // 🔒 Jesper rift offline journey v1
+  // 裂痕的戰鬥難度／強制頭目使用 state.ticks 推進，故離線補跑會照虛擬時間變難；
+  // 排名與入口停留獎勵則只累計前景在線時間，離線結算耗時與離線區間一律排除。
+  function riftKey() { return 'afk_rift_' + currentSlot; }
+  function clearRiftRuntime() {
+    if (typeof state === 'undefined' || !state) return;
+    delete state.__afkRiftBattleBaseMs;
+    delete state.__afkRiftBattleBaseTick;
+    delete state.__afkRiftRankBaseMs;
+    delete state.__afkRiftRankStartedAt;
+    delete state.__afkRiftBossDueElapsedMs;
+  }
+  function readRift() {
+    try {
+      var raw = localStorage.getItem(riftKey());
+      var data = raw ? JSON.parse(raw) : null;
+      if (!data || data.v !== 1 || !(Number(data.battleMs) >= 0) || !(Number(data.rankMs) >= 0)) return null;
+      return {
+        v: 1,
+        battleMs: Math.max(0, Number(data.battleMs) || 0),
+        rankMs: Math.max(0, Number(data.rankMs) || 0),
+        bossDueMs: Math.max(0, Number(data.bossDueMs) || 300000)
+      };
+    } catch (e) { return null; }
+  }
+  function adoptLiveRiftRuntime() {
+    if (typeof state === 'undefined' || !state || !state.riftRun) return false;
+    if (!(Number(state.__afkRiftBattleBaseMs) >= 0)) {
+      var now = Date.now();
+      var liveMs = Math.max(0, now - (Number(state.riftStartMs) || now));
+      state.__afkRiftBattleBaseMs = liveMs;
+      state.__afkRiftBattleBaseTick = Number(state.ticks) || 0;
+      state.__afkRiftRankBaseMs = 0;
+      state.__afkRiftRankStartedAt = Number(state.riftStartMs) || now;
+      state.__afkRiftBossDueElapsedMs = liveMs + Math.max(0, (Number(state.riftBossDue) || (now + 300000)) - now);
+    }
+    return true;
+  }
+  function riftBattleElapsedMs() {
+    if (!adoptLiveRiftRuntime()) return 0;
+    var base = Math.max(0, Number(state.__afkRiftBattleBaseMs) || 0);
+    var baseTick = Number(state.__afkRiftBattleBaseTick);
+    if (!Number.isFinite(baseTick)) baseTick = Number(state.ticks) || 0;
+    return base + Math.max(0, (Number(state.ticks) || 0) - baseTick) * TICK_MS;
+  }
+  function riftRankElapsedMs() {
+    if (!adoptLiveRiftRuntime()) return 0;
+    var base = Math.max(0, Number(state.__afkRiftRankBaseMs) || 0);
+    if (catchingUp || state.ff) return base;
+    var started = Number(state.__afkRiftRankStartedAt) || Date.now();
+    return base + Math.max(0, Date.now() - started);
+  }
+  function riftSnapshot() {
+    if (!adoptLiveRiftRuntime()) return null;
+    return {
+      v: 1,
+      battleMs: Math.max(0, Math.round(riftBattleElapsedMs())),
+      rankMs: Math.max(0, Math.round(riftRankElapsedMs())),
+      bossDueMs: Math.max(0, Math.round(Number(state.__afkRiftBossDueElapsedMs) || 300000))
+    };
+  }
+  function writeRiftSnapshot() {
+    try {
+      var data = riftSnapshot();
+      if (data) localStorage.setItem(riftKey(), JSON.stringify(data));
+      else localStorage.removeItem(riftKey());
+    } catch (e) {}
+  }
+  function restoreRiftRuntime(data) {
+    if (!data || typeof state === 'undefined' || !state) return false;
+    var now = Date.now();
+    state.riftRun = true;
+    state.__afkRiftBattleBaseMs = Math.max(0, Number(data.battleMs) || 0);
+    state.__afkRiftBattleBaseTick = Number(state.ticks) || 0;
+    state.__afkRiftRankBaseMs = Math.max(0, Number(data.rankMs) || 0);
+    state.__afkRiftRankStartedAt = now;
+    state.__afkRiftBossDueElapsedMs = Math.max(
+      state.__afkRiftBattleBaseMs,
+      Number(data.bossDueMs) || (state.__afkRiftBattleBaseMs + 300000)
+    );
+    state.riftStartMs = now - state.__afkRiftRankBaseMs;
+    state.riftBossDue = now + Math.max(0, state.__afkRiftBossDueElapsedMs - state.__afkRiftBattleBaseMs);
+    return true;
+  }
+  function sealRiftRuntimeAfterCatchup() {
+    if (!state || !state.riftRun) return;
+    var battleMs = riftBattleElapsedMs();
+    var rankMs = riftRankElapsedMs();
+    state.__afkRiftBattleBaseMs = battleMs;
+    state.__afkRiftBattleBaseTick = Number(state.ticks) || 0;
+    state.__afkRiftRankBaseMs = rankMs;
+    state.__afkRiftRankStartedAt = Date.now();
+    state.riftStartMs = Date.now() - rankMs;
+    state.riftBossDue = Date.now() + Math.max(0, (Number(state.__afkRiftBossDueElapsedMs) || (battleMs + 300000)) - battleMs);
+  }
+  function installRiftOfflineHooks() {
+    if (typeof enterRift === 'function') {
+      var _enterRift = enterRift;
+      window.enterRift = function () {
+        var wasRunning = !!(state && state.riftRun);
+        var result = _enterRift.apply(this, arguments);
+        if (!wasRunning && state && state.riftRun) {
+          var now = Date.now();
+          state.__afkRiftBattleBaseMs = 0;
+          state.__afkRiftBattleBaseTick = Number(state.ticks) || 0;
+          state.__afkRiftRankBaseMs = 0;
+          state.__afkRiftRankStartedAt = now;
+          state.__afkRiftBossDueElapsedMs = 300000;
+          state.riftStartMs = now;
+          state.riftBossDue = now + 300000;
+          writeRiftSnapshot();
+        }
+        return result;
+      };
+    }
+    if (typeof riftDamageMult === 'function') {
+      var _riftDamageMult = riftDamageMult;
+      window.riftDamageMult = function () {
+        if (!state || !state.riftRun || !adoptLiveRiftRuntime()) return _riftDamageMult.apply(this, arguments);
+        var minutes = Math.floor(riftBattleElapsedMs() / 60000);
+        return 1 + 0.2 * Math.max(0, minutes - 30);
+      };
+    }
+    if (typeof spawnRiftMob === 'function') {
+      var _spawnRiftMob = spawnRiftMob;
+      window.spawnRiftMob = function () {
+        if (!state || !state.riftRun || !adoptLiveRiftRuntime()) return _spawnRiftMob.apply(this, arguments);
+        var now = Date.now();
+        var battleMs = riftBattleElapsedMs();
+        var rankStart = state.riftStartMs, bossDue = state.riftBossDue;
+        var dueElapsed = Math.max(battleMs, Number(state.__afkRiftBossDueElapsedMs) || (battleMs + 300000));
+        state.riftStartMs = now - battleMs;
+        state.riftBossDue = now + Math.max(0, dueElapsed - battleMs);
+        try {
+          return _spawnRiftMob.apply(this, arguments);
+        } finally {
+          // 核心只有在強制頭目到期時才把 due 重設為「虛擬當下＋5 分鐘」。
+          // 未到期時保留原虛擬 due，不能把每次 spawn 的真實執行毫秒逐次扣掉。
+          var afterDue = Number(state.riftBossDue) || now;
+          var beforeRemain = Math.max(0, dueElapsed - battleMs);
+          state.__afkRiftBossDueElapsedMs = (afterDue - now > beforeRemain + 1000)
+            ? battleMs + Math.max(0, afterDue - Date.now())
+            : dueElapsed;
+          state.riftStartMs = rankStart;
+          state.riftBossDue = bossDue;
+        }
+      };
+    }
+    if (typeof riftEndRun === 'function') {
+      var _riftEndRun = riftEndRun;
+      window.riftEndRun = function () {
+        if (!state || !state.riftRun || !adoptLiveRiftRuntime()) return _riftEndRun.apply(this, arguments);
+        state.riftStartMs = Date.now() - riftRankElapsedMs();
+        var result = _riftEndRun.apply(this, arguments);
+        clearRiftRuntime();
+        try { localStorage.removeItem(riftKey()); } catch (e) {}
+        return result;
+      };
+    }
+    if (typeof renderRiftEntrance === 'function') {
+      var _renderRiftEntrance = renderRiftEntrance;
+      window.renderRiftEntrance = function (container) {
+        var result = _renderRiftEntrance.apply(this, arguments);
+        try {
+          if (container && !container.querySelector('.afk-rift-offline-note')) {
+            var note = document.createElement('div');
+            note.className = 'afk-rift-offline-note text-cyan-300 text-xs rounded border border-cyan-800/70 bg-cyan-950/30 p-2';
+            note.textContent = '支援離線掛機：離線期間照常取得戰鬥經驗、金幣與掉落，但不計入裂痕排名及入口停留獎勵時間。';
+            container.appendChild(note);
+          }
+        } catch (e) {}
+        return result;
+      };
+    }
+  }
+  installRiftOfflineHooks();
   function migrationKey(slot) { return MIGRATION_PREFIX + (slot == null ? currentSlot : slot); }
   function migrationDone(slot) { try { return localStorage.getItem(migrationKey(slot)) === '1'; } catch (e) { return false; } }
   function markMigrationDone(slot) { try { localStorage.setItem(migrationKey(slot), '1'); return true; } catch (e) { return false; } }
@@ -143,6 +319,8 @@
       } else {
         localStorage.removeItem(oblKey());
       }
+      // 🌀 裂痕旅程另存於外掛鍵；核心 save 不保存 state.riftRun，重載後靠這份接回。
+      writeRiftSnapshot();
     } catch (e) {}
   }
   function raf() {
@@ -589,7 +767,7 @@
     };
     return 'v5|' + offStatsHash(JSON.stringify(offStatsStable(payload)));
   }
-  async function runCatchup(totalTicks, withOverlay, huntMap, prePride, preObl, timing) {
+  async function runCatchup(totalTicks, withOverlay, huntMap, prePride, preObl, timing, preRift) {
     if (catchingUp) return;
     catchingUp = true;
     killTally = {};   // 📜 本次補跑的擊殺計數歸零
@@ -625,6 +803,7 @@
     var sliceMs = sliceFor(totalTicks);   // 依補跑長短決定畫面更新間隔:短→順、長→快
     var isClimb = !!(prePride && prePride.climb && !prePride.ranked && typeof enterPrideFloor === 'function');   // 排名挑戰不自動續
     var isObl = !isClimb && !!(preObl && preObl.phase && typeof enterOblivionMap === 'function');   // 🏝️ 遺忘之島旅程:同攀登,還原 state.oblivion 後用 enterOblivionMap 進場(島地圖非選單地圖)
+    var isRift = !isClimb && !isObl && huntMap === 'rift_battle' && !!preRift && typeof enterRiftMap === 'function';
     // ⚔ 軍王之室:選單地圖,走通用 gotoMap 即可重進;補跑時數「擊敗輪數/消耗鑰匙/是否因鑰匙用完被傳回村」供摘要顯示
     var isKing = !isClimb && !isObl && (typeof KING_ROOMS !== 'undefined') && !!KING_ROOMS[huntMap];
     var kingKeysBefore = isKing ? countKingKeys() : 0;
@@ -648,6 +827,10 @@
       state.oblivion = preObl.phase;
       state._oblivionAdvance = false;
       enterOblivionMap(huntMap);
+    } else if (isRift) {
+      // 裂痕不在 DB.maps，也不走 gotoMap；還原外掛旅程後直接用原作進場函式接回。
+      restoreRiftRuntime(preRift);
+      enterRiftMap();
     } else {
       gotoMap(huntMap);
       // 🌑 聖地 BOSS 房離線續戰：視同「繼續打你關遊戲時正在打的那隻（已付過入場費）」→ 第一隻免費、之後每次復活扣 1 入場道具
@@ -691,7 +874,8 @@
     //   而結算耗時「幾乎沒變快」(19→20s / 16→10s):王房的內容就是 BOSS 對打本身,首打+5% 抽驗全是真打,
     //   沒有可跳過的小怪 farming → 快速模式無利可圖。全模擬跑王房本來就快(24h ≈ 75 秒)。
     //   (事件迴圈仍保留 _kbRespawnAt 時間軸與 kingLeftRoom 偵測——若日後重啟,把下行 !isKing 拿掉即可。)
-    var fastEligible = !isClimb && !isKing && (!isObl || (preObl && preObl.phase === 'island'))
+    // 裂痕難度隨虛擬時間持續提高；不可沿用低難度快速樣本，先固定完整模擬保證死亡與收益正確。
+    var fastEligible = !isClimb && !isKing && !isRift && (!isObl || (preObl && preObl.phase === 'island'))
       && totalTicks >= (FAST_SAMPLE_TICKS + FAST_MIN_REMAIN) && !_forceNoFast;
     _forceNoFast = false;   // 🧪 一次性:用過即歸零,不影響之後的真實離線結算
     var fastMode = false, fastOff = false;   // fastOff = 本次補跑永久退出快速段
@@ -1199,6 +1383,7 @@
         var _f1 = segFloor > 0 ? segFloor : (climbSegs.length ? climbSegs[climbSegs.length - 1].floor : _f0);
         hMap = '傲慢之塔（' + _f0 + ' → ' + _f1 + ' 樓）';
       } else if (isObl) { hKind = 'oblivion'; hMap = mapName(oblEndMap || (mapState && mapState.current) || huntMap); }
+      else if (isRift) { hKind = 'rift'; hMap = '時空裂痕'; }
       else if (isKing)  { hKind = 'king';     hMap = mapName(huntMap); }
       else              { hKind = 'normal';   hMap = mapName(huntMap); }
       var hExp = expTotal(a2.lv, a2.exp) - expTotal(before.lv, before.exp); if (hExp < 0) hExp = 0;
@@ -1250,7 +1435,7 @@
       while (done < totalTicks && !_abortCatchup) {
         if (player.dead || !state.running) { died = !!player.dead; break; }
         var t0 = performance.now();
-        while (done < totalTicks && !player.dead && state.running && !_abortCatchup &&
+        while (done < totalTicks && !player.dead && state.running && (!_abortCatchup) && (!isRift || state.riftRun) &&
                (performance.now() - t0) < (_holdStart ? HOLD_SLICE_MS : sliceMs)) {   // 按住放棄時切片縮小,讓 1.5 秒一到就立刻停
           if (fastMode) {
             // ⚔ 軍王之室:鑰匙用完 → 核心 kbVictoryTeleport 已把人傳回村(mapState 變了)→ 剩餘時間在村莊,收快速段
@@ -1375,6 +1560,7 @@
       settleDeadMobs();
     }
 
+    if (isRift && !state.riftRun) died = true;   // 裂痕死亡由核心立即回入口並清 dead；用旅程旗標保留「撞死即停」語意
     var after = snapshot();
     var oblEndMap = isObl ? (mapState && mapState.current) : null;   // 落點前先記下旅程實際結束地圖(死亡會被改成村莊,先存起來給摘要用)
     // 攀登:封最後一段(還停在某層 → 用該層;已結束則 segFloor 已是 0,改記在最後到過的真實樓層)
@@ -1384,7 +1570,16 @@
     // 回狩獵圖前先補滿 HP/MP(等同「甦醒」),避免一上圖就低血暴斃。
     if (died) { try { delete player._offStats; } catch (e) {} }   // 💾 撞死 → 這套統計不可信(快取簽章代表的配置會死),清除、下次照常取樣
     player.dead = false;
-    if (isClimb) {
+    if (isRift) {
+      if (state.riftRun) {
+        try { if (player.mhp) player.hp = player.mhp; if (player.mmp) player.mp = player.mmp; } catch (e) {}
+        sealRiftRuntimeAfterCatchup();
+        state.ff = prevFf0; state.inTick = prevInTick0;
+        enterRiftMap();
+      } else if (!mapState || mapState.current !== 'town_rift') {
+        try { setMapSelectors('town_rift'); changeMap(true); } catch (e) {}
+      }
+    } else if (isClimb) {
       if (died) {
         // 撞死即停:比照原作 revive() 的「塔中死亡回城」——排名先依目前樓層結算,再結束攀登、回村
         try { if (state.prideClimb && state.prideRanked && typeof prideRecord === 'function') prideRecord(state.prideFloor || 2); } catch (e) {}
@@ -1493,12 +1688,13 @@
   // 載入後決定要不要結算離線。preMap/preTs 由 loadGame 開頭的 offlinePreLoad() 在「回村甦醒之前」擷取——
   // 因為 loadGame 會在村莊甦醒(內部呼叫 changeMap → offlineStamp),會把 afk_map/afk_ts 覆寫成
   // 現在(村莊),晚讀就拿不到真正的離線狀態。
-  function maybeCatchup(preMap, preTs, prePride, preObl) {
+  function maybeCatchup(preMap, preTs, prePride, preObl, preRift) {
     if (!validSlot() || !state || !state.running) return;
     var last = preTs;
     var savedMap = preMap;   // afk_map 缺值的後備讀圖已在 offlinePreLoad 做掉(必須趁 blob 未被回村甦醒的存檔蓋掉前讀,這裡太晚)
     var isClimb = !!(prePride && prePride.climb && !prePride.ranked);   // 排名挑戰不自動續(防重載刷分/閃死),只續一般攀登
     var isObl = !!(preObl && preObl.phase && typeof enterOblivionMap === 'function');   // 🏝️ 上次在遺忘之島旅程中(島/途中):同攀登,還原旅程並接回島上續掛
+    var isRift = savedMap === 'rift_battle' && !!preRift && typeof enterRiftMap === 'function';
     if (isObl && !savedMap) savedMap = (preObl.phase === 'island') ? 'oblivion_island' : 'oblivion_travel';   // afk_map 缺值時用旅程階段推地圖
     var now = Date.now();
     // ⚠ 這裡「不可」先 stamp:結算完成前錨點必須停在 closeTs——先蓋成「現在」的話,結算一被中斷
@@ -1509,14 +1705,10 @@
       skipNote('上次在傲慢之塔「排名挑戰」中：依設計重載＝回城、該次排名作廢，不結算離線收益。');
       return;
     }
-    if (savedMap === 'rift_battle') {
-      // 🌀 時空裂痕:時間排名挑戰(停留越久排名/獎勵越高、每 5 分鐘強制頭目逐漸把你打死)。
-      //   非選單地圖(enterRiftMap 進場、不走 changeMap)、state.riftRun 在暫態 state 上不存檔 → reload 一律已回村。
-      //   離線自動續＝刷排名/刷獎勵 exploit;比照排名攀登,離線不續、不結算(等同原作「中途離開＝該次作廢」)。
-      //   若不擋:savedMap='rift_battle' 非 town_/非攻城 → 會被當一般圖跑 gotoMap('rift_battle'),
-      //   但它不是選單地圖 → setMapSelectors 設不上 → mapState.current 變空 → 空轉、收益歸零(同遺忘之島舊雷)。
-      console.info('[AFK] 上次在時空裂痕(時間排名挑戰)中：依設計不自動續、不結算離線收益。');
-      skipNote('上次在「時空裂痕」中：時間排名挑戰依設計不結算離線收益（該次挑戰已作廢）。');
+    if (savedMap === 'rift_battle' && !isRift) {
+      // 舊版關閉時沒有裂痕旅程快照，無法可靠還原已在線多久／下一隻強制頭目；只略過這一次，避免補發錯誤收益。
+      console.info('[AFK] 上次在時空裂痕中，但沒有新版旅程快照：本次略過離線結算。');
+      skipNote('上次在「時空裂痕」中，但關閉時仍是舊版狀態，這一次無法還原；更新後重新進入的裂痕即可離線續掛。');
       return;
     }
     if (savedMap === 'afk_dummy') {
@@ -1538,13 +1730,13 @@
     //   扣光後被踢回長老會議廳、後續時間自然空轉停止。等於「你人在裡面掛機」的相同結果，不再特別排除。
     if (!last) {
       // 沒有舊時間戳(外掛剛裝 / 全新角色)→ 不結算離線收益;但若上次在攀登/遺忘之島,仍要把人帶回原地(零補跑)
-      if (isClimb || isObl) runCatchup(0, false, savedMap, prePride, preObl);
+      if (isClimb || isObl || isRift) runCatchup(0, false, savedMap, prePride, preObl, null, preRift);
       return;
     }
     var gap = now - last;
     // 不設「近期活躍就略過」的鎖:重新整理也照常結算那一小段 → 配合存活回原狩獵圖,刷新不會被丟回村莊。
     // 攀登/遺忘之島不受「村莊/攻城」這兩道略過閘:它本來就不是村莊/攻城圖,且即使 gap≈0(立即重整)也要把人放回原地續掛。
-    if (!isClimb && !isObl) {
+    if (!isClimb && !isObl && !isRift) {
       // 🧑‍🤝‍🧑 受僱傭兵：上游把傭兵鎖在安全區、不能自行掛機（線上也一樣）→ 一進來就跳過，不進 runCatchup。
       //   放在村莊閘之前＝就算離線錨點還凍在上一張狩獵圖，也不會白跑 24h、更不會誤發掛機收益（經驗改由待領帳本領）。
       //   用不走 2 秒記憶的 currentRoleIsMercenary（memo 可能殘留剛切換前的角色值），try 包底＝偵測失敗就照常往下走。
@@ -1576,8 +1768,8 @@
 
     var ms = Math.min(gap, CAP_MS);
     var ticks = Math.floor(ms / TICK_MS);
-    if (ticks <= 0 && !isClimb && !isObl) return;   // 一般圖 gap≈0 直接 no-op;攀登/遺忘之島 gap≈0 仍要回到原地(ticks=0 補跑空轉,落點會 enterPrideFloor/enterOblivionMap)
-    runCatchup(Math.max(0, ticks), ticks > OVERLAY_MIN_TICK, savedMap, prePride, preObl, { closeTs: last, loginTs: now });   // timing → 供寫離線歷史紀錄(done>0 才會真的記)
+    if (ticks <= 0 && !isClimb && !isObl && !isRift) return;   // 一般圖 gap≈0 直接 no-op;攀登/遺忘之島 gap≈0 仍要回到原地(ticks=0 補跑空轉,落點會 enterPrideFloor/enterOblivionMap)
+    runCatchup(Math.max(0, ticks), ticks > OVERLAY_MIN_TICK, savedMap, prePride, preObl, { closeTs: last, loginTs: now }, preRift);   // timing → 供寫離線歷史紀錄(done>0 才會真的記)
   }
 
   // ----- 核心掛點(loadGame / saveGame / changeMap 直呼;2026-07-10 起不再 monkey-patch) -------
@@ -1586,7 +1778,7 @@
   // js/13 loadGame 開頭呼叫:必須在「回村甦醒(內部 changeMap → offlineStamp 覆寫 afk_map/afk_ts/afk_pride)」之前擷取上次離線狀態
   window.offlinePreLoad = function () {
     // 從其他離線機制切回本引擎時，舊 afk_ts_/afk_map_ 可能已凍結很久；首次載入只建立安全起點。
-    if (!migrationDone()) return { map: '', ts: 0, pride: null, obl: null, migration: true };
+    if (!migrationDone()) return { map: '', ts: 0, pride: null, obl: null, rift: null, migration: true };
     var map = readMap();
     // 後援:舊資料沒有 afk_map → 現在(loadGame 一開頭)就從存檔 blob 補讀所在地圖。
     //   ⚠ 一定要在這裡讀、不能等到 maybeCatchup:載入流程的「回村甦醒」會觸發存檔
@@ -1599,7 +1791,7 @@
         map = (_pj && _pj.ms && _pj.ms.current) || '';
       } catch (e) {}
     }
-    return { map: map, ts: readTs(), pride: readPride(), obl: readObl() };
+    return { map: map, ts: readTs(), pride: readPride(), obl: readObl(), rift: readRift() };
   };
   // js/13 loadGame 成功載入(state.running=true 之後)呼叫:決定要不要結算離線
   window.offlineAfterLoad = function (pre) {
@@ -1612,7 +1804,7 @@
       try { if (typeof logSys === 'function') logSys('<span class="text-cyan-300">離線掛機已建立新的安全起點，從本次登入重新計時。</span>'); } catch (e) {}
       return;
     }
-    try { maybeCatchup(pre.map, pre.ts, pre.pride, pre.obl); } catch (e) { console.warn('[AFK] offlineAfterLoad error:', e); }
+    try { maybeCatchup(pre.map, pre.ts, pre.pride, pre.obl, pre.rift); } catch (e) { console.warn('[AFK] offlineAfterLoad error:', e); }
   };
 
   // 📜⚡ 擊殺/獲得計數:js/05 killMob、js/08 gainItem 直接讀 window.__afkKillTally/__afkGainTally
@@ -1620,7 +1812,7 @@
   window.__afkKillTally = null;
   window.__afkGainTally = null;
 
-  // 入口提示(時空裂痕/排名攀登不支援離線)已直接寫進核心 renderRiftEntrance(js/05)/renderPrideEntrance(js/11),不再包 wrapper 注入。
+  // 裂痕入口由本外掛補上「離線戰鬥收益照算、排名與停留獎勵時間不算」提示；排名攀登仍不支援離線。
 
   // ----- 心跳 + 關閉前蓋章 -------------------------------------------------
   setInterval(function () {
@@ -1631,11 +1823,13 @@
 
   // ----- 除錯介面 ----------------------------------------------------------
   window.__afk = {
-    version: '2.2.0-jesper-safety',
+    version: '2.3.0-jesper-rift-offline',
     engineRev: ENGINE_REV,
     capHours: CAP_HOURS,
     stamp: stamp,
     readTs: readTs,
+    readRift: readRift,
+    riftSnapshot: riftSnapshot,
     isCatchingUp: function () { return catchingUp; },
     migrationKeyFor: migrationKey,
     migrationDoneFor: migrationDone,
@@ -1646,7 +1840,7 @@
     mapName: mapName,   // 對外:地圖 id→中文名(供 afk-mobile 在匯入頁顯示「掛在哪張地圖」)
     histKey: histKey,   // 對外:目前角色的離線紀錄 key(供 afk-history)
     setCkptMs: function (ms) { CKPT_MS = Math.max(200, +ms || 5000); },   // 🧪 測試用:縮短檢查點間隔(驗「結算中斷只丟尾段」)
-    forceCatchup: function (mins, noFast) { _forceNoFast = !!noFast; runCatchup(Math.floor((mins || 60) * 60000 / TICK_MS), true, (typeof mapState !== 'undefined' && mapState && mapState.current) || ''); }   // 帶當前地圖,否則 gotoMap(undefined) 空轉零收益;noFast=true 強制全模擬(A/B 用)
+    forceCatchup: function (mins, noFast) { _forceNoFast = !!noFast; var _map = (typeof mapState !== 'undefined' && mapState && mapState.current) || ''; runCatchup(Math.floor((mins || 60) * 60000 / TICK_MS), true, _map, null, null, null, _map === 'rift_battle' ? riftSnapshot() : null); }   // 帶當前地圖,否則 gotoMap(undefined) 空轉零收益;noFast=true 強制全模擬(A/B 用)
   };
 
   // ═══ 外掛化掛點:自己 monkey-patch 上游原版核心(取代舊「核心直呼」;上游沒這些鉤子) ═══

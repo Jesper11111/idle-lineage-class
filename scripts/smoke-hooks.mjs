@@ -220,7 +220,7 @@ const untranslatedMaps = await page.evaluate(() => {
 const offlineEngineProblems = await page.evaluate(() => {
   const bad = [];
   if (window.__afkLegacyOfflineOwnsSettlement !== true) bad.push('afk-offline-owner 未授權舊版離線引擎獨占');
-  if (!window.__afk || window.__afk.version !== '2.2.0-jesper-safety') bad.push('afk-offline 安全版未成功啟動');
+  if (!window.__afk || window.__afk.version !== '2.3.0-jesper-rift-offline') bad.push('afk-offline 裂痕離線安全版未成功啟動');
   for (const name of ['offlineCatchupSaveCommitted', 'offlineSettleCatchup', 'offlinePrepareCharacterSelect']) {
     if (typeof window[name] !== 'undefined') bad.push(`新版離線全域 ${name} 仍存在`);
   }
@@ -238,6 +238,9 @@ const offlineEngineProblems = await page.evaluate(() => {
     if (typeof blocked !== 'function' || !blocked(id)) bad.push(`攻城 V2 暫態地圖未禁止離線：${id}`);
   }
   if (typeof blocked === 'function' && blocked('dragon_valley')) bad.push('一般狩獵圖被誤判為禁止離線');
+  if (!window.__afk || typeof __afk.readRift !== 'function' || typeof __afk.riftSnapshot !== 'function') {
+    bad.push('時空裂痕離線旅程介面未啟動');
+  }
   if (!window.__afk || __afk.engineRev !== 3 ||
       __afk.offStatsSchema !== 2 ||
       __afk.offStatsRuleset !== 'pp-v3.8.5+shines-v3.8.27-content-r4-grace-events' ||

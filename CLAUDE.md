@@ -135,7 +135,7 @@ CI 版:GitHub Actions `sync-upstream.yml`(**只有 `workflow_dispatch`,無 GitHu
 - 掛點:外掛自己 monkey-patch `loadGame`(開頭擷取錨點/結尾結算)、`saveGame`/`changeMap`(結尾 stamp)、`killMob`/`gainItem`(結算期間計數);出怪走核心補丁抽出的 `maybeSpawnMobs()`(與線上同一份排程)。
 - 💾 分段檢查點:結算每 ~5 秒 saveGame+錨點推進到「已結算時點」;**任何新程式碼想在結算(`catchingUp`)期間蓋 afk_ts 都是 bug**。
 - ⚡ 快速結算:取樣→事件驅動逐殺(批次擊殺保 AOE、BOSS 懶驗證+抽驗、維持自動續 buff);危險/特殊圖退回全模擬。**快速段不跑 tick()/autoActions**——「只寫在 autoActions 的自動行為」要各自補,補法=**直接呼叫原作那支函式**(如瞬移 `useItem(uid,true)`),不要自己刻守衛清單(必漏、必分歧)。
-- 排名/計時挑戰類(時空裂痕、排名攀登)**離線一律不續、不結算**(續=刷榜 exploit);攀登/遺忘之島這類非選單圖用外掛自存旅程狀態+原作進場函式還原,不可走 gotoMap 選單路徑。
+- 排名攀登離線一律不續、不結算。時空裂痕則由外掛自存旅程並允許離線實戰補跑：離線戰鬥收益照算、戰鬥難度與強制頭目按虛擬 tick 推進，但離線時間不計入裂痕排名與入口停留獎勵；這類非選單圖必須用原作進場函式還原，不可走 gotoMap 選單路徑。
 - **判準:遊戲邏輯的時間判斷用 `state.ticks`,不用 `Date.now()`**(補跑壓縮時間,牆鐘幾乎凍結)。例外=「關遊戲也該倒數」的(攻城冷卻)留牆鐘。
 - **ff 洩漏判準**:補跑(`state.ff`)期間,戰鬥路徑**直接**呼叫的 `render*`/重副作用(`saveGame`)要被 `!state.ff` 擋住或函式內早退;**自己跑的 timer(setInterval/rAF)也要問「補跑期間它還在跑嗎」**。守衛用 `state.ff && !state.ffSmall`(小補跑要放行)。上游是原文改不得→這類守衛由 afk-offline 以 wrapper 實作(如 sprite ticker、音效靜音)。
 - debug:`window.__afk.forceCatchup(分鐘, noFast)`。全模擬慢是戰鬥模擬本身,不是掃描/記憶體,別往那優化。
