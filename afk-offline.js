@@ -506,11 +506,12 @@
   //   大存檔的 JSON.stringify+壓縮是結算的大宗成本——頭目密集圖 24h 可達數百次)。
   //   檢查點與結算尾自己要存時暫時放行(見 doCheckpoint);錨點不動,被擋掉的段落中斷了也只是重算,不丟收益。
   var _saveSquelch = false;
+  var _bossTraceKillHook = null, _bossTraceSpawnHook = null;   // 瘋狂席琳 BOSS 真打樣本；線上時皆為 null
   // 🔒 Jesper offline cache contract v5
   // 快取必須隨真正影響戰力的資料失效。舊簽章只有地圖/等級/裝備 id+強化，會漏掉
   // 配點、自動技能、套裝詞綴、傭兵與寵物；內容更新後甚至可能沿用舊版殺速與 BOSS 結果。
   var OFFSTATS_SCHEMA = 2;
-  var OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r3-grace-boss';
+  var OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r4-grace-events';
   function offStatsStable(v) {
     if (v == null || typeof v === 'number' || typeof v === 'boolean' || typeof v === 'string') return v;
     if (Array.isArray(v)) return v.map(offStatsStable);
@@ -706,10 +707,174 @@
     //   之後同名 BOSS:安全的 → 即殺但時間按「該 BOSS 實測耗時」推進(不是小怪均速);對打時血量掉太深的 → 每次都真打。
     //   打輸=外層撞死即停;打不動=照實耗完時間。純 BOSS 圖因此自然接近全真模擬。
     var fastBossUid = null, fastBossName = '', fastBossStart = 0, fastBossMinHp = 1, fastBossKills0 = 0;
-    // 🔒 Jesper Crazy Sherine Boss cache safety v1
-    // 瘋狂席琳的 BOSS 可能在對打途中才被恩賜並回滿、HP×10；名稱快取無法表示轉變時點。
-    // 因此只讓 BOSS 逐拍真打，小怪與其他快速統計仍照常使用快取。
-    var bossCacheEnabled = !player.sherineMad;
+    // 🔒 Jesper Crazy Sherine Boss event cache v2
+    // 瘋狂席琳：普通／恩賜各存一份完整樣本。重播只跳「小怪死亡／核心出怪／階段結束」
+    // 三種事件；spawn 仍唯一走 maybeSpawnMobs→spawnMob→applySherineGrace，不自行擲 1%。
+    var fastBossVariant = 'normal', fastBossPhaseTick = 0, fastBossEvents = [], fastBossActualKill = false, fastBossReplay = null;
+    function bossFind(uid) {
+      for (var i = 0; i < mapState.mobs.length; i++) { var m = mapState.mobs[i]; if (m && m.uid === uid) return m; }
+      return null;
+    }
+    function bossCacheEntry(name) {
+      var row = bossStats[name];
+      if (!row || typeof row !== 'object' || !Object.prototype.hasOwnProperty.call(row, 'normal') || !Object.prototype.hasOwnProperty.call(row, 'grace')) {
+        row = bossStats[name] = { normal: null, grace: null };
+      }
+      return row;
+    }
+    function bossProfileEvents(events) {
+      var rows = [], i;
+      for (i = 0; i < (events || []).length; i++) {
+        var e = events[i], p = Math.max(1, Math.min(1000, Math.round(Number(e && e[0]) || 0))), c = Math.max(0, Math.round(Number(e && e[1]) || 0));
+        if (c > 0) rows.push([p, c]);
+      }
+      rows.sort(function (a, b) { return a[0] - b[0]; });
+      var out = [];
+      for (i = 0; i < rows.length; i++) {
+        var last = out[out.length - 1];
+        if (last && last[0] === rows[i][0]) last[1] += rows[i][1]; else out.push(rows[i]);
+      }
+      return out;
+    }
+    function bossEventMinorCount(events) {
+      var n = 0; for (var i = 0; i < (events || []).length; i++) n += Math.max(0, Number(events[i] && events[i][1]) || 0); return Math.round(n);
+    }
+    function bossMergeProfile(prev, ticks, safe, events) {
+      var ev = bossProfileEvents(events), dur = Math.max(1, Number(ticks) || 1);
+      if (prev && prev.safe && safe && Number(prev.ticks) > 0) dur = (Number(prev.ticks) + dur) / 2;
+      return { ticks: dur, safe: !!safe, minor: bossEventMinorCount(ev), events: ev };
+    }
+    function bossNormalizeEvents(raw, ticks) {
+      var dur = Math.max(1, Number(ticks) || 1), out = [];
+      for (var i = 0; i < (raw || []).length; i++) {
+        var e = raw[i], at = Math.max(1, Number(e && e[0]) || 1), count = Math.max(0, Math.round(Number(e && e[1]) || 0));
+        if (count > 0) out.push([Math.max(1, Math.min(1000, Math.round(at * 1000 / dur))), count]);
+      }
+      return bossProfileEvents(out);
+    }
+    function bossProfileUsable(profile) {
+      if (!profile || !profile.safe || !(Number(profile.ticks) > 0) || !isFinite(Number(profile.ticks))) return false;
+      var ev = bossProfileEvents(profile.events);
+      return bossEventMinorCount(ev) === Math.max(0, Math.round(Number(profile.minor) || 0));
+    }
+    function bossRecordMinorKill(mob) {
+      if (fastBossUid == null || !mob || mob.boss || !mob._dead) return;
+      var at = Math.max(1, (Number(state.ticks) || 0) - fastBossPhaseTick), last = fastBossEvents[fastBossEvents.length - 1];
+      if (last && last[0] === at) last[1]++; else fastBossEvents.push([at, 1]);
+    }
+    function bossMarkGraceTransition() {
+      if (fastBossUid == null || fastBossVariant !== 'normal') return false;
+      var boss = bossFind(fastBossUid);
+      if (!boss || !boss._grace) return false;
+      fastBossVariant = 'grace';
+      fastBossStart = done;                         // spawn 發生於本拍攻擊前；本拍完整算進 grace
+      fastBossPhaseTick = Math.max(0, (Number(state.ticks) || 0) - 1);
+      fastBossMinHp = (player.mhp > 0) ? (player.hp / player.mhp) : 1;
+      fastBossKills0 = tallySum(killTally);
+      fastBossEvents = [];                          // normal 是截尾樣本，整段丟棄
+      console.info('[AFK] ⚔ BOSS「' + fastBossName + '」對打途中取得席琳恩賜；普通樣本作廢，改從回滿當刻量 grace。');
+      return true;
+    }
+    function beginBossTrue(mob, variant, reason) {
+      fastBossReplay = null;
+      fastBossUid = mob.uid; fastBossName = mob.n || '?'; fastBossVariant = variant || (mob._grace ? 'grace' : 'normal');
+      fastBossStart = done; fastBossPhaseTick = Number(state.ticks) || 0; fastBossMinHp = (player.mhp > 0) ? (player.hp / player.mhp) : 1;
+      fastBossKills0 = tallySum(killTally); fastBossEvents = []; fastBossActualKill = false;
+      console.info('[AFK] ⚔ 快速結算遇到 BOSS「' + fastBossName + '」(' + fastBossVariant + ' ' + (reason || '首次') + ')→ 切回真模擬對打。');
+    }
+    function beginBossReplay(mob, variant, profile, reason) {
+      fastBossUid = null;
+      fastBossReplay = {
+        uid: mob.uid, name: mob.n || '?', variant: variant, profile: profile,
+        startDone: done, deadline: done + Math.max(1, Number(profile.ticks) || 1),
+        events: bossProfileEvents(profile.events), eventIndex: 0, pumpedTick: null
+      };
+      console.info('[AFK] ⚡ BOSS「' + fastBossReplay.name + '」使用 ' + variant + ' 事件快取' + (reason ? '(' + reason + ')' : '') + '。');
+      return fastBossReplay;
+    }
+    function bossReplayEventDone(replay) {
+      var e = replay.events[replay.eventIndex];
+      return e ? replay.startDone + Math.max(1, Math.round(Number(replay.profile.ticks) * e[0] / 1000)) : Infinity;
+    }
+    function bossReplayNextSpawnDone() {
+      var next = Infinity, hasEmptyUnscheduled = false;
+      var pureBoss = PURE_BOSS_MAPS.includes(mapState.current) && !KING_ROOMS[mapState.current];
+      var slotCount = (typeof backSlotsActive === 'function' && backSlotsActive()) ? 5 : 3;
+      for (var i = 0; i < slotCount; i++) {
+        if (pureBoss && i !== 1) continue;           // 核心純 Boss 圖只會排中央格；其餘永久空格不是待出怪事件
+        if (!mapState.mobs[i] && (!mapState.spawnAt || mapState.spawnAt[i] == null)) hasEmptyUnscheduled = true;
+        var at = mapState.spawnAt && mapState.spawnAt[i];
+        if (at != null && Number(at) < next) next = Number(at);
+      }
+      if (hasEmptyUnscheduled) return done + 1;       // 對齊 tick：死亡後下一拍才由核心排重生
+      return isFinite(next) ? done + Math.max(0, next - (Number(state.ticks) || 0)) : Infinity;
+    }
+    function bossReplaySwitchGrace(replay, boss) {
+      fastBossReplay = null;
+      var grace = bossCacheEntry(replay.name).grace;
+      if (bossProfileUsable(grace) && Math.random() >= BOSS_REVERIFY_P) {
+        var graceReplay = beginBossReplay(boss, 'grace', grace, '途中恩賜');
+        // spawn 發生於本拍攻擊前；真打樣本把這一拍完整算進 grace。
+        // normal 重播已跳到本拍，故 grace 起點回推一拍，並標記本拍已 pump，避免重複出怪。
+        graceReplay.startDone = Math.max(replay.startDone, done - 1);
+        graceReplay.deadline = graceReplay.startDone + Math.max(1, Number(grace.ticks) || 1);
+        graceReplay.pumpedTick = state.ticks;
+      } else beginBossTrue(boss, 'grace', bossProfileUsable(grace) ? '獨立抽驗' : '首次');
+    }
+    function bossReplayStep() {
+      var replay = fastBossReplay, guard = 0;
+      if (!replay) return true;
+      while (fastBossReplay === replay && done <= totalTicks && guard++ < 20000) {
+        var boss = bossFind(replay.uid);
+        if (!boss || boss._dead) { fastBossReplay = null; console.warn('[AFK] BOSS 事件重播目標消失，未補擊殺、未寫快取。'); return true; }
+        if (replay.variant === 'normal' && boss._grace) { bossReplaySwitchGrace(replay, boss); return true; }
+
+        if (replay.pumpedTick !== state.ticks) {
+          offlineBossHuntStep(totalTicks - done);
+          maybeSpawnMobs();                            // 唯一出怪／唯一恩賜 RNG 路徑
+          replay.pumpedTick = state.ticks;
+          boss = bossFind(replay.uid);
+          if (!boss || boss._dead) { fastBossReplay = null; return true; }
+          if (replay.variant === 'normal' && boss._grace) { bossReplaySwitchGrace(replay, boss); return true; }
+        }
+
+        var eventDone = bossReplayEventDone(replay);
+        if (eventDone <= done + 0.0001) {
+          var event = replay.events[replay.eventIndex++], count = event[1];
+          for (var k = 0; k < count; k++) {
+            var idx = -1, born = Infinity;
+            for (var i = 0; i < mapState.mobs.length; i++) {
+              var minor = mapState.mobs[i];
+              if (minor && !minor._dead && !minor.boss && (minor._born || 0) < born) { idx = i; born = minor._born || 0; }
+            }
+            if (idx < 0) { fastBossReplay = null; beginBossTrue(boss, replay.variant, '事件場面偏移'); return true; }
+            killMob(idx); settleDeadMobs();            // 小怪獎勵照正式管線；空格下一虛擬拍再排程
+          }
+          continue;
+        }
+
+        if (done + 0.0001 >= replay.deadline) {
+          var bossIdx = -1;
+          for (var bi = 0; bi < mapState.mobs.length; bi++) if (mapState.mobs[bi] && mapState.mobs[bi].uid === replay.uid) { bossIdx = bi; break; }
+          if (bossIdx < 0) { fastBossReplay = null; return true; }
+          if (replay.variant === 'normal' && mapState.mobs[bossIdx]._grace) { bossReplaySwitchGrace(replay, mapState.mobs[bossIdx]); return true; }
+          killMob(bossIdx); settleDeadMobs(); maybeSpawnMobs();   // 最終擊殺仍走真實掉落／任務／tally
+          fastBossReplay = null;
+          return true;
+        }
+
+        var nextDone = Math.min(replay.deadline, eventDone, bossReplayNextSpawnDone());
+        if (nextDone > totalTicks || (nextDone >= totalTicks && replay.deadline > totalTicks)) { beginBossTrue(boss, replay.variant, '離線尾段'); return true; }
+        var adv = nextDone - done;
+        if (!(adv > 0)) adv = Math.min(1, replay.deadline - done);
+        if (!(adv > 0)) continue;
+        if (!fastAdvance(adv)) { fastBossReplay = null; return false; }
+      }
+      if (guard >= 20000) { fastBossReplay = null; console.warn('[AFK] BOSS 事件重播超過安全步數，退回真模擬。'); return false; }
+      return true;
+    }
+    _bossTraceKillHook = function (mob) { bossRecordMinorKill(mob); if (fastBossUid != null && mob && mob.uid === fastBossUid && mob._dead) fastBossActualKill = true; };
+    _bossTraceSpawnHook = function () { bossMarkGraceTransition(); };
     var BOSS_REVERIFY_P = 0.05;   // 🐲 抽驗:每 ~20 隻「已驗證安全」的同名 BOSS 抽 1 隻真打,實測耗時/同場小怪數做移動平均——單一首打樣本變異極大(同隻 BOSS 兩輪量到 27 vs 316 拍),外推整晚會嚴重失真
     var bossStats = {};   // {怪名: {ticks:實測耗時(移動平均), safe:對打全程血量未低於安全線, minor:對戰期間同場被清掉的小怪數(移動平均)}}
     // ⚡ 批次擊殺模型:AOE 角色一次法術同時清多隻,「一次殺一隻、每殺推進一次」的串行模型會把清場速度壓低、
@@ -733,7 +898,7 @@
       try {
         if (!(svcPerEvent > 0)) return;
         if (hpFloorFixed) return;   // 斷貨後的「質變戰局」統計不寫快取:簽章不含消耗品庫存,隔天補貨後會拿沒藥的殺速亂算
-        player._offStats = { v: OFFSTATS_SCHEMA, sig: offStatsSig(), svcE: svcPerEvent, batch: batchPerEvent, consume: consumePerTick || {}, boss: bossCacheEnabled ? bossStats : {}, savedAt: Date.now() };
+        player._offStats = { v: OFFSTATS_SCHEMA, sig: offStatsSig(), svcE: svcPerEvent, batch: batchPerEvent, consume: consumePerTick || {}, boss: bossStats, savedAt: Date.now() };
       } catch (e) {}
     }
     // ═══ 結算統計快取(宣告結束) ═══════════════════════════════════════════════
@@ -956,8 +1121,14 @@
         var _m0 = mapState.mobs[ti];
         if (_m0.boss) {   // 🐲 BOSS:第一次(或未驗證安全、或 5% 抽驗)→ 真模擬對打;其餘 → 即殺但時間按「該 BOSS 實測耗時」推進
           if (fastTeleportAwayBoss(_m0)) return fastAdvance(1);   // 🌀 勾了自動瞬移且該圖可瞬移 → 甩掉不打(約當一拍;下輪排程重出)
-          var _bs = bossCacheEnabled ? bossStats[_m0.n] : null;
-          if (_bs && _bs.safe && Math.random() >= BOSS_REVERIFY_P) {
+          var _bossVariant = (_m0._grace ? 'grace' : 'normal');
+          var _bossEntry = player.sherineMad ? bossCacheEntry(_m0.n) : null;
+          var _bs = player.sherineMad ? _bossEntry[_bossVariant] : bossStats[_m0.n];
+          if (player.sherineMad && bossProfileUsable(_bs) && Math.random() >= BOSS_REVERIFY_P) {
+            beginBossReplay(_m0, _bossVariant, _bs, '安全樣本');
+            return true;
+          }
+          if (!player.sherineMad && _bs && _bs.safe && Math.random() >= BOSS_REVERIFY_P) {
             // 🐲 秒殺(時間按實測移動平均推進)。順序刻意是「先補小怪 → 推進視窗時間 → 最後才殺 BOSS」:
             //   對打視窗期間 BOSS 留在場上,補殺與視窗內的出怪抽選經過核心 spawnMob 的
             //   「同名限一隻/bossInBattle/長老節流」時看得到它——單一 BOSS 種的圖(傲慢樓層)才不會
@@ -971,8 +1142,7 @@
             }
             return _okAdv;
           }
-          fastBossUid = _m0.uid; fastBossName = _m0.n || '?'; fastBossStart = done; fastBossMinHp = 1; fastBossKills0 = tallySum(killTally);   // 記真打起始殺數 → 倒下時算對戰期間清掉的小怪數
-          console.info('[AFK] ⚔ 快速結算遇到 BOSS「' + fastBossName + '」(' + (!bossCacheEnabled ? '瘋狂席琳,每隻皆實測' : (_bs && _bs.safe ? '抽驗' : '首次')) + ')→ 切回真模擬對打' + (!bossCacheEnabled ? ',本模式不寫入 BOSS 快取。' : ',倒下後同名 BOSS 才可快轉。'));
+          beginBossTrue(_m0, _bossVariant, (_bs && _bs.safe ? '抽驗' : '首次'));
           return true;   // 不推進時間、不扣消耗品——接下來的真模擬拍會照實計(場上其他怪由真模擬一併處理)
         }
         // ⚡ 批次擊殺:一個「死亡事件」殺 batchPerEvent 隻(小數位用機率補整),AOE 角色一次清一批與線上一致;
@@ -1002,8 +1172,7 @@
       batchPerEvent = Math.max(1, player._offStats.batch || 1);
       consumePerTick = {}; for (var _ck in player._offStats.consume) consumePerTick[_ck] = player._offStats.consume[_ck];
       consumeAcc = {};
-      if (bossCacheEnabled) bossStats = player._offStats.boss || {};
-      else { bossStats = {}; player._offStats.boss = {}; }   // 清掉同規則版中任何意外殘留的污染值
+      bossStats = player._offStats.boss || {};
       fastMode = true;
       console.info('[AFK] 💾 統計快取命中:跳過取樣與 BOSS 首打,直接快速結算(每事件 ' + svcPerEvent.toFixed(1) + ' 拍×' + batchPerEvent.toFixed(2) + ' 隻,BOSS 快取 ' + Object.keys(bossStats).length + ' 種)。');
     }
@@ -1090,6 +1259,14 @@
               console.info('[AFK] ⚔ 軍王之室:鑰匙用完被傳回村,剩餘離線時間無戰鬥收益。');
               continue;
             }
+            if (fastBossReplay) {   // 🔮 瘋狂席琳 BOSS：只跑出怪／小怪死亡事件，不逐拍攻防
+              _fastEvents++;
+              if (!bossReplayStep()) {
+                if (_dryHit) { _dryHit = false; fastMode = false; sampleGrew = false; hpFloorFixed = true; sampleEnd = done + FAST_SAMPLE_TICKS; beginSample(done); }
+                else { fastMode = false; fastOff = true; }
+              }
+              continue;
+            }
             if (fastBossUid != null) {   // 🐲 BOSS 對打中:逐拍真模擬(死亡由外層撞死即停接手;打不動就照實耗完時間)
               tick();
               settleDeadMobs();
@@ -1098,21 +1275,25 @@
               var _hpB = (player.mhp > 0) ? (player.hp / player.mhp) : 1;
               if (_hpB < fastBossMinHp) fastBossMinHp = _hpB;
               var _bAlive = mapState.mobs.some(function (x) { return x && x.uid === fastBossUid && !x._dead; });   // 事件驅動:BOSS 可能在任一格位,依 uid 掃全場
-              if (!_bAlive) {   // BOSS 倒下(或場面被重置)→ 記錄實測耗時/安全度,回快速段
-                fastBossUid = null;
+              if (!_bAlive) {   // UID 消失不等於擊殺：只有 killMob hook 證明 _dead 才可寫完整樣本
+                var _doneBossName = fastBossName, _doneBossVariant = fastBossVariant;
                 var _durB = Math.max(1, done - fastBossStart);
-                var _safeB = fastBossMinHp >= hpFloorNow();   // 安全線跟取樣共用同一條門檻(隨存活時間降到 0):撐滿 20 分鐘後 BOSS 首遇打得贏就 safe → 秒殺
-                var _minorB = Math.max(0, (tallySum(killTally) - fastBossKills0) - 1);   // 對戰期間總殺數 − BOSS 本身 1 = 同場被 AOE/傭兵/寵物清掉的小怪數
-                if (bossCacheEnabled) {
-                  var _prevB = bossStats[fastBossName];
-                  // 🐲 移動平均:抽驗(已有安全實測)→ 與舊值各半混合;首次/上次不安全 → 直接採用本次。
-                  //   單一樣本的對打耗時變異極大,平均化避免一次幸運/倒楣樣本外推整晚。
-                  bossStats[fastBossName] = (_prevB && _prevB.safe && _safeB)
+                var _safeB = fastBossMinHp >= hpFloorNow();
+                var _minorB = player.sherineMad ? bossEventMinorCount(fastBossEvents) : Math.max(0, (tallySum(killTally) - fastBossKills0) - 1);
+                var _provedB = !!fastBossActualKill;
+                fastBossUid = null;
+                if (_provedB && player.sherineMad) {
+                  var _entryB = bossCacheEntry(_doneBossName), _eventsB = bossNormalizeEvents(fastBossEvents, _durB);
+                  _entryB[_doneBossVariant] = bossMergeProfile(_entryB[_doneBossVariant], _durB, _safeB, _eventsB);
+                  saveOffStats();
+                } else if (_provedB) {
+                  var _prevB = bossStats[_doneBossName];
+                  bossStats[_doneBossName] = (_prevB && _prevB.safe && _safeB)
                     ? { ticks: (_prevB.ticks + _durB) / 2, safe: true, minor: Math.round(((_prevB.minor || 0) + _minorB) / 2) }
                     : { ticks: _durB, safe: _safeB, minor: _minorB };
-                  saveOffStats();   // 💾 新量到的 BOSS 實測 → 更新統計快取(下次同簽章連首打都免)
+                  saveOffStats();
                 }
-                console.info('[AFK] ⚔ BOSS「' + fastBossName + '」倒下:實測 ' + Math.round(_durB) + ' 拍、同場小怪 ' + _minorB + ' 隻' + (!bossCacheEnabled ? ',瘋狂席琳模式不快取 BOSS,下一隻仍逐拍真打。' : (_safeB ? ',之後同名 BOSS 即殺、時間按實測(移動平均)推進並補回小怪。' : ',對打時血量偏低(' + Math.round(fastBossMinHp * 100) + '%) → 之後每次都真打。')));
+                console.info('[AFK] ⚔ BOSS「' + _doneBossName + '」' + (_provedB ? ('倒下:' + _doneBossVariant + ' 實測 ' + Math.round(_durB) + ' 拍、同場小怪 ' + _minorB + ' 隻。') : '未經正式擊殺即離場，本次不寫快取。'));
               }
               if (fastBossUid == null && player.lv !== lastLv) {   // BOSS 經驗大,常直接升級 → 重新取樣殺速
                 lastLv = player.lv;
@@ -1297,6 +1478,7 @@
     } finally {
       killTicker();                                        // 冪等:正常路徑內層 finally 已關過
       _saveSquelch = false;                                // 保險:例外路徑也不可讓 saveGame 擋板卡住(否則之後線上全部存不了檔)
+      _bossTraceKillHook = null; _bossTraceSpawnHook = null; // BOSS 樣本 hook 絕不可洩漏到線上
       if (_giDefer) { window.gainItem = _giDefer; _giDefer = null; }   // 保險:例外路徑也要還原 gainItem(正常路徑已還原 → 此處不動作)
       killTally = null; gainTally = null;                  // 回到「線上不計數」狀態
       window.__afkKillTally = null; window.__afkGainTally = null;
@@ -1494,9 +1676,17 @@
     if (typeof killMob === 'function') {
       var _km = killMob;
       window.killMob = function (idx) {
-        if (window.__afkKillTally) { try { var m = mapState.mobs[idx]; if (m && !m._dead && m.n) window.__afkKillTally[m.n] = (window.__afkKillTally[m.n] || 0) + 1; } catch (e) {} }
-        return _km.apply(this, arguments);
+        var _traceMob = null;
+        try { _traceMob = mapState.mobs[idx] || null; } catch (e0) {}
+        if (window.__afkKillTally) { try { var m = _traceMob; if (m && !m._dead && m.n) window.__afkKillTally[m.n] = (window.__afkKillTally[m.n] || 0) + 1; } catch (e) {} }
+        var _kr = _km.apply(this, arguments);
+        if (_bossTraceKillHook && _traceMob && _traceMob._dead) { try { _bossTraceKillHook(_traceMob); } catch (e1) {} }
+        return _kr;
       };
+    }
+    if (typeof spawnMob === 'function') {
+      var _smTrace = spawnMob;
+      window.spawnMob = function () { var _sr = _smTrace.apply(this, arguments); if (_bossTraceSpawnHook) { try { _bossTraceSpawnHook(); } catch (e) {} } return _sr; };
     }
     if (typeof gainItem === 'function') {
       var _gi = gainItem;
