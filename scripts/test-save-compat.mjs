@@ -274,7 +274,7 @@ export async function testSaveFiles(paths) {
           failures.push(`回城刷新呼叫／費用錯誤（calls=${got.townRefreshCalls}, goldDelta=${got.townRefreshGoldDelta}）`);
         }
         if (got.mercElementRestriction !== false || got.mismatchedElfSkillAllowed !== true) failures.push('妖精傭兵仍受目前屬性限制');
-        if (got.offlineVersion !== '2.2.0-jesper-safety' || got.offlineOwner !== true) failures.push('舊離線安全引擎未獨占啟動');
+        if (got.offlineVersion !== '2.3.0-jesper-rift-offline' || got.offlineOwner !== true) failures.push('裂痕離線安全引擎未獨占啟動');
         if (got.siegeStages !== 5 || !got.threatEnabled || got.mercThreatKey !== 'A:test' || !got.bindMercSupported || !got.guardLoaded) {
           failures.push('PP v3.8.5 戰鬥模組未完整作用於傭兵');
         }
