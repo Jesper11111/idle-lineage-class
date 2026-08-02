@@ -7,12 +7,20 @@ const RELIC_EGG_PETS = {
     calamityegg: { pet: '災厄蜥蜴', aura: '災厄' }
 };
 
-// 補跑期間的 gainItem 熱路徑：同一背包以完整 itemSig 建一次索引。
-// 一般遊戲與 _lockMergeOff 製作流程仍走原本線性搜尋；未命中也回退掃描，避免中途改裝造成漏合併。
+// 戰鬥掉落的 gainItem 熱路徑：同一背包以完整 itemSig 建一次索引。
+// 補跑與一般戰鬥共用；_lockMergeOff 製作流程仍走原本線性搜尋。未命中一律回退掃描，避免中途改裝造成漏合併。
 let _catchupGainItemIndex = null;
+let _catchupAutoSortPending = false;
 function resetCatchupGainItemIndex() { _catchupGainItemIndex = null; }
+function deferCatchupAutoSort() { _catchupAutoSortPending = true; }
+function flushCatchupAutoSort() {
+    if (!_catchupAutoSortPending) return;
+    _catchupAutoSortPending = false;
+    try { if (typeof autoSortInventory === 'function') autoSortInventory(); } catch (e) {}
+}
+function discardCatchupAutoSort() { _catchupAutoSortPending = false; }
 function _catchupGainItemIndexActive() {
-    return !_lockMergeOff && typeof state !== 'undefined' && !!state.ff;
+    return !_lockMergeOff && typeof state !== 'undefined' && !!state.running;
 }
 function _buildCatchupGainItemIndex() {
     let inv = player && Array.isArray(player.inv) ? player.inv : [];
@@ -73,6 +81,7 @@ function _rememberCatchupGainItemStack(item) {
     cache.last = item;
 }
 function gainItem(id, cnt=1, silent=false, forceNormal=false, affixOld=false, deferUi=false, fixedAffixes=null, blessRate=null) {   // ⚠️ 第 7 參供既定詞綴來源；第 8 參供製作等來源指定祝福率
+    let _deferCatchupUi = !deferUi && typeof state !== 'undefined' && !!state.ff;
     // 卷軸變祝福／詛咒機率：各 1%（互斥）
     if (!forceNormal && (id === 'scroll_weapon' || id === 'scroll_armor')) {
         let _r = lootRng('scrollvar');   // 🎲 committed RNG（防 SL 重抽卷軸祝福/詛咒變體）
@@ -162,12 +171,15 @@ function gainItem(id, cnt=1, silent=false, forceNormal=false, affixOld=false, de
             logSys(`<span class="sys-item-gain">獲得物品: ${_nameHtml}</span>`, _rare);
         }
     }
-    if (!deferUi) renderTabs();
+    if (!deferUi && !_deferCatchupUi) renderTabs();
     if(DB.items[id] && DB.items[id].grantSkills) { calcStats(); renderSkillSelects(); }   // 取得授予技能的頭盔：立即生效
     
     if(typeof auditTrackGain === 'function') auditTrackGain(itemInfo);   // 統計：掉落計數
     try { if (_vfxLootCtx && d && d.gachaWeight === 1 && typeof vfxRareDrop === 'function') vfxRareDrop(d.n); } catch(e){}   // ✨ VFX：潘朵拉權重=1 的稀有掉落金色閃光
-    try { if (!deferUi && typeof autoSortInventory === 'function') autoSortInventory(); } catch (e) {}   // 🔧 v2.6.73 獲得物品時自動排列背包（每 10 秒最多 1 次·節流在函式內）；批次發放可延後至交易完成再統一重繪
+    try {
+        if (_deferCatchupUi) deferCatchupAutoSort();
+        else if (!deferUi && typeof autoSortInventory === 'function') autoSortInventory();
+    } catch (e) {}   // 🔧 v2.6.73 獲得物品時自動排列背包（每 10 秒最多 1 次·節流在函式內）；補跑掉落則統一延到結束後只排一次
     return itemInfo; // 👈 讓拉霸機可以讀取最終產生的物品
 }
 
@@ -1509,7 +1521,7 @@ function _updateUIImpl() {
       try { _potionPct += (typeof dollFieldVal === 'function' ? dollFieldVal('potionBonus') : 0) + (typeof playerEquipPotionBonusPct === 'function' ? playerEquipPotionBonusPct() : 0) + (player._miscPotionBonus || 0); } catch (e) {}
       let _el = document.getElementById('dt-potion'); if (_el) _el.innerText = `${_potionPct}%`;
       _el = document.getElementById('dt-movespeed'); if (_el) _el.innerText = `${typeof playerEffectiveMoveSpeedPct === 'function' ? playerEffectiveMoveSpeedPct() : 100 + (player.d.moveSpeedPct || 0)}%`;
-      _el = document.getElementById('dt-mpkill'); if (_el) _el.innerText = (typeof getWisMpOnKill === 'function' ? getWisMpOnKill(player.d.wis || 0) : 0);
+      _el = document.getElementById('dt-mpkill'); if (_el) { let _mpIv = (typeof wisMpRegenIntervalTicks === 'function' ? wisMpRegenIntervalTicks(player.d.wis || 0) : 160); _el.innerText = `${_mpIv / 10}秒`; }
       _el = document.getElementById('dt-mr'); if (_el) _el.innerText = player.d.mr || 0;
       _el = document.getElementById('dt-resnone'); if (_el) _el.innerText = Math.round(player.d.resNone || 0); }
     if(document.getElementById('dt-resfire')) {

@@ -134,7 +134,7 @@ if (!wikiSrc.includes(localWikiRewardLine)) {
   wikiSrc = wikiSrc.slice(0, firstAt) + localWikiRewardLine + wikiSrc.slice(firstAt + upstreamWikiRewardLine.length);
 }
 const mercPolicyMustHave = [
-  "version: '3.7.61-hybrid-drop60-town-refresh-on-pp-v3.8.5'",
+  "version: '3.7.61-hybrid-drop60-town-refresh-on-pp-v3.8.34'",
   'dropPerMercPct: 60',
   'goldPartyMultiplier: false',
   'function mercRehireCostPolicy() { return 0; }',

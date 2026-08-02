@@ -1178,7 +1178,7 @@ function changeMap(force) {
             }
         }
     }
-    if (_changeTarget !== mapState.current && typeof npcClanOnLeaveBattleArea === 'function') npcClanOnLeaveBattleArea();
+    if (_changeTarget !== mapState.current && typeof npcClanOnLeaveBattleArea === 'function') npcClanOnLeaveBattleArea(!force);
     if (typeof giltasKeepOnLeave === 'function' && document.getElementById('map-select').value !== mapState.current) giltasKeepOnLeave();   // 🌑 v3.4.16 離開受詛咒聖地（回村/戰敗復活/切圖統一經此·helper 自帶地圖 gate）→ 吉爾塔斯 HP 保留判定＋提示
     if (_changeTarget !== mapState.current && typeof window.__afkMobileMemoryLifecycle === 'function') window.__afkMobileMemoryLifecycle('map-change');
     mapState.current = document.getElementById('map-select').value;
@@ -2003,8 +2003,30 @@ const TOWN_NPC_POS_OVERRIDE = {
     // 🏰 v3.3.10 三城堡盟主(依詩蒂/特羅斯·只顯示其一)釘在王座/祭壇前中央·其餘主要 NPC 由 TOWN_NPC_SPOTS 上移聚集靠近；兩 id 同座標(擇一顯示)
     town_kent_castle: { npc_esti: [50, 35], npc_tros: [50, 35] },      // 肯特城：王座頂端中央(藍地毯上緣)
     town_windwood_castle: { npc_esti: [48, 35], npc_tros: [48, 35] },  // 風木城：祭壇頂端中央(綠十字毯上緣)
-    town_heine_castle: { npc_esti: [42, 22], npc_tros: [42, 22] }      // 海音城：王座水池平台右側石地（v3.6.02 隨站位重排上移·舊點[48,35]在階梯下混入人群）
+    town_heine_castle: { npc_esti: [42, 22], npc_tros: [42, 22] },     // 海音城：王座水池平台右側石地（v3.6.02 隨站位重排上移·舊點[48,35]在階梯下混入人群）
+    town_pride: { _pride_entrance: [49, 58] },                          // 新增公會後仍維持原入口告示位置
+    town_rift: { _rift_entrance: [48, 58] }                             // 新增公會後仍維持原入口告示位置
 };
+// 每個安全區都提供同一個隊員管理入口。既有公會不動；缺少者在地圖初始化時補入，避免把同一份 NPC 資料散落到各城鎮清單。
+const ALLY_GUILD_TOWN_SPOTS = {
+    town_silver_knight: [70, 72], town_windwood_castle: [31, 70], town_talking: [43, 52], town_elf: [75, 78],
+    town_gludio: [72, 60], town_giran: [75, 68], town_aden: [48, 84], town_elder_council: [74, 70],
+    town_pride: [31, 75], town_rift: [66, 46], town_ivory_tower: [68, 84], town_witon: [64, 58],
+    town_sherine: [28, 72], town_silent: [64, 74], town_hyperia: [73, 65], town_behemoth: [75, 52],
+    town_flame_audience: [65, 74], town_pirate_village: [28, 70]
+};
+function ensureTownAllyGuilds() {
+    if (!DB || !DB.towns) return;
+    Object.keys(ALLY_GUILD_TOWN_SPOTS).forEach(townId => {
+        let town = DB.towns[townId];
+        if (!town || !Array.isArray(town.npcs) || town.npcs.some(npc => npc && npc.type === 'ally')) return;
+        let id = 'npc_ally_' + townId.replace(/^town_/, '');
+        town.npcs.push({ id:id, n:'傭兵公會', title:'協力', type:'ally', d:'傭兵公會替你牽起命運的絲線，召喚其他存檔位的角色一起作戰，並可管理出戰隊員的裝備與專屬任務。' });
+        let overrides = TOWN_NPC_POS_OVERRIDE[townId] || (TOWN_NPC_POS_OVERRIDE[townId] = {});
+        overrides[id] = ALLY_GUILD_TOWN_SPOTS[townId];
+    });
+}
+ensureTownAllyGuilds();
 function _townNpcLayout(n, townId) {
     if (n <= 0) return [];
     let spots = TOWN_NPC_SPOTS[townId];

@@ -19,7 +19,7 @@
   if (window.AFK_TOGGLES) {
     AFK_TOGGLES.register({
       id: 'notip', name: '關閉物品懸停資訊框', group: '遊戲介面', def: false,
-      desc: '滑鼠移到武器/防具/道具上不再彈出資訊框（嫌擋路的人再開；技能說明照常顯示、手機長按看資料不受影響）'
+      desc: '滑鼠移到物品上不再彈出說明框（技能說明照常）'
     });
     if (!AFK_TOGGLES.enabled('notip')) return;
   } else {

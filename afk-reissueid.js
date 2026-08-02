@@ -53,6 +53,10 @@
   var OFFLINE_PREFIX = 'lineage_idle_offline_v1_';
   var OFFLINE_KINDS = ['checkpoint', 'claim', 'catchup'];
   function offlineKey(kind, seed) { return OFFLINE_PREFIX + kind + '_' + encodeURIComponent(String(seed)); }
+  // 🐉 安塔瑞斯「每日通關」自 v3.8.34 起改成逐參與者記錄,key 以身分(enSeed)組成——換發後對不上就等於當天可再通關一次。
+  //   前綴取核心常數(取不到才用已知值);identity 組法必須與 js/05 antharasRoleRef 一致。
+  var ANT_DAY_BASE = core('ANTHARAS_ROLE_DAY_KEY', 'fb5_antharas_role_clear_day_v2_');
+  function antDayKey(classic, identity) { return ANT_DAY_BASE + (classic ? 'classic_' : 'normal_') + encodeURIComponent(identity); }
   var CONFIRM_PHRASE = '換發身分證';          // 執行前要玩家手動打進去(擋手滑;同上游刪角要打角色名)
 
   function slotMax() { return (typeof SAVE_SLOT_MAX !== 'undefined') ? SAVE_SLOT_MAX : 16; }
@@ -94,7 +98,8 @@
       seen[oldSeed] = (seen[oldSeed] || 0) + 1;
       plan.push({
         slot: s, oldSeed: oldSeed, newSeed: newSeed(),
-        name: obj.p.name || '(未命名)', cls: obj.p.cls, lv: obj.p.lv || obj.p.level || '?'
+        name: obj.p.name || '(未命名)', cls: obj.p.cls, lv: obj.p.lv || obj.p.level || '?',
+        classic: !!obj.p.classicMode, hadSeed: !!obj.p.enSeed   // 供安塔瑞斯每日通關 key 搬家(舊檔沒 enSeed 時核心用 legacy 身分)
       });
     }
     plan.forEach(function (e) { e.dup = seen[e.oldSeed] > 1; });
@@ -292,6 +297,31 @@
       }
     } catch (e) { note('⚠️ 離線暫存處理略過(' + (e.message || e) + '),不影響其他項'); }
 
+    // 5.5) 安塔瑞斯每日通關(js/05,v3.8.34 起逐身分一把 key):不搬 → 那筆紀錄對不上,當天可以再通關一次,
+    //      舊 key 也成為永遠沒人清的孤兒。逐格搬(每格身分各自獨立,不像離線暫存會有撞號歸屬問題);
+    //      舊檔沒 enSeed 時核心用 legacy 身分(legacy|格號|名字|職業),兩種都試著搬。
+    try {
+      var antMoved = 0, antGroups = {};
+      plan.forEach(function (e) {
+        var olds = ['seed|' + e.oldSeed];
+        if (!e.hadSeed) olds.push(['legacy', String(e.slot), e.name === '(未命名)' ? '' : e.name, e.cls].join('|'));
+        olds.forEach(function (idOld) {
+          var from = antDayKey(e.classic, idOld);
+          (antGroups[from] = antGroups[from] || []).push(antDayKey(e.classic, 'seed|' + e.newSeed));
+        });
+      });
+      // 舊碼被多格共用時：那筆「今天已通關」原本就同時擋住這幾格 → 拆開後每一格都各留一份，
+      //   不然沒拿到的那幾格今天就能再打一次（等於換發送一次通關）。
+      Object.keys(antGroups).forEach(function (from) {
+        var raw = _lsGet(from);
+        if (raw == null) return;
+        var okAll = true;
+        antGroups[from].forEach(function (to) { if (_lsSet(to, raw)) antMoved++; else okAll = false; });
+        if (okAll) _lsRemove(from);   // 全部寫得進去才刪舊的,寧可留孤兒也不弄丟紀錄
+      });
+      if (antMoved) note('安塔瑞斯每日通關紀錄:' + antMoved + ' 筆改掛新身分');
+    } catch (e) { note('⚠️ 安塔瑞斯每日通關處理略過(' + (e.message || e) + '),不影響其他項'); }
+
     // 6) 對照表留檔(很小,事後查帳用)
     try {
       var log = { at: Date.now(), map: plan.map(function (e) { return { slot: e.slot, from: e.oldSeed, to: e.newSeed }; }) };
@@ -428,6 +458,7 @@
       '(這是刻意的保護)。換發後請把其他分頁全部關掉重開。</li>' +
       '<li><b>離線收益</b>——暫存資料會跟著改掛新身分。但<b>身分碼重複的那幾格</b>因為分不出暫存屬於誰,' +
       '會直接清掉,最多少算幾分鐘的背景時間(離線收益本身記在存檔裡,不受影響)。</li>' +
+      '<li><b>安塔瑞斯每日通關</b>——今天已通關的紀錄會跟著改掛新身分，不會因此多打一次。</li>' +
       '<li><b>不受影響</b>——等級、裝備、背包、金幣、倉庫、收集冊、離線掛機紀錄完全不動。</li>' +
       '</ul></div>' +
 
@@ -511,10 +542,8 @@
     }
     if (window.AFK_TOGGLES) {
       AFK_TOGGLES.register({
-        id: 'reissueid', name: '換發身分證', group: '存檔工具', def: true,
-        desc: '⚠️ 進階工具,平常用不到。把所有角色的身分碼換新:讓複製出來的角色各自獨立,' +
-          '舊備份檔也能重複匯入成不同角色;同時解除所有招募中的傭兵(可重新招募)。會改寫每一格存檔且無法復原,' +
-          '只在遇到「相同角色已存在」、寵物/血盟互相打架、或角色卡在受僱身份出不了安全區時才需要。'
+        id: 'reissueid', name: '換發身分證', group: '存檔工具', def: true, parent: 'storage',
+        desc: '⚠️ 把複製出來的角色換成各自獨立的身分；會改寫全部存檔且無法復原'
       });
     }
     window.AFK_SETTINGS = window.AFK_SETTINGS || { _items: [], add: function (it) { this._items.push(it); } };

@@ -28,6 +28,15 @@
         //     → 名稱直接溢出疊到下一列上(玩家回報「背包名稱疊在一起」)。列各自撐開、整份交給捲軸。
         'body.afk-invlist .classic-inventory-viewport > .list-item{flex:0 0 auto !important;width:100% !important;height:auto !important;min-height:34px;aspect-ratio:auto !important;display:flex !important;align-items:center !important;justify-content:space-between !important;padding:5px 9px !important;border:1px solid #334155 !important;border-radius:6px !important;background:rgba(15,23,42,.55) !important;box-shadow:none !important;overflow:visible !important;}',
         'body.afk-invlist .classic-inventory-viewport > .list-item:hover{border-color:#7dd3fc !important;filter:none;background:rgba(30,41,59,.75) !important;}',
+        // 🚫 無法裝備／無法學習：上面那條整片鋪底的 background 帶 !important，會把核心給的 bg-red-950/40
+        //   壓掉（Tailwind 那個 class 沒有 !important）→ 條列式下「能不能穿」只剩右側一個 10px 紅字，
+        //   滑過一整排根本認不出來。這裡把紅底補回來，再加左緣紅條讓它在一長串裡跳出來。
+        //   兩種選法各自寫成獨立規則、不可併成 selector list：:has() 在舊瀏覽器（iOS < 15.4）不認得，
+        //   併在一起會讓整條規則連同前半段一起失效。
+        'body.afk-invlist .classic-inventory-viewport > .list-item.bg-red-950\\/40{background:rgba(80,12,22,.55) !important;border-color:#9f1239 !important;border-left-width:4px !important;}',
+        'body.afk-invlist .classic-inventory-viewport > .list-item:has(.classic-item-flags .text-red-500){background:rgba(80,12,22,.55) !important;border-color:#9f1239 !important;border-left-width:4px !important;}',
+        'body.afk-invlist .classic-inventory-viewport > .list-item.bg-red-950\\/40:hover{background:rgba(110,18,30,.7) !important;}',
+        'body.afk-invlist .classic-inventory-viewport > .list-item:has(.classic-item-flags .text-red-500):hover{background:rgba(110,18,30,.7) !important;}',
         'body.afk-invlist .classic-item-main{justify-content:flex-start !important;gap:8px !important;width:auto !important;height:auto !important;flex:1 1 auto;min-width:0;}',
         'body.afk-invlist .classic-icon-box{width:26px !important;height:26px !important;flex:0 0 26px !important;}',
         'body.afk-invlist .classic-icon-box img,body.afk-invlist .classic-item-main .classic-icon-box img{width:100% !important;height:100% !important;}',

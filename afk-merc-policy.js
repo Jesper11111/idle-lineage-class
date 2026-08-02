@@ -203,7 +203,7 @@
   window.renderAllyNPC = renderAllyNPCLegacy;
 
   window.__legacyMercPolicy = Object.freeze({
-    version: '3.7.61-hybrid-drop60-town-refresh-on-pp-v3.8.5',
+    version: '3.7.61-hybrid-drop60-town-refresh-on-pp-v3.8.34',
     rewardShare: true,
     dropPerMercPct: 60,
     goldPartyMultiplier: false,

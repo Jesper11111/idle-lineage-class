@@ -22,6 +22,15 @@
 (function () {
   'use strict';
   if (window.AFK_TOGGLES && !AFK_TOGGLES.enabled('offline')) return;   // 🎚️ 外掛開關:關掉→不掛任何鉤子,遊戲回原版(無離線結算)
+  // 子選項:掛機期間持續遭到追殺(預設關)。核心用牆鐘比對追殺到期時間,補跑時牆鐘幾乎凍結 → 不處理就等於離線自動豁免追殺。
+  //   ⚠ id 維持 offlinechase(玩家設定就是存這個 id),只改顯示名稱與說明:2026-07-31 起它同時管
+  //     「NPC 血盟群戰」——兩者都是「離線時會不會被玩家型 NPC 纏上」,而且都是結算變慢的來源,
+  //     分成兩個開關會變成「要兩個都關才有效」,玩家只關一個就困惑。
+  if (window.AFK_TOGGLES) AFK_TOGGLES.register({
+    id: 'offlinechase', name: '掛機期間遭遇玩家對戰', group: '遊戲玩法', parent: 'offline', def: false,
+    desc: '離線掛機也會被記恨你的玩家追殺、被捲入血盟群戰；結算時間會明顯變長'
+  });
+  function chaseOn() { return !!(window.AFK_TOGGLES && AFK_TOGGLES.enabled('offlinechase')); }
   // 🔒 Jesper offline safety policy v4
   // 嚴格互斥：afk-offline-owner 必須先確認 PP／原版沒有另一套離線鉤子，舊引擎才可啟動。
   // 快取混搭或未來 PP 重啟另一套結算時 fail closed，寧可本次不發獎也不重複結算。
@@ -36,6 +45,7 @@
   var CAP_HOURS        = 24;                      // 離線收益上限(小時)
   var CAP_MS           = CAP_HOURS * 3600 * 1000;
   var HEARTBEAT_MS     = 5 * 1000;              // 活著時多久蓋一次時間戳
+  var BIG_BAG_HINT     = 800;                   // 🎒 背包超過幾件才在結算畫面提醒(低於此的差異玩家感覺不到,顯示只是雜訊)
   var CKPT_MS          = 5 * 1000;              // 💾 結算檢查點間隔(真實毫秒):每滿就把已結算收益 saveGame＋錨點推進到已結算時點;結算被中斷最多丟這麼久的量
   // ⚠ iOS 上「結算到一半變白畫面」= Safari 把整個分頁回收掉。檢查點是最可疑的記憶體來源:
   //   每次都把整份存檔明文寫進 localStorage,並再 postMessage 一份給壓縮 Worker(結構化複製=再一份),
@@ -421,6 +431,18 @@
     overlayEl.appendChild(barWrap);
     overlayEl.appendChild(overlayTxt);
 
+    // 🎒 背包很大時才提醒:結算時間與背包件數成正比(掉落疊放、自動賣出規則都要逐件跑)。
+    //   刻意「有大背包才顯示」——一般玩家看到只會變成沒意義的常駐雜訊。
+    try {
+      var _invN = (player && Array.isArray(player.inv)) ? player.inv.length : 0;
+      if (_invN >= BIG_BAG_HINT) {
+        var hint = document.createElement('div');
+        hint.setAttribute('style', 'font-size:12.5px;color:#fbbf24;max-width:min(80vw,460px);text-align:center;line-height:1.6;margin-top:2px;');
+        hint.textContent = '背包 ' + _invN.toLocaleString() + ' 件，件數越多結算越久；賣掉或存進倉庫可以加快。';
+        overlayEl.appendChild(hint);
+      }
+    } catch (e) {}
+
     // 「長按放棄剩餘收益」按鈕 + 上方「放棄中」讀條。
     //   ⚠ 讀條用 transform:scaleX(走合成器/GPU 執行緒),不用 width transition——補跑會卡住主執行緒,
     //     width 動畫跑不動(空白條踩過);transform 不受主執行緒阻塞,按住時照樣順順填滿。
@@ -507,6 +529,26 @@
   var HIST_PREFIX = 'afk_hist_';
   var HIST_MAX    = 5;                          // 每個角色最多保留最近幾筆(同一個 key 一個陣列)
   function histKey() { return HIST_PREFIX + currentSlot; }
+  // 📝 快轉狀態代碼 → 給玩家看的中文。紀錄裡只存代碼,顯示端(離線掛機紀錄／診斷檔)才轉字——
+  //   舊紀錄沒有這欄、或代碼是新版才有的,一律回空字串不顯示,不會露出生代碼。
+  var FAST_WHY_TEXT = {
+    cache:          '快轉：沿用上次量到的統計，連取樣都免了',
+    sampled:        '快轉：取樣通過後啟用',
+    sampling:       '完整模擬：取樣還沒通過就結算完了',
+    'few-kills':    '完整模擬：取樣期間殺不到 8 隻，樣本不可信',
+    'hp-low':       '完整模擬：取樣期間血量掉太低，為了保住「撞死即停」不快轉',
+    climb:          '完整模擬：攀登不適用快轉',
+    king:           '完整模擬：軍王之室不適用快轉',
+    'obl-travel':   '完整模擬：遺忘之島途中不適用快轉',
+    short:          '完整模擬：離線太短，本來就不需要快轉',
+    'short-remain': '完整模擬：取樣後剩餘時間太短，不值得切',
+    levelup:        '重新取樣：離線期間升級，戰力變了要重量殺速',
+    dry:            '重新取樣：消耗品用完又補不到貨，戰局質變',
+    'king-left':    '快轉收尾：鑰匙用完被傳回村莊',
+    error:          '完整模擬：快轉途中發生異常，安全起見退回',
+    debug:          '完整模擬：除錯強制'
+  };
+  function fastWhyText(code) { return FAST_WHY_TEXT[code] || ''; }
   // 背包前後差 → [{n,cnt,c}](c=品階顏色 class,同摘要走 itemColorClass);依數量多→少排序(顯示用)
   function invDeltaList(before, after) {
     var ids = {}, out = [];
@@ -633,6 +675,15 @@
       try { logSys(`<span class="text-amber-300 font-bold">🔑 ${_krKey}已用完，已自動傳回村莊。</span>`); }
       catch (e) { console.log('[AFK] ' + _krKey + '已用完，已自動傳回村莊。'); }
     }
+    // 🏴 擋掉的血盟團戰:不講的話玩家只會發現「離線好像都沒遇到團戰」卻不知道為什麼,那是靜默的行為變更。
+    //   只有真的擋到才顯示(沒擋到不印),不會變成常駐雜訊;順便告訴他開關在哪、開了要付什麼代價。
+    //   ⚠ 刻意**不報次數**:我們是在原作擲骰之前就攔下來,沒有模擬「已經在打的期間不會再開新的」,
+    //     算出來的次數會高估好幾倍(實測開關打開時實際開 44 場,同條件我們的估法會算成兩百多)。
+    //     寧可不給數字,也不要給一個看起來精確但錯的數字。
+    if (_gbBlocked > 0) {
+      var gb = '<span class="text-slate-400">🏴 離線期間略過了血盟團戰（設定 →「掛機期間遭遇玩家對戰」可開啟，但結算時間會明顯變長）。</span>';
+      try { logSys(gb); } catch (e) { console.log('[AFK] 離線期間略過了血盟團戰。'); }
+    }
     // 平均效率(對齊遊戲「本圖效率統計」的 經驗/10分、金幣/10分):用實際補跑時間換算
     var preciseMin = doneTicks * TICK_MS / 60000;
     if (preciseMin > 0 && (dExp > 0 || dGold > 0)) {
@@ -677,6 +728,9 @@
 
   // ----- 離線補跑(時間切片) ----------------------------------------------
   var catchingUp = false;
+  var _gbBlocked = 0;      // 🏴 本次結算擋掉幾次 NPC 血盟群戰(供結算摘要提示玩家)
+  var _gbPossible = false; // 本次結算的玩家是否真的處於「會被開團」的處境(每次結算只判一次,見 runCatchup)
+  var _settleSeq = 0;   // 本次頁面開啟後跑過幾次結算(連續切角色會累積,用來檢驗「越後面越慢」)
   var killTally = null;   // 📜 非 null 時(只在補跑中)累計各怪擊殺數 {怪名:次數};線上遊玩為 null → killMob 的計數判斷零開銷
   var gainTally = null;   // ⚡ 非 null 時(只在補跑中)累計各物品獲得數 {物品id:數量};供快速結算把「淨變化」還原成「真實消耗」(消耗=期初+獲得−期末)
   var _forceNoFast = false;   // 🧪 debug:forceCatchup(mins, true) 可強制全模擬(A/B 比對快速結算保真度用)
@@ -685,11 +739,36 @@
   //   檢查點與結算尾自己要存時暫時放行(見 doCheckpoint);錨點不動,被擋掉的段落中斷了也只是重算,不丟收益。
   var _saveSquelch = false;
   var _bossTraceKillHook = null, _bossTraceSpawnHook = null;   // 瘋狂席琳 BOSS 真打樣本；線上時皆為 null
+  // ⏱ 結算分段計時:只在結算期間掛上(runCatchup 開頭裝、finally 拆),平時完全不存在 → 線上零開銷。
+  //   為什麼要有:玩家回報「同一台裝置、同一張圖,兩隻角色差幾十倍」時,舊欄位(總耗時＋事件數)分不出
+  //   時間花在哪——「平均 ms/事件」的分母只是快轉呼叫次數,一個事件可能殺 1 隻也可能殺 20 隻,兩隻角色
+  //   的數字根本不同單位,拿來相比會把人帶去錯的方向(2026-07-31 查過一輪才發現)。
+  //   包這幾支就能把 擊殺全鏈(掉落/經驗/收集冊)、出怪、血盟讀取、存檔、localStorage 分開計。
+  //   量測成本:每殺約 8 次 performance.now(),佔比 <1%,而且只在結算期間付。
+  function perfSegInstall() {
+    var seg = { kill: 0, spawn: 0, clan: 0, save: 0, lsGet: 0, lsSet: 0, lsGetKB: 0 }, undo = [];
+    function wrap(name, key) {
+      var f = window[name];
+      if (typeof f !== 'function') return;
+      window[name] = function () { var t = performance.now(); try { return f.apply(this, arguments); } finally { seg[key] += performance.now() - t; } };
+      undo.push(function () { window[name] = f; });
+    }
+    wrap('killMob', 'kill'); wrap('spawnMob', 'spawn'); wrap('_clanReadState', 'clan'); wrap('saveGame', 'save');
+    try {
+      var proto = Object.getPrototypeOf(localStorage) || Storage.prototype;
+      var g = proto.getItem, s = proto.setItem;
+      proto.getItem = function (k) { var v = g.call(this, k); seg.lsGet++; seg.lsGetKB += (v ? v.length : 0) / 1024; return v; };
+      proto.setItem = function (k, v) { seg.lsSet++; return s.call(this, k, v); };
+      undo.push(function () { proto.getItem = g; proto.setItem = s; });
+    } catch (e) {}
+    seg.done = function () { undo.forEach(function (f) { try { f(); } catch (e) {} }); undo = []; };
+    return seg;
+  }
   // 🔒 Jesper offline cache contract v5
   // 快取必須隨真正影響戰力的資料失效。舊簽章只有地圖/等級/裝備 id+強化，會漏掉
   // 配點、自動技能、套裝詞綴、傭兵與寵物；內容更新後甚至可能沿用舊版殺速與 BOSS 結果。
   var OFFSTATS_SCHEMA = 2;
-  var OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r4-grace-events';
+  var OFFSTATS_RULESET = 'pp-v3.8.34+shines-v3.8.27-content-r4-grace-events';
   function offStatsStable(v) {
     if (v == null || typeof v === 'number' || typeof v === 'boolean' || typeof v === 'string') return v;
     if (Array.isArray(v)) return v.map(offStatsStable);
@@ -774,8 +853,37 @@
     gainTally = {};   // ⚡ 本次補跑的獲得計數歸零
     window.__afkKillTally = killTally;   // 核心 killMob/gainItem 在結算期間經這兩個計數(平時 null → 零開銷)
     window.__afkGainTally = gainTally;
+    var _perfSeg = perfSegInstall();     // ⏱ 分段計時(只在結算期間掛上,結束即拆;平時零開銷)
     var prevFf0, prevInTick0;   // 先宣告在 try 外:例外時 finally 才有得還原
     var _perfT0 = performance.now(), _realSimTicks = 0, _fastEvents = 0;   // ⏱ 診斷:結算耗時與組成(玩家回報「結算慢」時看這行就知道卡在哪段)
+    var _ckptMs = 0, _ckptN = 0;   // ⏱ 其中有多少真實時間是花在檢查點存檔(見 doCheckpoint)
+    // ⏱ 2026-07-30 追查「同一台裝置、同一晚,一隻角色結算 3.9 秒、另一隻 156.7 秒」時補的量測。
+    //   平均值分不出「每次都貴一點」和「大部分很快但卡了幾次超大的」,而後者(記憶體壓力/垃圾回收/
+    //   分頁被切到背景)在桌機上模擬不出來,只能在玩家那台記。全部都是讀一個變數或加一個計數器。
+    var _hiddenMs = 0, _hiddenAt = 0;      // 結算期間分頁處於背景的累計時間(背景時瀏覽器會停掉畫面更新→每個切片都要等更久)
+    var _paceMs = 0;                       // 讓出等畫面更新的累計時間(這段不是在計算)
+    var _sliceMax = 0, _sliceN = 0;        // 單一切片最久花了多久 / 切片總數
+    var _sliceHist = [0, 0, 0, 0, 0, 0, 0];   // 切片耗時分佈:<32 / <64 / <128 / <256 / <512 / <1024 / >=1024 ms
+    var _simSliceMs = 0, _fastSliceMs = 0; // 切片層級的歸屬:整片都在真模擬 vs 有跑到快轉事件
+    var _invMax = 0;                       // 結算期間背包最大長度(gainItem 成本與它成正比,而結束前會被自動賣出清掉→事後看不出來)
+    _settleSeq++;                          // 本次頁面開啟後的第幾次結算(連續切角色時,後面幾次是在前面留下的記憶體上跑)
+    var _seqThis = _settleSeq;
+    // 出戰寵物數:名冊是模式共用的,只有 petsOutList() 知道「掛在這隻角色身上的」是哪幾隻。開頭讀一次就好。
+    var _petsOut = -1;
+    try { if (typeof petsOutList === 'function') _petsOut = petsOutList().length; } catch (e) {}
+    function _visHandler() {
+      if (document.visibilityState === 'hidden') _hiddenAt = performance.now();
+      else if (_hiddenAt) { _hiddenMs += performance.now() - _hiddenAt; _hiddenAt = 0; }
+    }
+    try { document.addEventListener('visibilitychange', _visHandler); if (document.visibilityState === 'hidden') _hiddenAt = performance.now(); } catch (e) {}
+    function _sliceDone(ms, hadFastEvent) {
+      _sliceN++;
+      if (ms > _sliceMax) _sliceMax = ms;
+      var b = ms < 32 ? 0 : ms < 64 ? 1 : ms < 128 ? 2 : ms < 256 ? 3 : ms < 512 ? 4 : ms < 1024 ? 5 : 6;
+      _sliceHist[b]++;
+      if (hadFastEvent) _fastSliceMs += ms; else _simSliceMs += ms;
+      try { var n = (player.inv || []).length; if (n > _invMax) _invMax = n; } catch (e) {}
+    }
     // ⚡ 結算期間 gainItem 一律帶 deferUi=true(上游 v3.6.97 為批次發獎新增的第 6 參):
     //   跳過每次獲得的 autoSortInventory——它以 state.ticks 節流(每 100 拍),快速段一個事件就跳幾十拍
     //   → 幾乎每殺必觸發全背包排序,24h 累計近萬次。結算尾統一排一次(見落點後)。renderTabs 本就被 ff 擋,無差。
@@ -794,11 +902,19 @@
     //   (過期的照樣過期、沒過期的剩餘時數不變,線上行為零影響)。
     //   offStart=離線起點:真實離線用心跳 closeTs;debug forceCatchup 無 timing → 視同「剛剛過去 totalTicks」。
     var offStart = (timing && timing.closeTs) || (Date.now() - totalTicks * TICK_MS);
-    var trackUntil0 = null;
-    if (player.tracking && player.tracking.until && player.tracking.until > offStart) {
-      trackUntil0 = player.tracking.until;
-      player.tracking.until = Date.now() + totalTicks * TICK_MS + 3600000;   // 撐過整段補跑(含結算本身的真實耗時)綽綽有餘
+    // ⏳ 牆鐘型效期(追蹤／被追殺)的「補跑期間暫時延長」——原值記在 _wallHolds,結算結束與**每次檢查點存檔前**都要還原,
+    //   否則被撐長的到期時間會被寫進存檔(結算中途關頁就白賺一段效期;追殺則變成白賺被追殺的時間)。
+    var _extendTo = Date.now() + totalTicks * TICK_MS + 3600000;   // 撐過整段補跑(含結算本身的真實耗時)綽綽有餘
+    var _wallHolds = [];   // [{obj, orig}] —— obj.until 會被暫時改寫
+    if (player.tracking && player.tracking.until && player.tracking.until > offStart) _wallHolds.push({ obj: player.tracking, orig: player.tracking.until });
+    if (chaseOn() && Array.isArray(player.trollPlayers)) {   // 😤 子選項開啟:關遊戲當下還沒過期的追殺,離線期間照樣有效
+      player.trollPlayers.forEach(function (t) {
+        if (t && t.until && !t.noExpire && !t.pvpRevenge && t.until > offStart) _wallHolds.push({ obj: t, orig: t.until });
+      });
     }
+    function wallHoldsApply() { _wallHolds.forEach(function (h) { h.obj.until = _extendTo; }); }
+    function wallHoldsRestore() { _wallHolds.forEach(function (h) { h.obj.until = h.orig; }); }
+    wallHoldsApply();
 
     var sliceMs = sliceFor(totalTicks);   // 依補跑長短決定畫面更新間隔:短→順、長→快
     var isClimb = !!(prePride && prePride.climb && !prePride.ranked && typeof enterPrideFloor === 'function');   // 排名挑戰不自動續
@@ -836,6 +952,22 @@
       // 🌑 聖地 BOSS 房離線續戰：視同「繼續打你關遊戲時正在打的那隻（已付過入場費）」→ 第一隻免費、之後每次復活扣 1 入場道具
       //   （sanctBossRespawnCharge 於 state.ff 照扣；扣光被踢回長老會議廳、後續空轉自然停）。
       if (typeof SANCT_RESPAWN_COST !== 'undefined' && SANCT_RESPAWN_COST[huntMap]) mapState._sanctBossSpawned = false;
+    }
+
+    // 🏴 關遊戲時正在 NPC 血盟群戰中 → **不必自己收**:上游 changeMap 在地圖真的改變時就會呼叫
+    //   npcClanOnLeaveBattleArea,而 force 進場時它用的理由碼正好就是 'cancel'(不扣士氣)。
+    //   而我們進場一定是「村莊 → 狩獵圖」(loadGame 會先強制回村),地圖必然改變 → 上游已經處理掉了。
+    //   (曾經在這裡自己補一次 npcClanGroupBattleEnd('cancel'),實測從未被執行到＝死碼,已移除。)
+    //   玩家真正失去的是「本來會開打的團戰」,結算摘要要告訴他。這裡先判一次「他有沒有可能被開團」
+    //   (要有 NPC 血盟正在對他宣戰且仇恨>80,跟原作 npcClanMaybeStartGroupBattle 的候選條件一致)——
+    //   只算一次,不影響效能;沒這個閘的話,沒血盟/沒宣戰的玩家也會收到「略過了 N 次團戰」的雜訊。
+    _gbBlocked = 0;
+    _gbPossible = false;
+    if (!chaseOn()) {
+      try {
+        var _w = (typeof npcClanGetWorld === 'function') ? npcClanGetWorld(player) : null;
+        _gbPossible = !!(_w && Array.isArray(_w.clans) && _w.clans.some(function (c) { return c && c.war && c.hatred > 80; }));
+      } catch (e) {}
     }
 
     var before = snapshot();
@@ -877,8 +1009,18 @@
     // 裂痕難度隨虛擬時間持續提高；不可沿用低難度快速樣本，先固定完整模擬保證死亡與收益正確。
     var fastEligible = !isClimb && !isKing && !isRift && (!isObl || (preObl && preObl.phase === 'island'))
       && totalTicks >= (FAST_SAMPLE_TICKS + FAST_MIN_REMAIN) && !_forceNoFast;
-    _forceNoFast = false;   // 🧪 一次性:用過即歸零,不影響之後的真實離線結算
     var fastMode = false, fastOff = false;   // fastOff = 本次補跑永久退出快速段
+    // 📝 快轉狀態代碼(寫進離線紀錄的 fastWhy,供離線掛機紀錄／診斷檔顯示為什麼慢)。
+    //   語意=「本次結算最後一次決定快轉狀態的原因」:不合格的當下就定案;合格的先記 sampling,
+    //   之後由快取命中 / evalSample / 各退出分支改寫。順序不可調——不合格的原因要由「最specific」往下判,
+    //   遺忘之島本島但時間太短該記 short 而非 obl-travel。
+    var fastWhy = fastEligible ? 'sampling'
+      : _forceNoFast ? 'debug'
+      : isClimb ? 'climb'
+      : isKing ? 'king'
+      : (isObl && !(preObl && preObl.phase === 'island')) ? 'obl-travel'
+      : 'short';
+    _forceNoFast = false;   // 🧪 一次性:用過即歸零,不影響之後的真實離線結算
     var _dryHit = false;        // 消耗品斷貨旗標:fastAdvance 補不上貨時設起,主迴圈據此走「重取樣」而非永久退出
     var hpFloorFixed = false;   // 斷貨(戰局質變)後改用固定 70% 門檻——「撐過 20 分鐘=打得過」的信任基礎已失效,不再隨時間放寬
     // 血量安全門檻(取樣 + BOSS safe 共用):隨真模擬存活拍數 done 從 70% 線性降到 0(20 分鐘歸 0)。
@@ -890,7 +1032,7 @@
     // 🐲 BOSS 策略(懶驗證):每「種」BOSS(按名字)第一次遇到 → 逐拍真模擬打到倒下,記錄實際耗時與安全度;
     //   之後同名 BOSS:安全的 → 即殺但時間按「該 BOSS 實測耗時」推進(不是小怪均速);對打時血量掉太深的 → 每次都真打。
     //   打輸=外層撞死即停;打不動=照實耗完時間。純 BOSS 圖因此自然接近全真模擬。
-    var fastBossUid = null, fastBossName = '', fastBossStart = 0, fastBossMinHp = 1, fastBossKills0 = 0;
+    var fastBossUid = null, fastBossName = '', fastBossStart = 0, fastBossMinHp = 1, fastBossKills0 = 0, fastBossOwnKills0 = 0;
     // 🔒 Jesper Crazy Sherine Boss event cache v2
     // 瘋狂席琳：普通／恩賜各存一份完整樣本。重播只跳「小怪死亡／核心出怪／階段結束」
     // 三種事件；spawn 仍唯一走 maybeSpawnMobs→spawnMob→applySherineGrace，不自行擲 1%。
@@ -1075,7 +1217,7 @@
     // ═══ 💾 結算統計快取(2026-07-10,使用者核可) ═══════════════════════════════
     // 結算量到的統計(殺速/每種 BOSS 實測/消耗率)存進存檔(player._offStats)帶簽章;下次同簽章
     // 直接進快速段 → 跳過 5 分鐘取樣與每種 BOSS 首打,同圖同實力的每日結算恆定秒級。
-    // 簽章=規則版+地圖/模式+玩家/傭兵/寵物戰力+完整裝備詞綴+自動技能設定 → 任一變動即失效重取樣;
+    // 簽章=引擎版+地圖+等級+世界模式(席琳/瘋狂/經典/傳統)+全裝備(id+強化) → 任一變動即失效重取樣;
     // 另設 72h 時效(防遊戲平衡改版後舊統計久留);撞死時清除(這套統計不可信)。
     var OFFSTATS_MAX_AGE_MS = 72 * 3600 * 1000;
     function saveOffStats() {   // 量到新統計就更新快取(隨檢查點/結算尾的 saveGame 固化進存檔)
@@ -1107,10 +1249,10 @@
       // 血量門檻隨真模擬存活拍數線性下降(hpFloorNow,70% → 20 分鐘歸 0):穩定低血但打不死的角色(吸血流卡低檔)
       //   撐越久門檻越低,最晚 20 分鐘門檻歸 0 必過 → 不會整晚全模擬。done 在「尚未切快速」期間就等於真模擬存活拍數;
       //   角色若真的會被磨死,取樣期間就死了、外層撞死即停,根本走不到這裡評估。
-      if (sampleMinHp < hpFloorNow()) { sampleGrew = false; beginSample(done); sampleEnd = done + FAST_SAMPLE_TICKS; return; }   // 沒過→再真模擬一段(那時門檻更低),直到過關或時間耗盡
+      if (sampleMinHp < hpFloorNow()) { fastWhy = 'hp-low'; sampleGrew = false; beginSample(done); sampleEnd = done + FAST_SAMPLE_TICKS; return; }   // 沒過→再真模擬一段(那時門檻更低),直到過關或時間耗盡
       if (kills < FAST_GOOD_KILLS && !sampleGrew) { sampleGrew = true; sampleEnd = done + FAST_SAMPLE_TICKS * 2; return; }   // 殺數不足以收斂平均殺速 → 延長取樣(再 +10 分鐘)
       if (kills < FAST_MIN_KILLS) {
-        fastOff = true; console.info('[AFK] 快速結算不啟用:取樣擊殺數太少(' + kills + '),樣本不可信,全程真模擬。'); return;
+        fastOff = true; fastWhy = 'few-kills'; console.info('[AFK] 快速結算不啟用:取樣擊殺數太少(' + kills + '),樣本不可信,全程真模擬。'); return;
       }
       var winTicks = Math.max(1, done - sampleFrom);
       // ⚡ 事件驅動:只取「純戰鬥」拍數(場上有怪的拍),出怪等待交給真實排程推進——
@@ -1131,7 +1273,7 @@
         var used = (sampleCnt0[k] || 0) + ((gainTally[k] || 0) - (sampleGain0[k] || 0)) - (cnt1[k] || 0);
         if (used > 0) consumePerTick[k] = used / winTicks;   // 每「拍」速率:消耗跟時間走(BOSS 一場耗時長、耗得多,按殺算會低估)
       }
-      fastMode = true;
+      fastMode = true; fastWhy = 'sampled';
       saveOffStats();   // 💾 新量到的殺速/消耗率 → 更新統計快取
       console.info('[AFK] ⚡ 快速結算啟動(事件驅動):每事件 ' + svcPerEvent.toFixed(1) + ' 拍、同時死 ' + batchPerEvent.toFixed(2) + ' 隻,每拍消耗 ' + JSON.stringify(consumePerTick));
     }
@@ -1163,8 +1305,10 @@
           if (player.gold >= 100 * unit) { player.gold -= 100 * unit; gainItem(id, 100, true, true); return true; }
           return false;
         }
-        var buyChk = { potion_haste: 'set-auto-buy-haste', potion_brave: 'set-auto-buy-brave', potion_blue: 'set-auto-buy-blue', new_item_140: 'set-auto-buy-cautious', new_item_139: 'set-auto-buy-elfcookie', scroll_poly: 'set-auto-buy-poly', scroll_teleport: 'set-auto-buy-teleport' }[id];
-        if (buyChk && on(buyChk)) {   // 增益藥水/卷軸:買 1 瓶(同 autoActions)
+        // 增益藥水/卷軸:上游「自動使用＝自動購買」——缺貨時看的是「自動使用」那個勾選框,沒有獨立的自動購買框
+        //   (獨立那批 set-auto-buy-* 的 DOM id 上游早已移除;問一個不存在的 id 會永遠補不到貨,同 fastTeleportAwayBoss 那個坑)
+        var useChk = { potion_haste: 'set-haste', potion_brave: 'set-brave', potion_blue: 'set-blue', new_item_140: 'set-cautious', new_item_139: 'set-elfcookie', scroll_poly: 'set-poly', scroll_magicbarrier: 'set-magicbarrier', scroll_teleport: 'set-teleport' }[id];
+        if (useChk && on(useChk)) {   // 買 1 瓶(同 autoActions)
           var p = shopPrice(DB.items[id].p);
           if (player.gold >= p) { player.gold -= p; gainItem(id, 1, true, true); return true; }
           return false;
@@ -1237,12 +1381,13 @@
         // 遺忘之島本島雖走快速段,但島上禁傳送(與線上一致)→ 這裡照 autoActions 一樣早退、照打
         if (isSiegeArea(mapState.current) || PURE_BOSS_MAPS.includes(mapState.current)) return false;
         if (state.prideClimb || state.oblivion || state.riftRun) return false;
-        // 找卷軸,沒有就依 set-auto-buy-teleport 自動買 1 張(與 autoActions 完全一致)
+        // 找卷軸,缺貨就自動買 1 張——上游「勾選自動使用＝同意自動購買」,只看金幣、不看任何勾選框。
+        //   ⚠ 這裡曾經去問一個上游早已刪掉的勾選框 id(set-auto-buy-teleport):getElementById 回 null → 條件永遠假
+        //   → 快速段一律補不到卷軸 → 迴避頭目在整個快速段等於沒勾(而線上照樣會買、玩家因此背包常態 0 張)。
         var item = player.inv.find(function (i) { return i && i.id === 'scroll_teleport'; });
         if (!item) {
-          var buyChk = document.getElementById('set-auto-buy-teleport');
           var cost = shopPrice(DB.items.scroll_teleport.p);
-          if (buyChk && buyChk.checked && player.gold >= cost) { player.gold -= cost; gainItem('scroll_teleport', 1, true, true); item = player.inv.find(function (i) { return i && i.id === 'scroll_teleport'; }); }
+          if (player.gold >= cost) { player.gold -= cost; gainItem('scroll_teleport', 1, true, true); item = player.inv.find(function (i) { return i && i.id === 'scroll_teleport'; }); }
         }
         if (!item) return false;                                                     // 沒卷軸又補不到 → 退回硬打,同線上
         var bossUid = m.uid;
@@ -1357,7 +1502,7 @@
       consumePerTick = {}; for (var _ck in player._offStats.consume) consumePerTick[_ck] = player._offStats.consume[_ck];
       consumeAcc = {};
       bossStats = player._offStats.boss || {};
-      fastMode = true;
+      fastMode = true; fastWhy = 'cache';
       console.info('[AFK] 💾 統計快取命中:跳過取樣與 BOSS 首打,直接快速結算(每事件 ' + svcPerEvent.toFixed(1) + ' 拍×' + batchPerEvent.toFixed(2) + ' 隻,BOSS 快取 ' + Object.keys(bossStats).length + ' 種)。');
     }
     if (fastEligible && !fastMode) beginSample(0);
@@ -1408,7 +1553,28 @@
         //   settleMs＝結算花的實際秒數；simTicks＝逐格真模擬的格數；fastEvents＝快速結算的事件數。
         settleMs: Math.max(0, Math.round(performance.now() - _perfT0)),
         simTicks: _realSimTicks,
-        fastEvents: _fastEvents
+        fastEvents: _fastEvents,
+        fastWhy: fastWhy,                   // 為什麼快／為什麼慢(代碼;中文對照見 FAST_WHY_TEXT)
+        ckptMs: Math.round(_ckptMs),        // settleMs 裡有多少是花在檢查點存檔(壓縮慢的裝置上可能是大宗)
+        ckptN: _ckptN,
+        // ⏱ 「為什麼這台這隻特別慢」的鑑別資料(見上方宣告處的說明)
+        hiddenMs: Math.round(_hiddenMs + (_hiddenAt ? performance.now() - _hiddenAt : 0)),   // 結算期間分頁在背景多久
+        paceMs: Math.round(_paceMs),        // 其中有多少是在等畫面更新(不是計算)
+        sliceN: _sliceN,                    // 切片數
+        sliceMax: Math.round(_sliceMax),    // 最久的一個切片(卡頓的指紋:均勻慢→接近平均,卡住→遠大於平均)
+        sliceHist: _sliceHist.slice(),      // 切片耗時分佈 <32/<64/<128/<256/<512/<1024/>=1024 ms
+        simMs: Math.round(_simSliceMs),     // 切片層級歸屬:純真模擬的切片共花多久
+        fastMs: Math.round(_fastSliceMs),   // 有跑到快轉事件的切片共花多久
+        invMax: _invMax,                    // 結算期間背包峰值
+        // ⚡ 「一個事件到底代表幾隻怪」——沒有這兩個,fastEvents 與 settleMs 相除得到的數字在角色之間不可比。
+        batchE: (typeof batchPerEvent === 'number') ? Math.round(batchPerEvent * 100) / 100 : null,   // 每個死亡事件殺幾隻
+        svcE: (typeof svcPerEvent === 'number') ? Math.round(svcPerEvent * 100) / 100 : null,         // 每個事件推進幾拍
+        perf: (function () { try { return { kill: Math.round(_perfSeg.kill), spawn: Math.round(_perfSeg.spawn), clan: Math.round(_perfSeg.clan), save: Math.round(_perfSeg.save), lsGet: _perfSeg.lsGet, lsSet: _perfSeg.lsSet, lsGetMB: Math.round(_perfSeg.lsGetKB / 1024) }; } catch (e) { return null; } })(),
+        pvpOn: (function () { try { return !!player.pvpOn; } catch (e) { return null; } })(),          // 野外 PVP 開關(開了野外圖每次出怪多跑玩家 NPC 生成)
+        trollN: (function () { try { return (player.trollPlayers || []).length; } catch (e) { return -1; } })(),   // 被追殺人數
+        allies: (function () { try { return (player.allies || []).length; } catch (e) { return -1; } })(),
+        petsOut: _petsOut,                  // 出戰寵物數(名冊是模式共用的,診斷檔只印得出全域總數→這裡記「這隻角色的」)
+        settleSeq: _seqThis                 // 本次頁面開啟後的第幾次結算
       };
     }
     // 切到背景 / 關掉 App 前主動存一次:iOS 在背景更容易被系統直接丟掉整個分頁,
@@ -1420,10 +1586,16 @@
       } catch (e) {}
     };
     function doCheckpoint() {
+      // ⏱ 量自己花掉多少真實時間:存檔(壓縮)在慢裝置上可能很貴,而它是「每 CKPT_MS 一次」——
+      //   單次成本一旦逼近 CKPT_MS,結算時間就會失控放大(越慢→存越多次→更慢)。
+      //   把它跟結算總耗時並排記進離線紀錄,才分得出「真的在算」還是「卡在存檔」(2026-07-30 玩家回報結算 30 分鐘時加)。
+      var _ck0 = performance.now();
       try {
         var _sq = _saveSquelch; _saveSquelch = false;   // ⚡ 檢查點是「該存的存檔」:暫時放行 saveGame 擋板
-        try { if (typeof saveGame === 'function') saveGame(); } finally { _saveSquelch = _sq; }   // ff 下 logSys 靜音,不會洗「進度已儲存」;saveGame 尾端的 offlineStamp 被 catchingUp 擋掉,不影響錨點
+        wallHoldsRestore();   // 💾 存檔前先把被撐長的效期(追蹤／追殺)還原,結算中途關頁也不會把假到期時間留在存檔裡
+        try { if (typeof saveGame === 'function') saveGame(); } finally { _saveSquelch = _sq; wallHoldsApply(); }   // ff 下 logSys 靜音,不會洗「進度已儲存」;saveGame 尾端的 offlineStamp 被 catchingUp 擋掉,不影響錨點
         stampCore(timing.closeTs + done * TICK_MS);       // 錨點=已結算到的時間點(絕不用 now,剩餘離線時間才不會被吃掉)
+        _ckptN++; _ckptMs += performance.now() - _ck0;    // 先累計再寫紀錄,這一次的成本才會進到這筆紀錄裡
         recordHistory(buildHistRec());                    // 已結算部分先寫進離線紀錄(同 closeTs 覆寫,不會多筆)
       } catch (eCk) {}
       _ckptLastMs = performance.now();
@@ -1434,13 +1606,13 @@
     try {
       while (done < totalTicks && !_abortCatchup) {
         if (player.dead || !state.running) { died = !!player.dead; break; }
-        var t0 = performance.now();
+        var t0 = performance.now(), _evBefore = _fastEvents;
         while (done < totalTicks && !player.dead && state.running && (!_abortCatchup) && (!isRift || state.riftRun) &&
                (performance.now() - t0) < (_holdStart ? HOLD_SLICE_MS : sliceMs)) {   // 按住放棄時切片縮小,讓 1.5 秒一到就立刻停
           if (fastMode) {
             // ⚔ 軍王之室:鑰匙用完 → 核心 kbVictoryTeleport 已把人傳回村(mapState 變了)→ 剩餘時間在村莊,收快速段
             if (isKing && !kingLeftRoom && mapState && mapState.current !== huntMap) {
-              kingLeftRoom = true; fastMode = false; fastOff = true;
+              kingLeftRoom = true; fastMode = false; fastOff = true; fastWhy = 'king-left';
               console.info('[AFK] ⚔ 軍王之室:鑰匙用完被傳回村,剩餘離線時間無戰鬥收益。');
               continue;
             }
@@ -1482,7 +1654,7 @@
               }
               if (fastBossUid == null && player.lv !== lastLv) {   // BOSS 經驗大,常直接升級 → 重新取樣殺速
                 lastLv = player.lv;
-                fastMode = false; sampleGrew = false; sampleEnd = done + FAST_RESAMPLE_TICKS;
+                fastMode = false; fastWhy = 'levelup'; sampleGrew = false; sampleEnd = done + FAST_RESAMPLE_TICKS;
                 beginSample(done);
               }
               continue;
@@ -1494,19 +1666,19 @@
             if (!fastEventStep()) {
               if (_dryHit) {
                 _dryHit = false;
-                fastMode = false; sampleGrew = false; hpFloorFixed = true;
+                fastMode = false; fastWhy = 'dry'; sampleGrew = false; hpFloorFixed = true;
                 sampleEnd = done + FAST_SAMPLE_TICKS;
                 beginSample(done);
                 console.info('[AFK] ⚡ 消耗品斷貨(戰局質變):退出快速段重新取樣(固定 70% 血量門檻),新戰局撐得穩再回快速。');
                 continue;
               }
-              fastMode = false; fastOff = true;
+              fastMode = false; fastOff = true; fastWhy = 'error';
               console.info('[AFK] ⚡ 快速結算退回全模擬(步驟異常),剩餘時間照真模擬。');
               continue;
             }
             if (player.lv !== lastLv) {   // 升級 → 戰力變了 → 重新取樣殺速
               lastLv = player.lv;
-              fastMode = false; sampleGrew = false; sampleEnd = done + FAST_RESAMPLE_TICKS;
+              fastMode = false; fastWhy = 'levelup'; sampleGrew = false; sampleEnd = done + FAST_RESAMPLE_TICKS;
               beginSample(done);
             }
             continue;
@@ -1524,7 +1696,7 @@
             if (player.lv !== lastLv) lastLv = player.lv;   // 取樣中升級:樣本自然涵蓋新戰力,不需特別處理
             if (done >= sampleEnd) {
               if (totalTicks - done >= FAST_MIN_REMAIN) evalSample();
-              else fastOff = true;   // 剩太少,全模擬跑完就好
+              else { fastOff = true; fastWhy = 'short-remain'; }   // 剩太少,全模擬跑完就好
             }
           }
           if (isKing && !kingLeftRoom && mapState && mapState.current !== huntMap) kingLeftRoom = true;   // 鑰匙用完→原作已把人傳出軍王之室
@@ -1537,6 +1709,7 @@
             }
           }
         }
+        _sliceDone(performance.now() - t0, _fastEvents > _evBefore);   // ⏱ 切片耗時分佈(卡頓的指紋)＋背包峰值
         if (withOverlay) updateOverlay(done / totalTicks, done, totalTicks);
         // 💾 分段檢查點(見上方宣告):間隔依結算長短動態;壓縮 Worker 還沒消化完就先跳過(背壓,
         //    避免多份數 MB 存檔字串同時堆在記憶體),但拖過 CKPT_MAX_MS 一定補存一次。
@@ -1544,7 +1717,9 @@
           var sinceCkpt = performance.now() - _ckptLastMs;
           if (sinceCkpt >= CKPT_MAX_MS || (sinceCkpt >= CKPT_MS && !lzBacklog())) doCheckpoint();
         }
+        var _pt0 = performance.now();
         await pace(sliceMs);   // 前景 rAF / 背景 Worker 溫和節拍(切走也續算)
+        _paceMs += performance.now() - _pt0;   // ⏱ 這段是「等畫面更新」不是計算;分頁切到背景時會暴增
         // 「長按放棄剩餘收益」按滿 HOLD_MS → 設旗標跳出(已算到的收益本就累積保留,等同撞死即停)
         if (_holdStart && (performance.now() - _holdStart) >= HOLD_MS) _abortCatchup = true;
       }
@@ -1557,6 +1732,9 @@
       _saveSquelch = false;   // ⚡ 迴圈結束(完成/死亡/例外)即解除擋板:落點/結算尾的 saveGame 要照常運作
       killTicker();   // 補跑結束(完成/死亡/例外)→ 關掉背景節拍器 Worker,不殘留
       _ckptNow = null;   // 解除「切到背景先存一次」的鉤子(閉包已失效)
+      // ⏱ 解除本輪的背景計時監聽:不解的話每結算一次就疊一個,而且會把之後的背景時間算到舊那筆頭上
+      try { document.removeEventListener('visibilitychange', _visHandler); } catch (e) {}
+      if (_hiddenAt) { _hiddenMs += performance.now() - _hiddenAt; _hiddenAt = 0; }
       settleDeadMobs();
     }
 
@@ -1619,7 +1797,9 @@
       gotoMap(homeTown());
     }
     if (state.ff !== prevFf0) { state.ff = prevFf0; state.inTick = prevInTick0; }   // 還原 ff(攀登存活分支上面已還原 → 此處不動作)
-    if (trackUntil0 !== null && player.tracking) player.tracking.until = trackUntil0;   // 🎯 還原魔物追蹤原到期時間(見補跑開頭;一定要在下方 saveGame 之前,免得撐長的假 until 被存進存檔)
+    wallHoldsRestore();   // ⏳ 還原追蹤／追殺的原到期時間(見補跑開頭;一定要在下方 saveGame 之前)
+    // 🗑️ 補跑期間自動賣出被節流(見 installOfflineHooks),收尾強制跑一次,免得最後一段的廢品沒賣到
+    try { if (typeof window.__afkAutoSellFlush === 'function') window.__afkAutoSellFlush(); } catch (e) {}
 
     // 重啟 live loop(startGameTimers 內含去重,且重設 _loopLast=null → 不會把結算花掉的真實秒數再補一次)
     try { startGameTimers(); } catch (e) {}
@@ -1640,11 +1820,29 @@
     if (_runErr) {   // 結算中途拋例外 → 把死因印出來(見上方 catch);沒這行的話玩家只看得到「離線掛機 0 分鐘」,完全不知道發生什麼事
       var _eEsc = function (s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
       var _eMsg = _eEsc((_runErr && _runErr.message) ? _runErr.message : _runErr);
-      var _eAt = (_runErr && _runErr.stack) ? _eEsc((_runErr.stack.split('\n')[1] || '').trim()) : '';
+      var _eStack = (_runErr && _runErr.stack) ? String(_runErr.stack) : '';
+      var _eAt = _eStack.split('\n').slice(1, 4).map(function (s) { return s.trim(); }).filter(Boolean);   // 印 3 層:只印 1 層時看不出是「誰」被改壞的
+      // 🕵️ 第三方腳本判定:遊戲(含全部外掛)都是同源載入的一般 <script>,堆疊不會出現 extension:// 或
+      //   「eval at …」這種來源。出現就代表有瀏覽器擴充／使用者腳本(油猴之類)改寫了遊戲函式——常見手法是
+      //   拿 fn.toString() 重新 eval 一份,那份會**掉光閉包**,於是任何 monkey-patch 的 wrapper 一被呼叫就噴
+      //   「xxx is not defined」。這種只有玩家自己停用得掉,叫他回報給作者只會把他導向錯的地方。
+      //   (2026-07-29 兩名玩家回報:第三方 gmRebindFn 重綁了 afk-training 包住的傭兵受擊函式 → 結算第一拍就中斷。)
+      //   **只認最上面那一層**(＝真正丟出錯誤的那行是誰的),不掃整條堆疊:堆疊底部是「誰呼叫的」,
+      //   那裡出現外來框架很正常(主控台、自動化工具都算),拿它判會把我方的真 bug 說成第三方——
+      //   而那比漏判更糟:玩家就不回報了,我們什麼都不知道。誤判方向要偏向「當成我們的錯」。
+      var _foreign = false;
+      try {
+        var _o = location.origin, _top = _eAt[0] || '';
+        _foreign = /extension:\/\//i.test(_top) || (_top.indexOf('eval at ') >= 0 && _top.indexOf(_o) < 0);
+      } catch (e) {}
       try {
         if (typeof logSys === 'function') logSys('<span class="text-red-400 font-bold">⚠ 離線結算中斷：' + _eMsg + '</span>'
-          + (_eAt ? '<br><span style="color:#94a3b8;font-size:.85em;">' + _eAt + '</span>' : '')
-          + '<br><span style="color:#94a3b8;font-size:.85em;">收益只結算到中斷前。請把這段訊息回報給作者。</span>');
+          + (_eAt.length ? '<br><span style="color:#94a3b8;font-size:.85em;">' + _eAt.map(_eEsc).join('<br>') + '</span>' : '')
+          + '<br><span style="color:#94a3b8;font-size:.85em;">收益只結算到中斷前。'
+          + (_foreign
+            ? '偵測到<b>瀏覽器擴充／使用者腳本</b>（油猴之類）改寫了遊戲函式，是它讓結算中斷的，不是遊戲本身的問題。請先停用那類腳本再重新載入。'
+            : '請把這段訊息回報給作者。')
+          + '</span>');
       } catch (e) {}
     }
     if (_abortCatchup) {   // 玩家長按放棄:標一句「已略過剩餘」(收益只算到放棄當下,剩餘時間不再結算、不會重算)
@@ -1677,6 +1875,7 @@
       if (_giDefer) { window.gainItem = _giDefer; _giDefer = null; }   // 保險:例外路徑也要還原 gainItem(正常路徑已還原 → 此處不動作)
       killTally = null; gainTally = null;                  // 回到「線上不計數」狀態
       window.__afkKillTally = null; window.__afkGainTally = null;
+      try { if (_perfSeg && _perfSeg.done) _perfSeg.done(); } catch (e4) {}   // ⏱ 分段計時一定要拆(例外路徑也是):留著會讓線上每次存取 localStorage 都多繞一層
       if (prevFf0 !== undefined && state.ff !== prevFf0) { state.ff = prevFf0; state.inTick = prevInTick0; }   // 例外時的保險還原(正常路徑已還原 → 此處不動作)
       try { if (typeof startGameTimers === 'function') startGameTimers(); } catch (e3) {}   // 內含去重,正常路徑已重啟 → 無事
       removeOverlay();
@@ -1838,7 +2037,11 @@
     offStatsRuleset: OFFSTATS_RULESET,
     offStatsSignature: offStatsSig,
     mapName: mapName,   // 對外:地圖 id→中文名(供 afk-mobile 在匯入頁顯示「掛在哪張地圖」)
+    // 對外:結算是否進行中。結算迴圈是非同步的(每個檢查點讓出主執行緒),期間「換掉 currentSlot/player」
+    //   會讓剩下的 tick 與錨點推進算到新角色頭上 → 任何「就地換角」都必須先問這個(afk-mobile 換角在用)。
+    busy: function () { return catchingUp; },
     histKey: histKey,   // 對外:目前角色的離線紀錄 key(供 afk-history)
+    fastWhyText: fastWhyText,   // 對外:離線紀錄的 fastWhy 代碼→中文(供 afk-history／afk-diag 顯示,對照表只留這一份)
     setCkptMs: function (ms) { CKPT_MS = Math.max(200, +ms || 5000); },   // 🧪 測試用:縮短檢查點間隔(驗「結算中斷只丟尾段」)
     forceCatchup: function (mins, noFast) { _forceNoFast = !!noFast; var _map = (typeof mapState !== 'undefined' && mapState && mapState.current) || ''; runCatchup(Math.floor((mins || 60) * 60000 / TICK_MS), true, _map, null, null, null, _map === 'rift_battle' ? riftSnapshot() : null); }   // 帶當前地圖,否則 gotoMap(undefined) 空轉零收益;noFast=true 強制全模擬(A/B 用)
   };
@@ -1857,6 +2060,147 @@
     if (typeof changeMap === 'function') {
       var _cm = changeMap;
       window.changeMap = function () { var r = _cm.apply(this, arguments); try { stamp(); } catch (e) {} return r; };
+    }
+    // ⚡ 補跑熱點:純函式記憶化 + 補跑期間跳過白做的整理。
+  //   全部只吃「同一個輸入 → 同一個答案」這條性質,所以地圖在補跑中換來換去(攀登逐層、遺忘之島途中→本島、
+  //   軍王之室被傳回村)也不影響——快取的 key 就是輸入本身,不是「假設地圖不變」。
+  function installFfPerfHooks() {
+    // 1) _saveUnwrap(raw):驗簽章要對整包 payload 算雜湊,而核心每殺一隻怪都重讀整包血盟狀態 → 同一份字串重複驗。
+    //    純函式(同字串必同結果),用「最近 8 份字串」的小快取即可;回傳物件每次複製一份,避免呼叫端改到共用物件。
+    if (typeof _saveUnwrap === 'function') {
+      var _uw = _saveUnwrap, _uwKeys = [], _uwVals = Object.create(null), UW_MAX = 8;
+      window._saveUnwrap = function (raw) {
+        if (typeof raw !== 'string' || raw.length < 64) return _uw.apply(this, arguments);
+        var hit = _uwVals[raw];
+        if (!hit) {
+          hit = _uw.call(this, raw);
+          _uwVals[raw] = hit; _uwKeys.push(raw);
+          while (_uwKeys.length > UW_MAX) delete _uwVals[_uwKeys.shift()];
+        }
+        return { payload: hit.payload, signed: hit.signed, ok: hit.ok };
+      };
+    }
+    // 2) _seedHash(str):純雜湊,被簽章/身分指紋反覆呼叫同一批字串
+    if (typeof _seedHash === 'function') {
+      var _sh = _seedHash, _shKeys = [], _shVals = Object.create(null), SH_MAX = 64;
+      window._seedHash = function (str) {
+        if (typeof str !== 'string' || str.length < 32) return _sh.apply(this, arguments);
+        if (!(str in _shVals)) {
+          _shVals[str] = _sh.call(this, str); _shKeys.push(str);
+          while (_shKeys.length > SH_MAX) delete _shVals[_shKeys.shift()];
+        }
+        return _shVals[str];
+      };
+    }
+    // 3) isSiegeArea(地圖 id):純查表(SIEGE_OUTER_INNER 是常數清單),換圖只是查新 key
+    if (typeof isSiegeArea === 'function') {
+      var _isa = isSiegeArea, _isaVals = Object.create(null);
+      window.isSiegeArea = function (v) {
+        var k = String(v);
+        if (!(k in _isaVals)) _isaVals[k] = _isa.call(this, v);
+        return _isaVals[k];
+      };
+    }
+    // 4) pvpEnsureState():每次呼叫都把性向鎖(最多 200 筆)、復仇名單、社交私訊名單(最多 20 人 × 12 則)、
+    //    擊殺密語(最多 20 筆)整包重新正規化一遍,而上游把它掛在「每次出怪」(js/03 spawnMob)與「每次擊殺」
+    //    (pvpOnKillMob)上 → 24 小時結算被呼叫 12~16 萬次。清單全空時幾乎免費,一有內容就是結算的最大熱點。
+    //    補跑期間用便宜簽章判斷「有沒有變」,沒變就跳過;非補跑一律照跑(線上行為不動)。
+    //    🚨 簽章只能放 O(1) 又代表「結構真的變了」的東西(清單長度)。
+    //    ⚠ 性向值(alignmentValue)絕對不可放進簽章:每殺一隻普通怪它就 +1(js/03 pvpChangeAlignment(1)),
+    //      放進去等於每殺一隻就 miss 一次,直到性向值撞到 ±32767 上限才會開始命中 —— 也就是清單有內容
+    //      (被追殺過/有復仇名單/殺過白目玩家)時整晚都在重算,快取形同虛設。它在 pvpEnsureState 裡只是
+    //      夾範圍,而每個寫入點自己都夾過了,所以命中時自己補一次即可。pvpOn 同理:靠 npcClanWarActive
+    //      (自帶 2 秒快取)當場問,不靠簽章,否則補跑中途被 NPC 血盟宣戰會漏掉開紅。
+    if (typeof pvpEnsureState === 'function') {
+      var _pes = pvpEnsureState, _pesSig = null;
+      window.pvpEnsureState = function () {
+        if (!(typeof state !== 'undefined' && state && state.ff && !state.ffSmall)) { _pesSig = null; return _pes.apply(this, arguments); }
+        var sig;
+        try {
+          var sc = player.socialNpcContacts, rv = player.pvpRevengeList,
+              tp = player.trollPlayers, kw = player.pvpKillWhispers;
+          sig = (sc ? sc.length : -1) + '|' + (sc && sc[0] ? (sc[0].lastChatAt || 0) : 0)
+              + '|' + (rv ? rv.length : -1) + '|' + (tp ? tp.length : -1) + '|' + (kw ? kw.length : -1);
+        } catch (e) { sig = null; }
+        if (sig != null && sig === _pesSig) {
+          try {   // 跳過整包正規化,但「有語意」的兩件事照做
+            if (typeof pvpClampAlignment === 'function') player.alignmentValue = pvpClampAlignment(player.alignmentValue);
+            if (player.pvpOn === undefined) player.pvpOn = false;
+            if (typeof npcClanWarActive === 'function' && npcClanWarActive(player)) player.pvpOn = true;
+          } catch (e) {}
+          return;
+        }
+        var r = _pes.apply(this, arguments);
+        _pesSig = sig;
+        return r;
+      };
+    }
+    // 5) updateUI():核心那支在補跑期間本來就會早退(state.ff),但上游 js/28 的包裝**在呼叫核心之前**
+    //    先跑 _pvpSyncTravelButtons()——純畫面同步(getElementById＋classList.toggle＋textContent),
+    //    而 killMob 每殺一隻就叫一次 updateUI → 幾萬次全在改「補跑期間根本沒人看」的 DOM。
+    //    CPU profile(6x 限速·8 小時結算)實測:整條 updateUI 鏈占 7.2%,而核心 updateUI 自己只有 0.1%
+    //    ——那 7% 全是包裝層的畫面同步。補跑期間整條跳過。
+    //    ⚠ 只認自家的 catchingUp(不是 state.ff):範圍縮到「離線結算」這一種,背景補跑/小補跑照原樣走。
+    //    落點還原 ff 之後結算尾會再叫一次 updateUI(見 runCatchup 收尾),畫面不會停在舊狀態。
+    if (typeof updateUI === 'function') {
+      var _uui = updateUI;
+      window.updateUI = function () { if (catchingUp) return; return _uui.apply(this, arguments); };
+    }
+    console.log('[AFK] ⚡ 補跑熱點快取已掛上(_saveUnwrap/_seedHash/isSiegeArea/pvpEnsureState/updateUI)');
+  }
+
+  // 🏴 NPC 血盟群戰:補跑期間不啟動(除非玩家開了「掛機期間遭遇玩家對戰」)。
+  //   為什麼擋:群戰一開打,場上就持續補滿敵盟的**玩家型 NPC**——那是完整職業對戰,比打一般怪貴得多,
+  //   而且會把快轉逼回全模擬。實測(6x 限速·同角色同圖·只改這一個條件):每事件成本從 194µs
+  //   跳到數千~數十萬µs(變異很大,因為對手強弱每次不同)。這是唯一掃到會炸的角色狀態——
+  //   追殺清單、血盟資料量、卡瑞任務道具、背包、傭兵、寵物都不會。
+  //   為什麼當「規則」處理而不是硬修效能:攻城區、時空裂痕、排名攀登**本來就都排除在離線之外**,
+  //   理由都是「那是玩家在場的即時對戰,不該自動幫他打」。群戰是同一類。
+  //   代價(寫在開關說明裡讓玩家自己選):離線拿不到敵盟玩家的噴裝(10%~3%·遺物 0.001%)、
+  //   血盟戰爭進度不推進。打贏群戰本身沒有獎勵(只有一句日誌),所以損失比想像中小。
+  //   ⚠ 只有王族加入血盟並主動對 NPC 血盟宣戰才會遇到群戰 → 這條只影響那一小群玩家。
+  if (typeof npcClanMaybeStartGroupBattle === 'function') {
+    var _startGB = npcClanMaybeStartGroupBattle;
+    window.npcClanMaybeStartGroupBattle = function () {
+      if (catchingUp && !chaseOn()) {
+        // ⚠ 這裡不能直接 _gbBlocked++:本函式掛在**每次擊殺**上,無條件計數會變成「略過了兩萬次團戰」的胡說。
+        //   照原作 v3.7.30 的「先骰再讀」同一招:先擲同一個機率,骰不中就跟原作一樣什麼都沒發生(不計數),
+        //   骰中了才算「本來會開一場」。仍然完全跳過昂貴的血盟世界讀取,零成本。
+        //   再加 _gbPossible(每次結算只算一次:玩家有沒有處於「會被開團」的處境)當閘,
+        //   否則沒血盟/沒宣戰的玩家也會被通知「略過了 N 次團戰」,那是純雜訊。
+        var _p = (typeof NPC_CLAN_GROUP_CHANCE !== 'undefined') ? NPC_CLAN_GROUP_CHANCE : 0.01;
+        if (_gbPossible && Math.random() < _p) _gbBlocked++;
+        return false;
+      }
+      return _startGB.apply(this, arguments);
+    };
+  }
+  installFfPerfHooks();
+
+  // 🗑️ 自動賣出在補跑期間節流:核心每 10 遊戲秒就把「整個背包」逐件跑一次規則判定(applyAutoSellRules)。
+    //   12 小時補跑＝4,320 次全背包掃描,大背包(2000 件)在低階手機上這一項就佔掉結算時間的一半以上(6x 限速實測)。
+    //   補跑期間改成每 AUTOSELL_CKPT_TICKS(5 遊戲分鐘)一次:賣出總量與金幣不變(規則的等待秒數本來就只有 60 秒,
+    //   5 分鐘一輪照樣過門檻),只是賣出時點在「壓縮時間」裡稍晚——玩家看不到中間狀態。線上行為完全不動。
+    if (typeof autoSellJunk === 'function') {
+      var AUTOSELL_CKPT_TICKS = 3000;
+      var _asj = autoSellJunk, _asjLastTick = -1e9;
+      window.autoSellJunk = function (manual) {
+        if (catchingUp && !manual) {
+          var t = (typeof state !== 'undefined' && state) ? (state.ticks || 0) : 0;
+          if (t - _asjLastTick < AUTOSELL_CKPT_TICKS) return;   // 還沒到節流間隔 → 這次跳過(下一輪再賣,總量不變)
+          _asjLastTick = t;
+        }
+        return _asj.apply(this, arguments);
+      };
+      // 🔒 Jesper junk autosell policy chain v1
+      // PP 的五分鐘離線節流包在本站政策外層；把契約標記傳到最外層，供啟動檢查確認整條 wrapper chain 仍在。
+      window.autoSellJunk.__afkJunkAutosellPolicy = !!(_asj && _asj.__afkJunkAutosellPolicy);
+      // 收尾用:重設節流後跑一次「正常」自動賣(仍會先套規則、仍吃規則的延遲秒數;不是玩家的一鍵賣)
+      window.__afkAutoSellFlush = function () {
+        _asjLastTick = -1e9;
+        if (!player || player.autoSellOn === false) return;
+        try { _asj.call(window); } catch (e) {}
+      };
     }
     if (typeof loadGame === 'function') {
       var _load = loadGame;

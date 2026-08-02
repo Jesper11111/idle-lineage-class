@@ -812,7 +812,8 @@ function relicPurposeLabels(d) {
     if (d.crushDr) out.push(`重擊防護（受到重擊傷害-${d.crushDr}%）`);
     if (d.physDrGated) out.push(`物理防護（一般攻擊傷害-${d.physDrGated}%，每3秒一次）`);
     if (d.fireNullify) out.push('火焰化解（每10秒可免疫一次火屬性傷害）');
-    if (d.wearerEle) out.push(`${eleName(d.wearerEle)}之化身（自身轉為${eleName(d.wearerEle)}屬性，承受傷害套用屬性剋制）`);
+    if (d.wearerEle === 'wind') out.push('風之化身（自身轉為風屬性；受到地屬性傷害增加、受到水屬性傷害減少）');
+    else if (d.wearerEle) out.push(`${eleName(d.wearerEle)}之化身（自身轉為${eleName(d.wearerEle)}屬性，承受傷害套用屬性剋制）`);
     if (d.necroBook) out.push('骷髏復生（造屍術改為不消耗MP；敵人被擊敗時自動召喚1隻骷髏，全隊場上最多6隻；已達上限時完全恢復HP最低的骷髏）');
     if (d.killTeamHealPct) out.push(`亡者餽贈（擊殺敵人時，全體玩家、傭兵、召喚物、寵物與護衛恢復${d.killTeamHealPct}%最大HP）`);
     if (d.stealth) out.push('常駐隱身（不主動吸引一般怪物）');
@@ -2255,11 +2256,71 @@ function updatePvpButtonTone() {
     btn.style.borderColor = border;
     btn.style.boxShadow = 'inset 0 1px 0 rgba(255,255,255,.16), inset 0 -1px 0 rgba(0,0,0,.22), 0 1px 2px rgba(0,0,0,.35)';
 }
+let _socialPanelMode = 'pvp';
+function setSocialPanelMode(mode) {
+    _socialPanelMode = mode === 'private' ? 'private' : 'pvp';
+    renderPvpTab();
+}
+function _socialNpcRow(rec) {
+    if (!rec || !rec.n) return '';
+    let align = typeof pvpClampAlignment === 'function' ? pvpClampAlignment(rec.alignmentValue) : Number(rec.alignmentValue) || 0;
+    let name = typeof pvpNameHtml === 'function'
+        ? pvpNameHtml(rec.n, align, 'font-bold')
+        : `<span class="font-bold">${_pvpTabEsc(rec.n)}</span>`;
+    let arg = encodeURIComponent(rec.n).replace(/'/g, '%27');
+    let clan = rec.clanName ? `${rec.clanLeader ? '盟主・' : ''}${_pvpTabEsc(rec.clanName)}` : '無血盟';
+    return `<div class="bg-slate-900/80 border border-slate-700 rounded p-3 flex items-center justify-between gap-3">
+        <div class="min-w-0">
+            <div class="truncate">${name}${rec.clanLeader ? '<span class="ml-2 text-xs text-amber-300">盟主</span>' : ''}</div>
+            <div class="text-xs text-slate-500 mt-1 truncate">${_pvpTabEsc(rec.avatar || '男戰士')}・${clan}</div>
+        </div>
+        <button class="btn shrink-0 px-3 py-2 text-sm font-bold bg-cyan-950 hover:bg-cyan-900 border-cyan-700 text-cyan-100" onclick="socialOpenPrivateByName('${arg}')">私訊</button>
+    </div>`;
+}
+function _socialPrivatePanelHtml() {
+    let recent = typeof socialGetRecentContacts === 'function' ? socialGetRecentContacts() : [];
+    return `<div class="flex flex-col gap-3">
+        <div class="bg-slate-900/80 border border-slate-700 rounded p-3">
+            <div class="text-sm font-bold text-slate-200 mb-2">搜尋玩家 NPC</div>
+            <input id="social-npc-search" type="search" maxlength="24" autocomplete="off"
+                class="w-full bg-slate-950 border border-slate-600 rounded px-3 py-2 text-slate-100 outline-none focus:border-cyan-500"
+                placeholder="輸入至少 2 個字" oninput="renderSocialNpcSearch(this.value)">
+            <div id="social-npc-search-results" class="flex flex-col gap-2 mt-3"></div>
+        </div>
+        <div class="flex items-center justify-between">
+            <div class="font-bold text-cyan-200">最近私訊</div>
+            <div class="text-xs text-slate-500">${recent.length} / 20</div>
+        </div>
+        <div class="flex flex-col gap-2">
+            ${recent.map(_socialNpcRow).join('') || '<div class="text-slate-500 text-sm bg-slate-900/60 border border-slate-800 rounded p-4 text-center">目前沒有私訊紀錄。</div>'}
+        </div>
+    </div>`;
+}
+function renderSocialNpcSearch(query) {
+    let box = document.getElementById('social-npc-search-results');
+    if (!box) return;
+    let clean = String(query || '').trim();
+    if (clean.replace(/\s+/g, '').length < 2) {
+        box.innerHTML = '';
+        return;
+    }
+    let rows = typeof socialSearchNpcCandidates === 'function' ? socialSearchNpcCandidates(clean) : [];
+    box.innerHTML = rows.map(_socialNpcRow).join('') ||
+        '<div class="text-slate-500 text-sm border border-slate-800 rounded p-3 text-center">找不到符合的玩家 NPC。</div>';
+}
 function renderPvpTab() {
     let div = document.getElementById('tab-pvp');
     if (!div || !player || !player.cls) return;
     if (typeof pvpEnsureState === 'function') pvpEnsureState();
     updatePvpButtonTone();
+    let socialNav = `<div class="grid grid-cols-2 gap-2 mb-3">
+        <button class="btn py-2 font-bold ${_socialPanelMode === 'pvp' ? 'bg-red-950 border-red-600 text-red-100' : 'bg-slate-900 border-slate-700 text-slate-400'}" onclick="setSocialPanelMode('pvp')">PVP</button>
+        <button class="btn py-2 font-bold ${_socialPanelMode === 'private' ? 'bg-cyan-950 border-cyan-600 text-cyan-100' : 'bg-slate-900 border-slate-700 text-slate-400'}" onclick="setSocialPanelMode('private')">私訊</button>
+    </div>`;
+    if (_socialPanelMode === 'private') {
+        div.innerHTML = socialNav + _socialPrivatePanelHtml();
+        return;
+    }
     let align = (typeof pvpClampAlignment === 'function') ? pvpClampAlignment(player.alignmentValue) : (Number(player.alignmentValue) || 0);
     let color = (typeof pvpAlignmentColor === 'function') ? pvpAlignmentColor(align) : '#fff';
     let label = (typeof pvpAlignmentLabel === 'function') ? pvpAlignmentLabel(align) : '中立';
@@ -2292,7 +2353,7 @@ function renderPvpTab() {
             <button class="btn shrink-0 px-3 py-2 text-sm font-bold ${disabled ? 'opacity-50' : 'bg-red-900 hover:bg-red-800 border-red-600 text-red-100'}" ${disabled} onclick="openPvpRevengeTauntMenu(decodeURIComponent('${_nArg}'),event)">${chasing ? '追殺中' : '嗆他'}</button>
         </div>`;
     }).join('');
-    div.innerHTML = `
+    div.innerHTML = socialNav + `
         <div class="flex flex-col gap-3">
             <div class="bg-slate-900/80 border border-slate-700 rounded p-3">
                 <div class="flex items-center justify-between gap-3">

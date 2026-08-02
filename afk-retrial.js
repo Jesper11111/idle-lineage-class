@@ -32,7 +32,7 @@
   if (window.AFK_TOGGLES) {
     AFK_TOGGLES.register({
       id: 'retrial', name: '試煉批次兌換', group: '遊戲玩法', def: true,
-      desc: '試煉道具持續掉落（不再達量即停、已完成也照掉），試煉面板可自訂數量一次兌換多份獎勵；不動原本的試煉狀態'
+      desc: '試煉道具會一直掉（收滿了、已完成也照掉），面板可一次兌換多份獎勵'
     });
   }
   function on() { return !window.AFK_TOGGLES || AFK_TOGGLES.enabled('retrial'); }

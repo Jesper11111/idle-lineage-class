@@ -14,12 +14,12 @@
  *       ▸ 「導覽文件」(index.html / 目錄 '/')走 network-first：線上一律抓最新「殼」,根除 cache-first 把舊版釘死、
  *         又得靠 SW 換版才更新得了的老問題(iOS 換版尤其不穩);離線/網路慢退快取,離線遊玩照常(見 navFirst)。
  *       ▸ js / manifest / 圖示走 cache-first：它們帶 ?v= 版本號,換版即換 URL,撲空就抓新、不會被釘舊版,故維持 cache-first(秒開、省流量)。
- *   ● 資產桶 asset-<group>-<manifest hash>：assets/ 全部採 cache-first、按需下載。
+ *   ●  *   ● 資產桶 asset-<group>-<manifest hash>：assets/ 全部採 cache-first、按需下載。
  *       一般資產按第一層目錄分桶；anim/classanim/morphanim 依資料夾穩定分成 8 片。
  *       manifest 內容改變時只更換受影響的桶名；activate 只列桶名並整桶淘汰舊分片，
  *       不抓 24k 筆清單、不逐項 cache.match，也不對圖片桶呼叫 cache.keys()。
  *
- * 更新控制：
+：
  *   - 導覽走 network-first → 線上開頁本來就是最新程式碼,SW 何時換版不影響使用者看到的畫面。
  *   - 新版 sw.js 安裝後「停在 waiting」,等所有分頁/App 關閉後自然接手(⚠️ 刻意不 skipWaiting,
  *     原因見 activate 前的說明——強行交接會和頁面的常駐請求互等死鎖,把更新後的第一次重整/登出卡住幾十秒)。
@@ -27,11 +27,11 @@
  *
  * 圖片失效走 manifest 版本分片；不背景預抓，圖片一律 on-demand 用到才抓。
  * ========================================================================== */
-const CODE_VERSION = 'code-0db1441984e0';   // ← scripts/stamp-sw-version.mjs 自動覆寫,勿手改(只用來讓 sw.js 內容變動→觸發更新偵測,不是桶名)
-const BUILD_ID     = '0731-1648'; // ← stamp 在 CODE_VERSION 變動時一起更新成台灣時間 MMDD-HHMM(僅供畫面辨識版本)
+const CODE_VERSION = 'code-ce36e906653b';   // ← scripts/stamp-sw-version.mjs 自動覆寫,勿手改(只用來讓 sw.js 內容變動→觸發更新偵測,不是桶名)
+const BUILD_ID     = '0802-2311'; // ← stamp 在 CODE_VERSION 變動時一起更新成台灣時間 MMDD-HHMM(僅供畫面辨識版本)
 const CODE_CACHE = 'code-v1';     // 固定桶名,不隨版本換(檔案以 ?v= 定址;殘留由 reconcileCode 對帳清掉)
 const ASSET_CACHE_SHARDS = 8;
-const ASSET_CACHE_VERSIONS = {"anim-0":"2f5b5c6f252c","anim-1":"4858ad5b2533","anim-2":"bc3c1005171c","anim-3":"bf777ed949e1","anim-4":"e65ba062c4f1","anim-5":"0b8378d8d549","anim-6":"203dd4c427e7","anim-7":"b04e6965fb22","classanim-0":"e802b4c65971","classanim-1":"f015b366f013","classanim-2":"86739aea8907","classanim-3":"79ff6a39a4f3","classanim-4":"0dad9a2995f1","classanim-5":"f70d2957ee8c","classanim-6":"cb8087e0a04d","classanim-7":"5f725d3c82fd","morphanim-0":"f0231121399b","morphanim-1":"dd349185539a","morphanim-2":"043662bb252a","morphanim-3":"adc27903335f","morphanim-4":"0722943b7133","morphanim-5":"f32752e0764e","morphanim-6":"8f30735ea61e","morphanim-7":"a2e25974ce28","static-area":"06583a4b0351","static-background":"07470874d83e","static-bgm":"a6f629ab6444","static-character":"7bad733b5b38","static-doll":"a630b8dda443","static-favicon.png":"e3683fd5062f","static-fx":"b520680f1b01","static-icons":"19deb166c3d1","static-login":"023f1a2bac5d","static-logo":"600c79b6eca2","static-mobile-mobs":"effa65926bf8","static-morph":"36c302230d6e","static-npc":"d9427f6e4626","static-sfx":"d45a7e2c9be4","static-start":"52b9c96c006f","static-state-icons":"81d05d72a970","static-ui":"5db9c3dde31b"};
+const ASSET_CACHE_VERSIONS = {"anim-0":"2f5b5c6f252c","anim-1":"4858ad5b2533","anim-2":"bc3c1005171c","anim-3":"bf777ed949e1","anim-4":"e65ba062c4f1","anim-5":"0b8378d8d549","anim-6":"203dd4c427e7","anim-7":"b04e6965fb22","classanim-0":"e802b4c65971","classanim-1":"f015b366f013","classanim-2":"86739aea8907","classanim-3":"79ff6a39a4f3","classanim-4":"0dad9a2995f1","classanim-5":"f70d2957ee8c","classanim-6":"cb8087e0a04d","classanim-7":"5f725d3c82fd","morphanim-0":"f0231121399b","morphanim-1":"dd349185539a","morphanim-2":"043662bb252a","morphanim-3":"adc27903335f","morphanim-4":"0722943b7133","morphanim-5":"f32752e0764e","morphanim-6":"8f30735ea61e","morphanim-7":"a2e25974ce28","static-area":"06583a4b0351","static-background":"07470874d83e","static-bgm":"a6f629ab6444","static-character":"7bad733b5b38","static-doll":"a630b8dda443","static-favicon.png":"e3683fd5062f","static-fx":"b520680f1b01","static-icons":"19deb166c3d1","static-login":"023f1a2bac5d","static-logo":"600c79b6eca2","static-mobile-mobs":"6c0948c72e81","static-morph":"36c302230d6e","static-npc":"d9427f6e4626","static-sfx":"d45a7e2c9be4","static-start":"52b9c96c006f","static-state-icons":"81d05d72a970","static-ui":"5db9c3dde31b"};
 function _assetCacheShard(value) {
   let hash = 2166136261;
   for (let i = 0; i < value.length; i++) hash = Math.imul(hash ^ value.charCodeAt(i), 16777619);

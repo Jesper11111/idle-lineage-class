@@ -18,7 +18,7 @@
   if (window.AFK_TOGGLES) {
     AFK_TOGGLES.register({
       id: 'enhtarget', name: '快速強化可衝到 +15', group: '遊戲介面', def: true,
-      desc: '背包「⚡ 快速強化」的目標值選單從最高 +12 補到 +15（超過個別裝備上限的部分仍會被上限擋住，不會衝過頭）'
+      desc: '「⚡ 快速強化」的目標可以選到 +15（原本只到 +12）'
     });
   }
   function on() { return !window.AFK_TOGGLES || AFK_TOGGLES.enabled('enhtarget'); }

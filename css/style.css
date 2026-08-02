@@ -2932,6 +2932,148 @@ button.classic-skill-cell { cursor:pointer; }
     white-space: normal;
     line-height: 1.45;
 }
+.wc-private-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 275;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+    background: rgba(4, 6, 10, .72);
+}
+.wc-private-dialog {
+    width: min(500px, calc(100vw - 24px));
+    height: min(560px, calc(100vh - 24px));
+    min-height: 360px;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    overflow: hidden;
+    border: 2px solid #75643f;
+    border-radius: 6px;
+    background: #171a21;
+    box-shadow: 0 18px 46px rgba(0, 0, 0, .84);
+}
+.wc-private-header {
+    min-height: 58px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 9px 12px;
+    border-bottom: 1px solid rgba(183, 146, 62, .35);
+    background: #20232b;
+}
+.wc-private-title {
+    color: #eee7d9;
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.35;
+}
+.wc-private-clan {
+    margin-top: 2px;
+    color: #91a4b8;
+    font-size: 11px;
+    line-height: 1.3;
+}
+.wc-private-close {
+    width: 34px;
+    height: 34px;
+    flex: none;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: #b9b4ab;
+    font-size: 24px;
+    line-height: 30px;
+    cursor: pointer;
+}
+.wc-private-close:hover {
+    border-color: rgba(183, 146, 62, .45);
+    background: rgba(183, 146, 62, .12);
+    color: #f0d890;
+}
+.wc-private-messages {
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+}
+.wc-private-message {
+    max-width: 82%;
+    padding: 7px 9px;
+    border: 1px solid #3b414c;
+    border-radius: 4px;
+    color: #e2ded7;
+    font-size: 13px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+.wc-private-speaker {
+    margin-bottom: 2px;
+    color: #a7b7c8;
+    font-size: 11px;
+    font-weight: 700;
+}
+.wc-private-npc {
+    align-self: flex-start;
+    background: #252a33;
+}
+.wc-private-player {
+    align-self: flex-end;
+    border-color: #5b4e31;
+    background: #38301f;
+}
+.wc-private-player .wc-private-speaker { color: #dfc779; }
+.wc-private-system {
+    align-self: center;
+    max-width: 94%;
+    padding: 3px 8px;
+    border: 0;
+    background: transparent;
+    color: #b49b76;
+    font-size: 11px;
+    text-align: center;
+}
+.wc-private-pending { color: #aaa49b; }
+.wc-private-compose {
+    min-height: 54px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 68px;
+    gap: 8px;
+    padding: 9px;
+    border-top: 1px solid rgba(183, 146, 62, .3);
+    background: #20232b;
+}
+.wc-private-compose input {
+    width: 100%;
+    min-width: 0;
+    border: 1px solid #515968;
+    border-radius: 4px;
+    background: #11141a;
+    color: #f0ece5;
+    padding: 8px 10px;
+    font-size: 13px;
+    outline: none;
+}
+.wc-private-compose input:focus { border-color: #b7923e; }
+.wc-private-compose button {
+    border: 1px solid #9a7933;
+    border-radius: 4px;
+    background: #4c3d20;
+    color: #f0da91;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+}
+.wc-private-compose button:hover { background: #63502b; }
+.wc-private-compose input:disabled,
+.wc-private-compose button:disabled {
+    opacity: .55;
+    cursor: wait;
+}
 /* 📌 v3.5.77 NPC 叫賣釘選列（#sys-log-pins·index.html 位於 #sys-log 上方）：
    最多兩條常駐在「系統與物品日誌」頂端不被推走；被互動(吵死了/馬上到/開對話/成交)或離場後自動換下一位。
    ⚠️ 用 :empty 收起整條（不用 Tailwind .hidden：ID 選擇器權重會壓過 class，切換會失效）。 */

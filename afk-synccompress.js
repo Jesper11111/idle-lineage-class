@@ -23,9 +23,7 @@
 
   if (window.AFK_TOGGLES) AFK_TOGGLES.register({
     id: 'synccompress', name: '存檔即時壓縮', group: '系統與其他', def: false,
-    desc: '每次存檔當下就壓縮再寫入(而非交給背景事後壓)。可根治「登出或多開後存檔沒被壓縮、'
-      + '佔用暴增導致角色/倉庫消失」。代價:存檔的瞬間會多花一點時間壓縮(手機大存檔可能小卡),'
-      + '故預設關閉;若在「檢查存檔大小」看到很多「未壓縮」再打開。'
+    desc: '避免存檔爆掉害角色或倉庫消失；代價是存檔時多花一點時間'
   });
 
   if (typeof _lzSet !== 'function' || typeof LZString === 'undefined' || typeof LZString.compressToUTF16 !== 'function') {

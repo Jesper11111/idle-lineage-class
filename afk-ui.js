@@ -268,6 +268,7 @@
     titleEl.innerHTML = esc(opts.title || '確認');
     titleEl.style.display = (opts.title === '') ? 'none' : '';
     msgEl.innerHTML = esc(opts.message || '').replace(/\n/g, '<br>');
+    msgEl.style.textAlign = opts.align === 'left' ? 'left' : '';   // 預設維持置中;條列式訊息傳 align:'left'(置中的條列折行後會歪掉)
     okBtn.textContent = opts.okText || '確定';
     cancelBtn.textContent = opts.cancelText || '取消';
     okBtn.classList.toggle('danger', !!opts.danger);

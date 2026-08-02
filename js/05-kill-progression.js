@@ -251,6 +251,35 @@ function partyExpShareCount() { return partyActiveMemberCount(); }   // 🔒 舊
 function partyRewardMult() { return 1; }   // 🔒 本地政策：金幣不按隊伍人數加乘
 function partyDropMult() { return 1 + Math.max(0, partyActiveMemberCount() - 1) * 0.6; }   // 🔒 本地政策：每名未倒地傭兵使掉寶率 +60%，王族 7 名時 ×5.2
 function partyDropRate(rate) { return Math.min(1, Math.max(0, Number(rate) || 0) * partyDropMult()); }
+// 任務道具的主玩家與隊員分流：隊員保留個別試煉進度，但所有實體道具都立即交給隊長背包。
+function grantPartyTrialQuestDrop(itemId, cnt) {
+    cnt = Math.max(1, Math.floor(Number(cnt) || 1));
+    let mainActive = typeof trialItemActive !== 'function' || trialItemActive(itemId);
+    let main = false;
+    if (mainActive) {
+        let gained = gainItem(itemId, cnt);
+        main = !!(gained && (gained.cnt || 0) > 0);
+    }
+    let capped = DB.items[itemId] && DB.items[itemId].maxHold;
+    let allies = (!mainActive || !capped) && typeof allyQueueTrialQuestItem === 'function' ? allyQueueTrialQuestItem(itemId, cnt) : [];
+    return { main: main, allies: allies || [] };
+}
+function grantPartyStageQuestDrop(itemId, mainActive, cnt) {
+    cnt = Math.max(1, Math.floor(Number(cnt) || 1));
+    let main = false;
+    if (mainActive) {
+        let gained = gainItem(itemId, cnt);
+        main = !!(gained && (gained.cnt || 0) > 0);
+    }
+    let capped = DB.items[itemId] && DB.items[itemId].maxHold;
+    let allies = (!mainActive || !capped) && typeof allyQueueStageQuestItem === 'function' ? allyQueueStageQuestItem(itemId, cnt) : [];
+    return { main: main, allies: allies || [] };
+}
+function partyQuestDropSubject(result) {
+    let names = (result && result.allies) || [];
+    if (result && result.main) return names.length ? `你與隊員 ${names.join('、')}` : '你';
+    return names.length ? `隊長（隊員 ${names.join('、')}）` : '你';
+}
 // 🤝 組隊經驗加成保留：每名未倒地隊友使每位存活成員取得的完整怪物經驗再增加（王族隊長 8%／非王族 4%）。
 function partyExpBonusPct() {
     let _mates = (player.allies || []).filter(a => a && !a._downed).length;
@@ -305,13 +334,22 @@ function killMob(idx) {
     if (mob._justTransformedTick != null && state.ticks - mob._justTransformedTick <= 5 && mob.curHp > 0) return;   // 🌅 審查修：同一擊內的過時二次 killMob（on-hit 特效先殺→主判定又用舊 target.curHp 呼叫同槽位）→剛變身的滿血新階段不吃這種幽靈擊殺（真死亡 curHp<=0 不受影響）
     if (mob.transformTo && DB.mobs[mob.transformTo]) { doMobTransform(idx); return; }   // 🌅 三段變身：即使 HP=0 也不會死亡而是強制變身（先於 _dead/特效/獎勵）
     if (state.antharas && mapState.current === 'antharas_lair' && mob.n === '被侵蝕的瘋狂安塔瑞斯' &&
-        typeof antharasClaimDailyClear === 'function' && !antharasClaimDailyClear()) {
-        mob._dead = true; mob.curHp = 0;
-        state.antharas = 0; state._antAdvance = false;
-        logSys('<span class="text-amber-300 font-bold">相同模式今天已有角色完成安塔瑞斯副本，本次不重複結算通關與掉落。</span>');
-        setMapSelectors('town_witon'); changeMap(true);
-        try { saveGame(); } catch (e) {}
-        return;
+        typeof antharasClaimDailyClear === 'function') {
+        let _antClaim = antharasClaimDailyClear();
+        if (!_antClaim.ok) {
+            if (_antClaim.storageError) {
+                mob.curHp = 1;
+                logSys('<span class="text-red-400 font-bold">安塔瑞斯通關紀錄暫時無法寫入，頭目恢復 1 HP；請再次攻擊重試。</span>');
+                return;
+            }
+            mob._dead = true; mob.curHp = 0;
+            state.antharas = 0; state._antAdvance = false;
+            let _usedNames = (_antClaim.names || []).join('、') || '隊伍中的角色';
+            logSys(`<span class="text-amber-300 font-bold">${_usedNames} 今日已完成過安塔瑞斯副本，本次不重複結算通關與掉落。</span>`);
+            setMapSelectors('town_witon'); changeMap(true);
+            try { saveGame(); } catch (e) {}
+            return;
+        }
     }
     mob._dead = true;
     try { vfxKill(mob); } catch(e){}   // ✨ VFX：擊殺粒子爆裂（趁格子 DOM 仍在、重繪前）
@@ -330,7 +368,7 @@ function killMob(idx) {
     let _svKillSrc = _combatSrc; _combatSrc = 'player';
     try {
     if (typeof pvpOnKillMob === 'function') pvpOnKillMob(mob);
-    if (typeof necroBookOnKill === 'function') necroBookOnKill(mob);   // 🏺 Shines v3.8.12：全隊 1% 回復＋骷髏復生（建築由函式內排除）
+    if (typeof necroBookOnKill === 'function') necroBookOnKill(mob);   // 🏺 v3.8.12 死靈之書：全隊1%回復＋骷髏復生（建築由函式內排除）
     if(typeof auditTrackKill === 'function') auditTrackKill(mob);   // 統計：累計經驗/擊殺
     // 🔧 轉場建築（往上層的樓梯 / 遺忘之島傳送門）：擊敗即進入下一層/島，不顯示「擊敗了…」戰鬥訊息（race 建築且 noAutoTeleport，排除攻城塔/城門）
     let _hideKillMsg = (mob.race === '建築' && mob.noAutoTeleport);
@@ -357,13 +395,6 @@ function killMob(idx) {
             if (_up > 0) { try { if (typeof _allyLevelRecompute === 'function') _allyLevelRecompute(a); } catch (e) {} logCombat(`<span class="text-yellow-300 font-bold">協力傭兵 ${a._allyName} 升級了！目前 Lv.${a.lv}</span>`, 'mercenary'); try { renderSquadPanel(); } catch (e) {} }
         });
     }
-    // 精神(WIS)：擊殺敵人時立即額外恢復 MP
-    { let mpKill = getWisMpOnKill(player.d.wis); if (mpKill > 0 && player.mp < player.mmp) player.mp = Math.min(player.mmp, player.mp + mpKill); }
-    // 🔧 v2.7.28 傭兵 MP-on-kill 平價：擊殺一律歸主玩家(killMob)→傭兵原本領不到「擊殺回魔」，
-    //    而王族/龍騎士傭兵靠 MP 維持自我增益(灼熱武器/閃亮之盾/覺醒…)且精神低(mpR≈1)→MP 只出不進、持續歸零。
-    //    改為每名非倒地傭兵依「自身精神」各自回魔（等同該角色親自遊玩時的回魔），不受 mob.exp 閘限制。
-    if (player.allies && player.allies.length) player.allies.forEach(a => { if (!a || a._downed || !a.d) return; let _mk = getWisMpOnKill(a.d.wis || 0); if (_mk > 0 && (a.mp || 0) < (a.mmp || 0)) a.mp = Math.min(a.mmp, (a.mp || 0) + _mk); });
-    
     let _goldDropRate = mob.boss ? 1 : 0.7;   // 💰 一般怪 70%；頭目 100%
     if (!_kbNoReward && !mob.noGold && Math.random() < _goldDropRate) {
         let _goldRange = monsterGoldRange(mob);
@@ -388,8 +419,8 @@ function killMob(idx) {
     if (player.allies && player.allies.length) player.allies.forEach(a => { if (a && !a._downed && a.eq && a.eq.helm && (DB.items[a.eq.helm.id] || {}).killHealHp) a.curHp = Math.min(a.mhp || 1, (a.curHp || 0) + DB.items[a.eq.helm.id].killHealHp); });
     // 🪄 吉爾塔斯魔杖：任意擊殺後 10 秒內依主玩家邪惡值取得額外魔法點數（滿邪惡 +20）；再次擊殺刷新時間。
     let _giltasWandTriggered = [];
-    if (player.eq && player.eq.wpn && player.eq.wpn.id === 'wpn_giltas_wand') { player._giltasWandFuryUntil = state.ticks + 100; _giltasWandTriggered.push(player); }
-    if (player.allies && player.allies.length) player.allies.forEach(a => { if (a && !a._downed && a.eq && a.eq.wpn && a.eq.wpn.id === 'wpn_giltas_wand') { a._giltasWandFuryUntil = state.ticks + 100; _giltasWandTriggered.push(a); } });
+    if (player.eq && player.eq.wpn && player.eq.wpn.id === 'wpn_giltas_wand') { let _gwB = (typeof pvpEvilBonus === 'function' ? pvpEvilBonus(20) : 0); let _gwSame = player._giltasWandFuryUntil > state.ticks && player._giltasWandBonus === _gwB; player._giltasWandFuryUntil = state.ticks + 100; player._giltasWandBonus = _gwB; if (!_gwSame) _giltasWandTriggered.push(player); }   // 🔌 加掛版補丁:buff 還在且加成值沒變→這次重算不會改變任何衍生值,略過(離線結算的最大熱點)
+    if (player.allies && player.allies.length) player.allies.forEach(a => { if (a && !a._downed && a.eq && a.eq.wpn && a.eq.wpn.id === 'wpn_giltas_wand') { let _gwP = player, _gwB = 0; player = a;   try { _gwB = (typeof pvpEvilBonus === 'function' ? pvpEvilBonus(20) : 0); } finally { player = _gwP; } let _gwSame = a._giltasWandFuryUntil > state.ticks && a._giltasWandBonus === _gwB; a._giltasWandFuryUntil = state.ticks + 100; a._giltasWandBonus = _gwB; if (!_gwSame) _giltasWandTriggered.push(a); }/* 🔌 加掛版補丁:同上(傭兵路徑更貴——_allyLevelRecompute 內部還會再叫一次玩家的 calcStats);算加成值前先把 player 換成這名傭兵,因為 pvpEvilBonus 讀的是全域 player */ });
     if (_giltasWandTriggered.includes(player)) calcStats();
     _giltasWandTriggered.forEach(a => { if (a !== player && typeof _allyLevelRecompute === 'function') _allyLevelRecompute(a); });
 
@@ -411,14 +442,24 @@ function killMob(idx) {
     }
 
     // === 🔥 50級試煉條件掉落 ===
-    if (player.cls === 'knight' && player.trialStage === 1 && mob.n === '黑暗妖精將軍' && !player.inv.some(i => i.id === 'item_dantes_letter') && Math.random() < partyDropRate(0.01)) { gainItem('item_dantes_letter', 1); logSys('<span class="text-amber-300 font-bold">✦ 你取得了 丹特斯的召書。</span>'); }
-    if (player.cls === 'elf' && player.trialStage === 1 && mob.n === '巨大兵蟻' && !player.inv.some(i => i.id === 'item_ancient_book') && Math.random() < partyDropRate(0.01)) { gainItem('item_ancient_book', 1); logSys('<span class="text-amber-300 font-bold">✦ 你取得了 古代黑妖之秘笈。</span>'); }
-    if (player.cls === 'dark' && player.trialStage === 1 && mob.n === '黑暗棲林者' && !player.inv.some(i => i.id === 'item_chaos_key') && Math.random() < partyDropRate(0.01)) { gainItem('item_chaos_key', 1); logSys('<span class="text-amber-300 font-bold">✦ 你取得了 混沌鑰匙。</span>'); }
-    if (player.cls === 'royal' && player.trialStage === 1 && mob.n === '小惡魔' && !player.inv.some(i => i.id === 'item_royal_order') && Math.random() < partyDropRate(0.01)) { gainItem('item_royal_order', 1); logSys('<span class="text-amber-300 font-bold">✦ 你取得了 調職命令書。</span>'); }   // 👑 王族 50 級試煉（唯一，不受經典掉率影響，與其他職業一致）
-    if (player.cls === 'knight' && player.trialStage === 2 && mapState.current === 'elf_grave' && (player.inv || []).reduce((s, i) => s + (i.id === 'item_elf_whisper' ? (i.cnt || 0) : 0), 0) < 10 && Math.random() < partyDropRate(0.01)) { gainItem('item_elf_whisper', 1); logSys('<span class="text-amber-300 font-bold">✦ 你拾起了 精靈的私語。</span>'); }   // 🔧 已持有 10 個則不再掉落（上限）⚠️ v3.5.87 上限口徑＝總持有（含鎖定件）：questCountId 排除鎖定件·用它當上限會被「上鎖」繞過而超收
+    { let main = player.cls === 'knight' && player.trialStage === 1 && mob.n === '黑暗妖精將軍' && !player.inv.some(i => i.id === 'item_dantes_letter');
+      let ally = mob.n === '黑暗妖精將軍' && typeof allyStageQuestItemActive === 'function' && allyStageQuestItemActive('item_dantes_letter');
+      if ((main || ally) && Math.random() < partyDropRate(0.01)) { let got = grantPartyStageQuestDrop('item_dantes_letter', main); if (got.main || got.allies.length) logSys(`<span class="text-amber-300 font-bold">✦ ${partyQuestDropSubject(got)}取得了 丹特斯的召書。</span>`); } }
+    { let main = player.cls === 'elf' && player.trialStage === 1 && mob.n === '巨大兵蟻' && !player.inv.some(i => i.id === 'item_ancient_book');
+      let ally = mob.n === '巨大兵蟻' && typeof allyStageQuestItemActive === 'function' && allyStageQuestItemActive('item_ancient_book');
+      if ((main || ally) && Math.random() < partyDropRate(0.01)) { let got = grantPartyStageQuestDrop('item_ancient_book', main); if (got.main || got.allies.length) logSys(`<span class="text-amber-300 font-bold">✦ ${partyQuestDropSubject(got)}取得了 古代黑妖之秘笈。</span>`); } }
+    { let main = player.cls === 'dark' && player.trialStage === 1 && mob.n === '黑暗棲林者' && !player.inv.some(i => i.id === 'item_chaos_key');
+      let ally = mob.n === '黑暗棲林者' && typeof allyStageQuestItemActive === 'function' && allyStageQuestItemActive('item_chaos_key');
+      if ((main || ally) && Math.random() < partyDropRate(0.01)) { let got = grantPartyStageQuestDrop('item_chaos_key', main); if (got.main || got.allies.length) logSys(`<span class="text-amber-300 font-bold">✦ ${partyQuestDropSubject(got)}取得了 混沌鑰匙。</span>`); } }
+    { let main = player.cls === 'royal' && player.trialStage === 1 && mob.n === '小惡魔' && !player.inv.some(i => i.id === 'item_royal_order');
+      let ally = mob.n === '小惡魔' && typeof allyStageQuestItemActive === 'function' && allyStageQuestItemActive('item_royal_order');
+      if ((main || ally) && Math.random() < partyDropRate(0.01)) { let got = grantPartyStageQuestDrop('item_royal_order', main); if (got.main || got.allies.length) logSys(`<span class="text-amber-300 font-bold">✦ ${partyQuestDropSubject(got)}取得了 調職命令書。</span>`); } }   // 👑 王族 50 級試煉（唯一，不受經典掉率影響，與其他職業一致）
+    { let main = player.cls === 'knight' && player.trialStage === 2 && mapState.current === 'elf_grave' && (player.inv || []).reduce((s, i) => s + (i.id === 'item_elf_whisper' ? (i.cnt || 0) : 0), 0) < 10;
+      let ally = mapState.current === 'elf_grave' && typeof allyStageQuestItemActive === 'function' && allyStageQuestItemActive('item_elf_whisper');
+      if ((main || ally) && Math.random() < partyDropRate(0.01)) { let got = grantPartyStageQuestDrop('item_elf_whisper', main); if (got.main || got.allies.length) logSys(`<span class="text-amber-300 font-bold">✦ ${partyQuestDropSubject(got)}拾起了 精靈的私語。</span>`); } }   // 已持有 10 個則不再掉落（含鎖定件）
     if (mob.n === '魔族暗殺團') {
-        if (player.cls === 'elf' && player.trialStage === 2 && !player.inv.some(i => i.id === 'item_sealed_intel')) { gainItem('item_sealed_intel', 1); logSys('<span class="text-amber-300 font-bold">✦ 你從魔族暗殺團身上取得了 密封的情報書。</span>'); }
-        if (player.cls === 'mage' && player.trialStage === 1 && !player.inv.some(i => i.id === 'item_spy_report')) { gainItem('item_spy_report', 1); logSys('<span class="text-amber-300 font-bold">✦ 你從魔族暗殺團身上取得了 間諜報告書。</span>'); }
+        { let main = player.cls === 'elf' && player.trialStage === 2 && !player.inv.some(i => i.id === 'item_sealed_intel'); let ally = typeof allyStageQuestItemActive === 'function' && allyStageQuestItemActive('item_sealed_intel'); if (main || ally) { let got = grantPartyStageQuestDrop('item_sealed_intel', main); if (got.main || got.allies.length) logSys(`<span class="text-amber-300 font-bold">✦ ${partyQuestDropSubject(got)}從魔族暗殺團身上取得了 密封的情報書。</span>`); } }
+        { let main = player.cls === 'mage' && player.trialStage === 1 && !player.inv.some(i => i.id === 'item_spy_report'); let ally = typeof allyStageQuestItemActive === 'function' && allyStageQuestItemActive('item_spy_report'); if (main || ally) { let got = grantPartyStageQuestDrop('item_spy_report', main); if (got.main || got.allies.length) logSys(`<span class="text-amber-300 font-bold">✦ ${partyQuestDropSubject(got)}從魔族暗殺團身上取得了 間諜報告書。</span>`); } }
     }
 
     // === 🔥 炎魔友好度（隱藏值）：於魔族神殿擊殺任意敵人 +1（用於解鎖炎魔謁見所；需先完成 50 級試煉才能進入魔族神殿） ===
@@ -455,7 +496,7 @@ function killMob(idx) {
         let ratePct = entry[1];               // 機率(%)
         if(!DB.items[itemId]) return;          // 該物品不存在於資料庫則略過
         if(trialDropBlocked(itemId)) return;   // 🔒 試煉兌換道具：僅本職擊殺才掉＋🔥 v3.0.78 須已接取對應試煉且未達需求數量
-        if (typeof trialForced100 === 'function' && trialForced100(itemId)) { gainItem(itemId, 1); return; }   // 🔥 接取制試煉道具：通過閘門後 100% 掉落
+        if (typeof trialForced100 === 'function' && trialForced100(itemId)) { grantPartyTrialQuestDrop(itemId, 1); return; }   // 🔥 接取制試煉道具：通過閘門後 100% 掉落
         let _clMult = (mob.n === '卡瑞' && itemId === 'wpn_dragonslayer') ? 1 : trialItemDropMult(itemId);   // 🔧 v2.6.75 卡瑞·屠龍劍固定 100%（獎勵已綁「擊殺消耗四任務道具」的成本）；trialItemDropMult 現恆 1
         let _relicX2 = (DB.items[itemId].relic && typeof mainPlayerHasEquippedEffect === 'function' && mainPlayerHasEquippedEffect('relicDropX2')) ? 2 : 1;   // 幸運暴走兔腳只讀主操作玩家裝備
         if(Math.random() < partyDropRate((ratePct * _dropBase * _clMult * _relicX2) / 100)) gainItem(itemId, 1);
@@ -474,7 +515,10 @@ function killMob(idx) {
 
     // === 🔧 黑魔石掉落（黑暗妖精素材）：沉默洞穴周邊固定掉落（提煉魔石提高）；其餘野外/地監需學提煉魔石才掉（攻城區不掉）===
     {
-        let _refine = player.skills.includes('sk_dark_refine');   // 提煉魔石（被動）
+        // 隊伍被動：在場且未倒地的黑暗妖精傭兵學會提煉魔石時，隊長同樣取得黑魔石掉落效果。
+        let _refine = player.skills.includes('sk_dark_refine')
+            || (player.allies || []).some(a => a && !a._downed && (a.curHp || 0) > 0
+                && a.cls === 'dark' && a.skills && a.skills.includes('sk_dark_refine'));
         let _cdm = classicDropMult();   // 恆 1（經典與一般同掉率）；保留呼叫與其他掉落點同管線
         if (mapState.current === 'silent_outer') {
             if (Math.random() < partyDropRate((_refine ? 0.30 : 0.20) * _cdm)) gainItem('mat_blackstone2', 1);
@@ -492,7 +536,7 @@ function killMob(idx) {
         if (!_kbNoReward && _or && Math.random() < partyDropRate(_or / 100 * classicDropMult())) gainItem('mat_silverore', 1);   // 🗝️ 軍王之室小怪零產出
     }
     // === 🏛️ 聖地遺物掉落：持有死亡騎士之印記、於拉斯塔巴德區域擊敗任何怪物，0.1% 機率獲得（製作長老之室武器秘笈用） ===
-    if (!_kbNoReward && player.inv.some(i => i.id === 'item_dk_insignia') && typeof mapRegionOf === 'function' && mapRegionOf(mapState.current) === 'rastabad') {   // 🗝️ 軍王之室屬 rastabad 地區→小怪必須排除，否則成為無限刷聖地遺物點
+    if (!_kbNoReward && typeof mapRegionOf === 'function' && mapRegionOf(mapState.current) === 'rastabad' && player.inv.some(i => i.id === 'item_dk_insignia')) {   // 🗝️ 軍王之室屬 rastabad 地區→小怪必須排除，否則成為無限刷聖地遺物點
         if (Math.random() < partyDropRate(0.001 * classicDropMult())) gainItem('mat_holy_relic', 1);
     }
     // === 🔧 黑暗妖精武器掉落 ===
@@ -504,12 +548,12 @@ function killMob(idx) {
     // === 🐉 龍騎士掉落（任務道具／書板／鎖鏈劍）：僅龍騎士主玩家擊殺時判定 ===
     { let _drd = (typeof DRAGON_DROPS !== 'undefined') ? DRAGON_DROPS[mob.n] : null;   // 🐉 龍騎士掉落表改為全職可掉（書板/鎖鏈劍·就算不能裝備也掉）；妖魔搜索文件等試煉道具由 trialDropBlocked 限定 dragon＋接取制
       if (_drd && !_kbNoReward) _drd.forEach(e => { if (!DB.items[e[0]] || trialDropBlocked(e[0])) return;
-          if (typeof trialForced100 === 'function' && trialForced100(e[0])) { gainItem(e[0], 1); return; }   // 🔥 v3.0.78 接取制試煉道具：100% 掉落
+          if (typeof trialForced100 === 'function' && trialForced100(e[0])) { grantPartyTrialQuestDrop(e[0], 1); return; }   // 🔥 v3.0.78 接取制試煉道具：100% 掉落
           if (Math.random() < (e[1] * _dropBase * partyDropMult() * trialItemDropMult(e[0])) / 100) gainItem(e[0], 1); }); }   // 🐉 龍騎士試煉道具（trialItemDropMult 恆 1）
     // === ⚔️ 戰士技能印記掉落（全職可掉·僅戰士可學）===
     { let _wrd = (typeof WARRIOR_DROPS !== 'undefined') ? WARRIOR_DROPS[mob.n] : null;
       if (_wrd && !_kbNoReward) _wrd.forEach(e => { if (!DB.items[e[0]] || trialDropBlocked(e[0])) return;   // 🔥 v3.0.78 戰士試煉道具（若列於此表）同樣吃接取制閘門
-          if (typeof trialForced100 === 'function' && trialForced100(e[0])) { gainItem(e[0], 1); return; }
+          if (typeof trialForced100 === 'function' && trialForced100(e[0])) { grantPartyTrialQuestDrop(e[0], 1); return; }
           if (Math.random() < (e[1] * _dropMult) / 100) gainItem(e[0], 1); }); }
     // 🔮 記憶水晶掉落（幻術士法術書·全職可掉，獨立 roll·與 MOB_DROPS 並存）
     { let _memd = (typeof MEM_DROPS !== 'undefined') ? MEM_DROPS[mob.n] : null;
@@ -665,7 +709,7 @@ function prideTeleportBlocked() {
 function enterPrideFloor(n) {
     if (typeof mercenaryRoleBattleBlocked === 'function' && mercenaryRoleBattleBlocked('pride_f' + n)) return false;
     saveSiegeBossHp();
-    if (typeof window.__afkMobileMemoryLifecycle === 'function') window.__afkMobileMemoryLifecycle('map-change');   // 🔌 直接進圖也必須釋放上一層圖片
+    if (typeof window.__afkMobileMemoryLifecycle === 'function') window.__afkMobileMemoryLifecycle('map-change');   // 🔌 直接進圖也必須釋放上一張圖片
     mapState.current = 'pride_f' + n;
     player.lastBattleMap = mapState.current;   // 🗼 記錄攀登位置：回村後點「出發」會被導回傲慢之塔1樓（見 departToLastBattle）
     state.prideFloor = n;
@@ -785,40 +829,87 @@ function startOblivion() {
 }
 // ======================= 🐉 侵蝕的安塔瑞斯巢穴（v3.7.57 副本）=======================
 // 由威頓村 NPC 多魯嘉貝爾進入；4 區推進（入口→通道→深處→棲息地），擊敗各區頭目自動深入，
-// 擊敗「被侵蝕的瘋狂安塔瑞斯」通關→自動回威頓村。相同模式所有角色合計每日通關 1 次（UTC+8 凌晨 12 點重置·失敗/離開不耗次數）。
+// 擊敗「被侵蝕的瘋狂安塔瑞斯」通關→自動回威頓村。每個角色每日可通關 1 次；擔任主戰或實際出戰傭兵都會消耗該角色次數（UTC+8 凌晨 12 點重置·失敗/離開不耗次數）。
 // 狀態存於 state.antharas（1~4·不存檔＝重載回村視同失敗）；區內禁傳送術/瞬移卷軸（js/07/08）；進場複用 enterOblivionMap（泛用戰鬥進場）。
 const ANTHARAS_AREAS = ['antharas_nest_1', 'antharas_nest_2', 'antharas_nest_3', 'antharas_lair'];
 const ANTHARAS_AREA_NAMES = { antharas_nest_1: '侵蝕的安塔瑞斯巢穴入口', antharas_nest_2: '侵蝕的安塔瑞斯巢穴通道', antharas_nest_3: '侵蝕的安塔瑞斯巢穴深處', antharas_lair: '侵蝕的安塔瑞斯棲息地' };
 const ANTHARAS_AREA_BOSS = { antharas_nest_1: 'ant_kama_flame_king', antharas_nest_2: 'ant_kama_nan_king', antharas_nest_3: 'ant_kama_king', antharas_lair: 'ant_antharas_eroded' };
+const ANTHARAS_ROLE_DAY_KEY = 'fb5_antharas_role_clear_day_v2_';
 function antharasDayKey() { return Math.floor((Date.now() + 8 * 3600000) / 86400000); }   // 🕛 UTC+8 日鍵（凌晨 12 點翻日）
-function antharasModeClearKey() { return 'fb5_antharas_clear_day_v1_' + (player && player.classicMode ? 'classic' : 'normal'); }
-function antharasSharedClearDay() {
-    let today = antharasDayKey();
-    let shared = Math.max(0, Math.floor(Number(_lsGet(antharasModeClearKey())) || 0));
-    if (shared === today) return shared;
-    // 相容 v3.7.61：任一同模式舊角色今天已通關，就遷移成模式共用日鍵。
-    for (let n = 1; n <= SAVE_SLOT_MAX; n++) {
-        try {
-            let u = _saveUnwrap(_lzGet('lineage_idle_save_' + n));
-            if (!u || !u.ok || !u.payload) continue;
-            let d = JSON.parse(u.payload), p = d && d.p;
-            if (p && p.cls && !!p.classicMode === !!player.classicMode && Number(p.antharasClearDay) === today) {
-                _lsSet(antharasModeClearKey(), String(today));
-                return today;
-            }
-        } catch (e) {}
-    }
-    return shared;
+function antharasRoleRef(role, slotN) {
+    if (!role || !role.cls) return null;
+    let slot = String(slotN == null ? '' : slotN);
+    let seed = String(role.enSeed || '').trim();
+    let identity = seed
+        ? 'seed|' + seed
+        : ['legacy', slot, role.name || '', role.cls || ''].join('|');
+    return {
+        role: role,
+        slot: slot,
+        name: role.name || role._allyName || ('存檔 ' + (slot || '?')),
+        identity: identity,
+        classicMode: !!role.classicMode,
+        savedDay: Math.max(0, Math.floor(Number(role.antharasClearDay) || 0))
+    };
 }
-function antharasClearedToday() { return antharasSharedClearDay() === antharasDayKey(); }
-function antharasMarkDailyClear() {
+function antharasRoleClearKey(ref) {
+    return ANTHARAS_ROLE_DAY_KEY + (ref.classicMode ? 'classic_' : 'normal_') + encodeURIComponent(ref.identity);
+}
+function antharasRoleClearDay(ref) {
+    if (!ref) return 0;
+    let sharedDay = Math.max(0, Math.floor(Number(_lsGet(antharasRoleClearKey(ref))) || 0));
+    return Math.max(ref.savedDay, sharedDay);
+}
+function antharasForgetRoleClear(role, slotN) {
+    let ref = antharasRoleRef(role, slotN);
+    if (!ref) return;
+    _lsRemove(antharasRoleClearKey(ref));
+}
+function antharasPartyParticipants() {
+    let refs = [], seen = new Set();
+    let add = (role, slotN) => {
+        let ref = antharasRoleRef(role, slotN);
+        if (!ref || seen.has(ref.identity)) return;
+        seen.add(ref.identity); refs.push(ref);
+    };
+    add(player, currentSlot);
+    (player.allies || []).forEach(a => { if (a && a._slot != null) add(a, a._slot); });
+    return refs;
+}
+function antharasPartyUsedToday() {
     let today = antharasDayKey();
-    player.antharasClearDay = today;   // 保留角色欄位供舊版／匯出檔向下相容
-    return _lsSet(antharasModeClearKey(), String(today)) ? today : 0;
+    return antharasPartyParticipants().filter(ref => antharasRoleClearDay(ref) === today);
+}
+function antharasClearedToday() {
+    let ref = antharasRoleRef(player, currentSlot);
+    let cleared = antharasRoleClearDay(ref) === antharasDayKey();
+    if (cleared && Number(player.antharasClearDay) !== antharasDayKey()) player.antharasClearDay = antharasDayKey();
+    return cleared;
 }
 function antharasClaimDailyClear() {
-    if (antharasClearedToday()) return false;
-    return antharasMarkDailyClear() === antharasDayKey();
+    let today = antharasDayKey();
+    let refs = antharasPartyParticipants();
+    let used = refs.filter(ref => antharasRoleClearDay(ref) === today);
+    if (used.length) return { ok: false, names: used.map(ref => ref.name), storageError: false };
+
+    let written = [];
+    for (let ref of refs) {
+        let key = antharasRoleClearKey(ref);
+        let oldValue = _lsGet(key);
+        if (!_lsSet(key, String(today))) {
+            written.reverse().forEach(rec => {
+                try {
+                    if (rec.oldValue == null) _lsRemove(rec.key);
+                    else _lsSet(rec.key, rec.oldValue);
+                } catch (e) {}
+            });
+            return { ok: false, names: [], storageError: true };
+        }
+        written.push({ key: key, oldValue: oldValue });
+    }
+    refs.forEach(ref => { ref.role.antharasClearDay = today; });
+    player.antharasClearDay = today;   // 保留角色欄位，讓匯出與舊版仍能辨識主戰角色的通關日。
+    return { ok: true, names: refs.map(ref => ref.name), storageError: false };
 }
 function antharasEnter() {   // NPC 多魯嘉貝爾「進入副本」：守衛＝已在副本/控場中/每日已通關
     if (state.antharas) { logSys('你已身在侵蝕的安塔瑞斯巢穴之中。'); return; }
@@ -826,7 +917,11 @@ function antharasEnter() {   // NPC 多魯嘉貝爾「進入副本」：守衛�
     if (player.statuses && (player.statuses.stone > 0 || player.statuses.paralyze > 0 || player.statuses.freeze > 0 || player.statuses.stun > 0 || player.statuses.sleep > 0)) {
         logSys('你目前無法行動（石化／麻痺／冰凍／暈眩），無法進入。'); return;
     }
-    if (antharasClearedToday()) { logSys('<span class="text-amber-300">相同模式今天已有角色淨化過侵蝕的安塔瑞斯巢穴（UTC+8 凌晨 12 點重置），明天再來吧。</span>'); return; }
+    let used = antharasPartyUsedToday();
+    if (used.length) {
+        logSys(`<span class="text-amber-300">隊伍中的 ${used.map(ref => ref.name).join('、')} 今日已通關；請更換或解散已使用次數的傭兵後再進入（UTC+8 凌晨 12 點重置）。</span>`);
+        return;
+    }
     state.antharas = 1; state._antAdvance = false;
     logSys('<span class="text-amber-300 font-bold">🐉 你踏入了侵蝕的安塔瑞斯巢穴……</span><span class="text-amber-200"> 區內無法選擇地圖，也無法使用傳送術與瞬間移動卷軸；擊敗各區頭目將自動深入。</span>');
     enterOblivionMap('antharas_nest_1');
@@ -836,9 +931,8 @@ function antharasEnter() {   // NPC 多魯嘉貝爾「進入副本」：守衛�
 function antharasOnBossKill(bossName) {   // 清算時呼叫：最終階＝通關回村；其餘＝推進下一區
     if (!state.antharas) return;
     if (bossName === '被侵蝕的瘋狂安塔瑞斯') {
-        antharasMarkDailyClear();   // ✅ 通關才寫入相同模式共用日鍵（失敗/中離不記）
         state.antharas = 0; state._antAdvance = false;
-        logSys('<span class="text-amber-300 font-bold">🏆 你擊敗了被侵蝕的瘋狂安塔瑞斯，淨化了巢穴！</span>自動返回威頓村。');
+        logSys('<span class="text-amber-300 font-bold">🏆 你擊敗了被侵蝕的瘋狂安塔瑞斯，淨化了巢穴！</span>主戰角色與本次出戰傭兵的今日通關次數均已消耗，自動返回威頓村。');
         setMapSelectors('town_witon'); changeMap(true);
         if (!state.ff) saveGame();
         return;
@@ -910,7 +1004,8 @@ function antharasRefreshHelpers() {   // 每次對話重讀來源存檔；刪角
 }
 function renderDorugaBell(div) {   // 🐉 NPC 多魯嘉貝爾：進入副本＋助戰者設定
     antharasRefreshHelpers();
-    let cleared = antharasClearedToday();
+    let usedToday = antharasPartyUsedToday();
+    let cleared = usedToday.length > 0;
     let hired = (player.allies || []).filter(Boolean).map(a => String(a._slot));
     let used = antharasHelperSlots();
     let avail = (typeof allySlotList === 'function' ? allySlotList() : []).filter(s => !hired.includes(String(s)) && !used.includes(String(s)) && _antReadSlotStats(s));
@@ -923,8 +1018,9 @@ function renderDorugaBell(div) {   // 🐉 NPC 多魯嘉貝爾：進入副本＋
     }).join('');
     div.innerHTML = `
       <div class="text-sm space-y-3">
-        <div class="text-slate-300">被侵蝕的龍之巢穴就在村外的地底深處。相同模式所有角色合計每天只能淨化一次（UTC+8 凌晨 12 點重置）；挑戰失敗不消耗次數。區內無法選擇地圖，也無法使用傳送術與瞬間移動卷軸。</div>
-        <button onclick="antharasEnter()" ${cleared ? 'disabled' : ''} class="btn w-full font-bold py-2 rounded ${cleared ? 'bg-slate-700 border-slate-600 opacity-60 cursor-not-allowed' : 'bg-amber-700 hover:bg-amber-600 border-amber-500'}">${cleared ? '今日已通關（明日凌晨重置）' : '🐉 進入 侵蝕的安塔瑞斯巢穴'}</button>
+        <div class="text-slate-300">被侵蝕的龍之巢穴就在村外的地底深處。每個角色每天可擔任主戰或傭兵通關一次；成功時主戰與所有出戰傭兵都會消耗今日次數（UTC+8 凌晨 12 點重置），挑戰失敗不消耗。區內無法選擇地圖，也無法使用傳送術與瞬間移動卷軸。</div>
+        ${cleared ? `<div class="text-xs text-amber-300">今日已使用次數：${usedToday.map(ref => ref.name).join('、')}</div>` : ''}
+        <button onclick="antharasEnter()" ${cleared ? 'disabled' : ''} class="btn w-full font-bold py-2 rounded ${cleared ? 'bg-slate-700 border-slate-600 opacity-60 cursor-not-allowed' : 'bg-amber-700 hover:bg-amber-600 border-amber-500'}">${cleared ? '隊伍有角色今日已通關' : '🐉 進入 侵蝕的安塔瑞斯巢穴'}</button>
         <div class="border-t border-slate-700 pt-2"><div class="font-bold text-amber-300 mb-2">助戰者設定（最多 4 位·未雇傭角色）</div><div class="text-xs text-slate-400 mb-2">每次對話都會依來源角色的最新存檔刷新助戰能力；若角色遭刪除或在同一存檔位重建，將自動解除。助戰限制只套用目前角色的傭兵名單，不影響同模式其他角色。</div>${rows}</div>
       </div>`;
 }

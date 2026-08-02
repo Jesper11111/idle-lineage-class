@@ -143,7 +143,7 @@ function _preloadDeathFx(name, n) {
     _deathFxCache[name] = arr;
     return arr;
 }
-// ⚡ 在目標怪身上疊播一輪法術特效。skn=技能顯示名（須在 SPELL_FX 註冊·未註冊者靜默略過）。
+// ⚡ 在目標怪身上疊播一輪法術特效。skn=技能顯示名（須在 SPELL_FX 註冊·未註冊者靜默略過）；caster 可傳傭兵以決定方向與投射物起點。
 //    v2.7.16：立即渲染（不再等 first.load）＋ _spellFxActive[技能名|uid] 去重（修「一次顯示兩個／忽多忽少」）。
 //    v2.7.18：支援 shadowPrefix→特效自身影子層（疊在特效下·同畫布同步·如地裂術地面裂痕）；targetVc→地面型錨點下移。
 // 🚀 v3.2.65 一次性戰鬥特效總閘：關特效(__vfxOff) 或 背景補跑期間(state.ff) 皆略過生成——避免切分頁/縮小回來時，
@@ -218,11 +218,11 @@ function playSpellFx(skn, mob, caster) {
         };
         let _applyGeom = (elm) => { if (elm) { elm.style.width = fxW + 'px'; elm.style.height = fxH + 'px'; elm.style.left = left; elm.style.top = top; } };
         // 🎯 v3.0.5 投射物「飛行」：proj 型特效由施法者飛向目標命中點(ax,ay)·途中循環播放幀·抵達即消失(取代原地疊播·符合「取代丟出去的投射物」)。
-        //    v3.0.49 施法者＝玩家變身 sprite 顯示中→sprite 胸口(_pmCasterRect)·否則戰鬥區底部中央。
+        //    施法者優先用傳入的隊伍成員 sprite；未傳時才以玩家變身 sprite／戰鬥區底部中央為起點。
         if (cfg.proj) {
             let bv = document.getElementById('battle-view');
             let br = bv && bv.getBoundingClientRect();
-            let pr = (caster && typeof _partyMemberRect === 'function') ? _partyMemberRect(caster) : ((typeof _pmCasterRect === 'function') ? _pmCasterRect() : null);   // 傭兵施法時由傭兵 sprite 發射；未傳施法者時維持玩家座標
+            let pr = (caster && typeof _partyMemberRect === 'function') ? _partyMemberRect(caster) : ((typeof _pmCasterRect === 'function') ? _pmCasterRect() : null);
             let ox = pr ? (pr.left + pr.width * 0.5) : (br ? (br.left + br.width * 0.5) : ax);                       // 施法者水平＝變身 sprite 中央·退回戰鬥區中央
             let oy = pr ? (pr.top + pr.height * 0.35) : (br ? (br.top + br.height * 0.98) : (ay + (fxH || 40) * 3));  // 施法者垂直＝sprite 胸口·退回戰鬥區底部(玩家視角)
             let axf = (cfg.ax != null ? cfg.ax : 0.5), ayf = (cfg.ay != null ? cfg.ay : 0.5);   // 投射物錨點(哪一點沿路徑走)

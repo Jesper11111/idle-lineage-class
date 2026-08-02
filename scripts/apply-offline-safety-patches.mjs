@@ -25,6 +25,7 @@ const OFFLINE_BOSSRING_MARKER = '// 🔒 Jesper offline boss hunt settlement bri
 const OLD_CRAZY_BOSS_CACHE_MARKER = '// 🔒 Jesper Crazy Sherine Boss cache safety v1';
 const CRAZY_BOSS_CACHE_MARKER = '// 🔒 Jesper Crazy Sherine Boss event cache v2';
 const RIFT_OFFLINE_MARKER = '// 🔒 Jesper rift offline journey v1';
+const AUTOSELL_POLICY_CHAIN_MARKER = '// 🔒 Jesper junk autosell policy chain v1';
 
 function replaceOne(src, from, to, file, label) {
   const at = src.indexOf(from);
@@ -614,13 +615,19 @@ function patchRiftOffline(src) {
     OFFLINE_FILE,
     '裂痕旅程載入後結算'
   );
-  src = replaceOne(
-    src,
-    "  // 入口提示(時空裂痕/排名攀登不支援離線)已直接寫進核心 renderRiftEntrance(js/05)/renderPrideEntrance(js/11),不再包 wrapper 注入。",
-    "  // 裂痕入口由本外掛補上「離線戰鬥收益照算、排名與停留獎勵時間不算」提示；排名攀登仍不支援離線。",
-    OFFLINE_FILE,
-    '裂痕入口提示說明'
-  );
+  const riftNote = "  // 裂痕入口由本外掛補上「離線戰鬥收益照算、排名與停留獎勵時間不算」提示；排名攀登仍不支援離線。";
+  if (!src.includes(riftNote)) {
+    const upstreamRiftNotes = [
+      "  // 入口提示(時空裂痕/排名攀登不支援離線)已直接寫進核心 renderRiftEntrance(js/05)/renderPrideEntrance(js/11),不再包 wrapper 注入。",
+      "  // 時空裂痕/排名攀登的入口**沒有**「不支援離線」提示:上游核心(renderRiftEntrance/renderPrideEntrance)自己不寫,\n" +
+      "  //   我方也不包 wrapper 注入 → 玩家只在離線回來時看到 maybeCatchup 那兩段 skipNote。要補提示得另開外掛 wrapper。"
+    ];
+    const matches = upstreamRiftNotes.filter(note => src.includes(note));
+    if (matches.length !== 1) {
+      throw new Error(`[${OFFLINE_FILE}] 「裂痕入口提示說明」錨點數量錯誤：${matches.length}`);
+    }
+    src = replaceOne(src, matches[0], riftNote, OFFLINE_FILE, '裂痕入口提示說明');
+  }
   src = replaceOne(
     src,
     "    version: '2.2.0-jesper-safety',",
@@ -806,8 +813,7 @@ function patchOffline() {
   if (!src.includes(OFFSTATS_MARKER)) {
     src = replaceOne(
       src,
-      "  var _saveSquelch = false;\n  async function runCatchup",
-      "  var _saveSquelch = false;\n" +
+      "  async function runCatchup",
       "  " + OFFSTATS_MARKER + "\n" +
       "  // 快取必須隨真正影響戰力的資料失效。舊簽章只有地圖/等級/裝備 id+強化，會漏掉\n" +
       "  // 配點、自動技能、套裝詞綴、傭兵與寵物；內容更新後甚至可能沿用舊版殺速與 BOSS 結果。\n" +
@@ -1270,19 +1276,24 @@ function patchOffline() {
 
     src = replaceOne(src,
       "OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r2-bossring'",
-      "OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r4-grace-events'",
+      "OFFSTATS_RULESET = 'pp-v3.8.34+shines-v3.8.27-content-r4-grace-events'",
       OFFLINE_FILE, '瘋狂席琳事件快取規則版');
     src = replaceOne(src,
       "  var _saveSquelch = false;\n",
       "  var _saveSquelch = false;\n" +
       "  var _bossTraceKillHook = null, _bossTraceSpawnHook = null;   // 瘋狂席琳 BOSS 真打樣本；線上時皆為 null\n",
       OFFLINE_FILE, 'BOSS 事件追蹤掛點');
+    const bossStateLines = [
+      "    var fastBossUid = null, fastBossName = '', fastBossStart = 0, fastBossMinHp = 1, fastBossKills0 = 0;\n",
+      "    var fastBossUid = null, fastBossName = '', fastBossStart = 0, fastBossMinHp = 1, fastBossKills0 = 0, fastBossOwnKills0 = 0;\n"
+    ];
+    const bossStateMatches = bossStateLines.filter(line => src.includes(line + "    var BOSS_REVERIFY_P = 0.05;"));
+    if (bossStateMatches.length !== 1) {
+      throw new Error(`[${OFFLINE_FILE}] 「瘋狂席琳 BOSS 雙快取與事件重播 helper」錨點數量錯誤：${bossStateMatches.length}`);
+    }
     src = replaceOne(src,
-      "    var fastBossUid = null, fastBossName = '', fastBossStart = 0, fastBossMinHp = 1, fastBossKills0 = 0;\n" +
-      "    var BOSS_REVERIFY_P = 0.05;",
-      "    var fastBossUid = null, fastBossName = '', fastBossStart = 0, fastBossMinHp = 1, fastBossKills0 = 0;\n" +
-      bossEventHelpers + "\n" +
-      "    var BOSS_REVERIFY_P = 0.05;",
+      bossStateMatches[0] + "    var BOSS_REVERIFY_P = 0.05;",
+      bossStateMatches[0] + bossEventHelpers + "\n    var BOSS_REVERIFY_P = 0.05;",
       OFFLINE_FILE, '瘋狂席琳 BOSS 雙快取與事件重播 helper');
 
     src = replaceOne(src,
@@ -1297,9 +1308,18 @@ function patchOffline() {
       "          }\n" +
       "          if (!player.sherineMad && _bs && _bs.safe && Math.random() >= BOSS_REVERIFY_P) {",
       OFFLINE_FILE, '瘋狂席琳 BOSS variant 快取選擇');
-    src = replaceOne(src,
+    const bossTrueStarts = [
       "          fastBossUid = _m0.uid; fastBossName = _m0.n || '?'; fastBossStart = done; fastBossMinHp = 1; fastBossKills0 = tallySum(killTally);   // 記真打起始殺數 → 倒下時算對戰期間清掉的小怪數\n" +
       "          console.info('[AFK] ⚔ 快速結算遇到 BOSS「' + fastBossName + '」(' + (_bs && _bs.safe ? '抽驗' : '首次') + ')→ 切回真模擬對打,倒下後同名 BOSS 才可快轉。');",
+      "          fastBossUid = _m0.uid; fastBossName = _m0.n || '?'; fastBossStart = done; fastBossMinHp = 1; fastBossKills0 = tallySum(killTally);   // 記真打起始殺數 → 倒下時算對戰期間清掉的小怪數\n" +
+      "          fastBossOwnKills0 = killTally[fastBossName] || 0;   // 這「種」BOSS 的起始擊殺數 → 收尾要靠它分辨「真的打死」與「只是不在場上」\n" +
+      "          console.info('[AFK] ⚔ 快速結算遇到 BOSS「' + fastBossName + '」(' + (_bs && _bs.safe ? '抽驗' : '首次') + ')→ 切回真模擬對打,倒下後同名 BOSS 才可快轉。');"
+    ];
+    const bossTrueMatches = bossTrueStarts.filter(block => src.includes(block));
+    if (bossTrueMatches.length !== 1) {
+      throw new Error(`[${OFFLINE_FILE}] 「BOSS 真打 phase 初始化」錨點數量錯誤：${bossTrueMatches.length}`);
+    }
+    src = replaceOne(src, bossTrueMatches[0],
       "          beginBossTrue(_m0, _bossVariant, (_bs && _bs.safe ? '抽驗' : '首次'));",
       OFFLINE_FILE, 'BOSS 真打 phase 初始化');
 
@@ -1322,7 +1342,7 @@ function patchOffline() {
       "              done++; _realSimTicks++;",
       OFFLINE_FILE, 'BOSS 事件重播主迴圈');
 
-    src = replaceOne(src,
+    const bossSettlementSources = [
       "              if (!_bAlive) {   // BOSS 倒下(或場面被重置)→ 記錄實測耗時/安全度,回快速段\n" +
       "                fastBossUid = null;\n" +
       "                var _durB = Math.max(1, done - fastBossStart);\n" +
@@ -1337,6 +1357,34 @@ function patchOffline() {
       "                saveOffStats();   // 💾 新量到的 BOSS 實測 → 更新統計快取(下次同簽章連首打都免)\n" +
       "                console.info('[AFK] ⚔ BOSS「' + fastBossName + '」倒下:實測 ' + Math.round(_durB) + ' 拍、同場小怪 ' + _minorB + ' 隻' + (_safeB ? ',之後同名 BOSS 即殺、時間按實測(移動平均)推進並補回小怪。' : ',對打時血量偏低(' + Math.round(fastBossMinHp * 100) + '%) → 之後每次都真打。'));\n" +
       "              }",
+`              if (!_bAlive) {   // BOSS 離開場上 → 先分辨「真的被打死」還是「只是不在場上」,再決定要不要記統計
+                fastBossUid = null;
+                // 🌀 沒有經 killMob 死掉卻不在場上 = 被瞬移走(tick() 裡的 autoActions 迴避頭目)或場面被重置。
+                //   不可當成「打贏了、而且只花這幾拍、血量沒掉=safe」記進 bossStats —— 那會讓之後同名 BOSS 全部走
+                //   「即殺」路徑,玩家勾的迴避頭目變成「每隻都打死拿掉落」(踩過:3h 離線秒殺 188 隻死亡騎士,
+                //   而且 safe 統計還會存進存檔,隔天連首打都省、整晚照殺)。這種情況不留任何統計,下次照樣先試瞬移。
+                if ((killTally[fastBossName] || 0) <= fastBossOwnKills0) {
+                  console.info('[AFK] ⚔ BOSS「' + fastBossName + '」未被擊殺就離開場上(瞬移逃離/場面重置)→ 不記錄對打統計,下次仍照迴避設定處理。');
+                } else {
+                  var _durB = Math.max(1, done - fastBossStart);
+                  var _safeB = fastBossMinHp >= hpFloorNow();   // 安全線跟取樣共用同一條門檻(隨存活時間降到 0):撐滿 20 分鐘後 BOSS 首遇打得贏就 safe → 秒殺
+                  var _minorB = Math.max(0, (tallySum(killTally) - fastBossKills0) - 1);   // 對戰期間總殺數 − BOSS 本身 1 = 同場被 AOE/傭兵/寵物清掉的小怪數
+                  var _prevB = bossStats[fastBossName];
+                  // 🐲 移動平均:抽驗(已有安全實測)→ 與舊值各半混合;首次/上次不安全 → 直接採用本次。
+                  //   單一樣本的對打耗時變異極大,平均化避免一次幸運/倒楣樣本外推整晚。
+                  bossStats[fastBossName] = (_prevB && _prevB.safe && _safeB)
+                    ? { ticks: (_prevB.ticks + _durB) / 2, safe: true, minor: Math.round(((_prevB.minor || 0) + _minorB) / 2) }
+                    : { ticks: _durB, safe: _safeB, minor: _minorB };
+                  saveOffStats();   // 💾 新量到的 BOSS 實測 → 更新統計快取(下次同簽章連首打都免)
+                  console.info('[AFK] ⚔ BOSS「' + fastBossName + '」倒下:實測 ' + Math.round(_durB) + ' 拍、同場小怪 ' + _minorB + ' 隻' + (_safeB ? ',之後同名 BOSS 即殺、時間按實測(移動平均)推進並補回小怪。' : ',對打時血量偏低(' + Math.round(fastBossMinHp * 100) + '%) → 之後每次都真打。'));
+                }
+              }`
+    ];
+    const bossSettlementMatches = bossSettlementSources.filter(block => src.includes(block));
+    if (bossSettlementMatches.length !== 1) {
+      throw new Error(`[${OFFLINE_FILE}] 「BOSS normal/grace 分槽寫回與擊殺證明」錨點數量錯誤：${bossSettlementMatches.length}`);
+    }
+    src = replaceOne(src, bossSettlementMatches[0],
       "              if (!_bAlive) {   // UID 消失不等於擊殺：只有 killMob hook 證明 _dead 才可寫完整樣本\n" +
       "                var _doneBossName = fastBossName, _doneBossVariant = fastBossVariant;\n" +
       "                var _durB = Math.max(1, done - fastBossStart);\n" +
@@ -1446,6 +1494,34 @@ function patchOffline() {
     );
   }
 
+  const hasOfflineAutoSellThrottle = src.includes('var AUTOSELL_CKPT_TICKS = 3000;');
+  if (hasOfflineAutoSellThrottle && !src.includes(AUTOSELL_POLICY_CHAIN_MARKER)) {
+    src = replaceOne(
+      src,
+      "      };\n" +
+      "      // 收尾用:重設節流後跑一次「正常」自動賣(仍會先套規則、仍吃規則的延遲秒數;不是玩家的一鍵賣)",
+      "      };\n" +
+      "      " + AUTOSELL_POLICY_CHAIN_MARKER + "\n" +
+      "      // PP 的五分鐘離線節流包在本站政策外層；把契約標記傳到最外層，供啟動檢查確認整條 wrapper chain 仍在。\n" +
+      "      window.autoSellJunk.__afkJunkAutosellPolicy = !!(_asj && _asj.__afkJunkAutosellPolicy);\n" +
+      "      // 收尾用:重設節流後跑一次「正常」自動賣(仍會先套規則、仍吃規則的延遲秒數;不是玩家的一鍵賣)",
+      OFFLINE_FILE,
+      '離線自動販賣政策 wrapper chain'
+    );
+  }
+
+  // 已套過舊核心的工作樹只需提升快取規則版；完整簽章另含 GAME_VERSION，
+  // 這裡仍明確換版，避免除錯介面誤報並強制丟棄 v3.8.5 的取樣結果。
+  if (src.includes("OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r4-grace-events'")) {
+    src = replaceOne(
+      src,
+      "OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r4-grace-events'",
+      "OFFSTATS_RULESET = 'pp-v3.8.34+shines-v3.8.27-content-r4-grace-events'",
+      OFFLINE_FILE,
+      'PP v3.8.34 離線快取規則版'
+    );
+  }
+
   const required = [
     MARKER,
     RIFT_OFFLINE_MARKER,
@@ -1454,7 +1530,7 @@ function patchOffline() {
     OFFLINE_BOSSRING_MARKER,
     CRAZY_BOSS_CACHE_MARKER,
     "OFFSTATS_SCHEMA = 2",
-    "OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r4-grace-events'",
+    "OFFSTATS_RULESET = 'pp-v3.8.34+shines-v3.8.27-content-r4-grace-events'",
     "return 'v5|' + offStatsHash",
     'bossring:offlineBossHuntSignature()',
     "if (k === 'scroll_teleport' && offlineBossHuntActive()) continue",
@@ -1489,6 +1565,7 @@ function patchOffline() {
     "hKind = 'rift'",
     "riftSnapshot: riftSnapshot"
   ];
+  if (hasOfflineAutoSellThrottle) required.push(AUTOSELL_POLICY_CHAIN_MARKER);
   const missing = required.filter(x => !src.includes(x));
   if (missing.length) throw new Error(`[${OFFLINE_FILE}] 安全補丁驗證失敗：${missing.join(' | ')}`);
   const forbidden = [

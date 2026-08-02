@@ -324,8 +324,6 @@
   // ---- 入口：自動化面板「🔌 外掛」列，木人場按鈕下方 ----------------------
   function injectAutoNav() {
     var panel = document.getElementById('tab-automation');
-    var scroll = panel;
-    if (!panel) { panel = document.getElementById('automation-panel'); scroll = panel && (panel.querySelector('.overflow-y-auto') || panel); }
     if (!panel) return false;
     if (document.getElementById('m-afk-nav-junkmgr')) return true;
     var row = document.getElementById('m-afk-navrow');
@@ -335,7 +333,7 @@
       row.className = 'bg-slate-800 p-3 rounded-lg border border-slate-700';
       row.innerHTML = '<div class="text-sm text-amber-400 mb-2 border-b border-slate-700 pb-1 font-bold">🔌 外掛</div>' +
         '<div id="m-afk-navrow-btns" style="display:flex;gap:8px;flex-wrap:wrap;"></div>';
-      scroll.appendChild(row);
+      panel.appendChild(row);
     }
     var b = document.createElement('button');
     b.id = 'm-afk-nav-junkmgr'; b.type = 'button';
@@ -397,7 +395,7 @@
     (function tryInject() {
       if (injectAutoNav()) return;
       if (++tries < 40) setTimeout(tryInject, 500);
-      else console.warn('[AFK-junkmgr] 找不到 automation-panel，入口未注入');
+      else console.warn('[AFK-junkmgr] 找不到 tab-automation，入口未注入');
     })();
   }
 

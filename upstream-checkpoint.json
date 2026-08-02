@@ -1,9 +1,9 @@
 {
   "upstreamRepo": "https://github.com/pp771007/idle-lineage-class.git",
   "localClone": "D:/otherPersonRepos/idle-lineage-class",
-  "syncedUpstreamCommit": "b0e9f3bb76a0606ccb892f19267116a7e5e51b28",
-  "syncedAt": "2026-07-25 20:38 (UTC+8)",
-  "note": "由 sync-upstream.mjs 自動更新；新版基準=pp771007/main，PP 內含原版 v3.8.5。同步後固定套用 Jesper 舊傭兵獎勵政策、回城免費更新快照、離線安全政策、妖精傭兵不受目前屬性限制與全裝置隱藏來源橫幅。",
+  "syncedUpstreamCommit": "29710407e2f07e0537b34e67dc7f375ad48327a4",
+  "syncedAt": "2026-08-02 23:06 (UTC+8)",
+  "note": "由 sync-upstream.mjs 自動更新；新版基準=pp771007/main，PP 內含原版 v3.8.34。同步後固定套用 Jesper 舊傭兵獎勵政策、回城免費更新快照、離線安全政策、廢品標記／自動販賣安全政策、妖精傭兵不受目前屬性限制與全裝置隱藏來源橫幅。",
   "saveIo": {
     "note": "存檔 I/O 保留 PP 原始與本站補丁後兩套 sha(見 scripts/check-save-io.mjs)，同步前後分開把關。",
     "reviewedAt": "2026-07-27 23:07 (UTC+8)",

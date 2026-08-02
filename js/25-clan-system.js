@@ -38,6 +38,8 @@ const NPC_CLAN_MUTUAL_WILD_CHANCE = 0.03;
 const NPC_CLAN_DEFAULT_MEMBER_CHANCE = 0.50;
 const NPC_CLAN_MERCY_MIN_MS = 10 * 60 * 1000;
 const NPC_CLAN_MERCY_MAX_MS = 30 * 60 * 1000;
+const NPC_CLAN_PRIVATE_DIPLOMACY_COOLDOWN_MS = 5 * 60 * 1000;
+const NPC_CLAN_GROUP_ESCAPE_MORALE = 50;
 const NPC_CLAN_NAME_STEMS = [
     '亞丁','奇岩','海音','風木','肯特','銀騎士','古魯丁','傲塔','龍谷','火龍窟',
     '月光','星塵','蒼炎','緋月','極夜','黎明','黃昏','神域','王者','戰神',
@@ -290,6 +292,7 @@ function _npcClanNormalizeEntry(raw, legacyCombinedWar) {
         war:playerWar,
         warStartedAt:warStartedAt,
         counterWarChance:counterWarChance,
+        privateDiplomacyAt:Math.max(0, Math.floor(Number(raw.privateDiplomacyAt) || 0)),
         mercyUsed:!!raw.mercyUsed,
         mercy:mercy,
         leader:_npcClanNormalizeLeader(raw.leader),
@@ -502,6 +505,7 @@ function _npcClanCreateOne(world, mode) {
         war:false,
         warStartedAt:0,
         counterWarChance:0,
+        privateDiplomacyAt:0,
         mercyUsed:false,
         mercy:null,
         leader:leader,
@@ -638,6 +642,27 @@ function _npcClanById(world, clanId) {
 
 function npcClanGetById(clanId, p) {
     return _npcClanById(npcClanGetWorld(p || player), clanId);
+}
+
+function npcClanSocialRoster(p) {
+    let world = npcClanGetWorld(p || player);
+    if (!world || !world.memberships) return [];
+    return Object.keys(world.memberships).map(name => {
+        let rec = world.memberships[name];
+        if (!rec) return null;
+        let clan = rec.clanId ? _npcClanById(world, rec.clanId) : null;
+        return {
+            n:String(name).slice(0, 24),
+            avatar:rec.avatar || '男戰士',
+            alignmentValue:rec.alignmentValue,
+            levelOffset:rec.levelOffset,
+            clanId:clan ? clan.id : null,
+            clanName:clan ? clan.name : '',
+            clanLeader:!!(clan && rec.leader),
+            clanConflict:!!(clan && (clan.hostile || clan.war)),
+            assignedAt:Math.max(0, Number(rec.assignedAt) || 0)
+        };
+    }).filter(Boolean);
 }
 
 function _npcClanWarRemainingMs(clan, now) {
@@ -798,6 +823,107 @@ function npcClanAdjustHatred(clanId, delta, p) {
         let before = clan.hatred;
         _npcClanApplyHatredLocked(clan, amount);
         return { hatred:clan.hatred, changed:clan.hatred !== before };
+    });
+    if (result && result.ok) delete _npcClanWarCache[mode];
+    return result;
+}
+
+function npcClanAdjustMorale(clanId, delta, p) {
+    let role = p || (typeof player !== 'undefined' ? player : null);
+    let amount = Math.trunc(Number(delta) || 0);
+    if (!clanId || !amount || !role || !role.cls) return { ok:false, missing:true };
+    let mode = clanModeKey(role);
+    let events = [];
+    npcClanEnsureWorld(role);
+    let result = _clanWithLock(st => {
+        let world = st.npcWorlds[mode];
+        let clan = world && _npcClanById(world, String(clanId));
+        if (!clan) return { commit:false, missing:true };
+        let before = clan.morale;
+        clan = _npcClanApplyMoraleLocked(world, clan, amount, events, mode);
+        return { morale:clan ? clan.morale : 0, changed:!clan || clan.morale !== before };
+    });
+    if (result && result.ok) {
+        delete _npcClanWarCache[mode];
+        _npcClanEventLog(events);
+    }
+    return result;
+}
+
+function npcClanPrivateDiplomacy(clanId, action, p) {
+    let role = p || (typeof player !== 'undefined' ? player : null);
+    if (!clanId || !role || !role.cls) return { ok:false, error:'目前無法與對方交涉。' };
+    if (!clanGetModeInfo(role)) return { ok:false, error:'加入血盟後，才能代表我方與 NPC 血盟盟主交涉。' };
+    if (action !== 'peace' && action !== 'taunt') return { ok:false, error:'無效的交涉內容。' };
+    let mode = clanModeKey(role);
+    let now = Date.now();
+    npcClanEnsureWorld(role);
+    let result = _clanWithLock(st => {
+        let world = st.npcWorlds[mode];
+        let clan = world && _npcClanById(world, String(clanId));
+        if (!clan || !clan.leader) return { commit:false, error:'該血盟已不存在。' };
+        let elapsed = now - Math.max(0, Number(clan.privateDiplomacyAt) || 0);
+        if (elapsed < NPC_CLAN_PRIVATE_DIPLOMACY_COOLDOWN_MS) {
+            let seconds = Math.ceil((NPC_CLAN_PRIVATE_DIPLOMACY_COOLDOWN_MS - elapsed) / 1000);
+            return { commit:false, cooldown:true, error:`對方暫時不想再談，請於 ${seconds} 秒後再試。` };
+        }
+        clan.privateDiplomacyAt = now;
+        if (action === 'taunt') {
+            _npcClanApplyHatredLocked(clan, 8 + Math.floor(Math.random() * 8));
+            return {
+                accepted:false,
+                raised:true,
+                clanName:clan.name,
+                leaderName:clan.leader.n,
+                reply:_npcClanPick([
+                    '很好，這句話我會轉告全盟。',
+                    '口氣不小，野外最好別讓我們遇到。',
+                    '談不攏就別談，你的名字我們記住了。',
+                    '敢這樣跟我說話，就準備承受後果。'
+                ])
+            };
+        }
+        let moraleRatio = Math.max(0, Math.min(1, clan.morale / NPC_CLAN_MORALE_MAX));
+        let hatredRatio = Math.max(0, Math.min(1, clan.hatred / NPC_CLAN_HATRED_MAX));
+        let acceptChance = clan.mercy && clan.mercy.pending
+            ? 0.95
+            : Math.max(0.08, Math.min(0.82, 0.82 - moraleRatio * 0.58 - hatredRatio * 0.16));
+        if (Math.random() < acceptChance) {
+            _npcClanApplyHatredLocked(clan, -(8 + Math.floor(Math.random() * 8)));
+            return {
+                accepted:true,
+                raised:false,
+                clanName:clan.name,
+                leaderName:clan.leader.n,
+                reply:_npcClanPick([
+                    '我可以約束盟員，但你們也別再挑事。',
+                    '這次先到此為止，後面看你們的行動。',
+                    '我接受你的說法，先讓雙方冷靜。',
+                    '可以談，但別把我們的退讓當成軟弱。'
+                ])
+            };
+        }
+        let raised = Math.random() < (0.25 + moraleRatio * 0.55);
+        if (raised) _npcClanApplyHatredLocked(clan, 3 + Math.floor(Math.random() * 5));
+        return {
+            accepted:false,
+            raised:raised,
+            clanName:clan.name,
+            leaderName:clan.leader.n,
+            reply:raised
+                ? _npcClanPick([
+                    '現在才想談？我們占上風，沒必要聽你的。',
+                    '你把談和當成求饒就行，我們不接受。',
+                    '先前的帳還沒算完，這句話只會讓我們更火。',
+                    '士氣正旺，你沒有資格開條件。'
+                ])
+                : _npcClanPick([
+                    '我暫時不接受，等你拿出誠意再說。',
+                    '現在談這個太早，之後再看。',
+                    '你的話我聽到了，但我們還不打算停手。',
+                    '先讓我看看你們接下來怎麼做。'
+                ])
+        };
     });
     if (result && result.ok) delete _npcClanWarCache[mode];
     return result;
@@ -1079,7 +1205,9 @@ function npcClanOnPlayerKilledBy(killers) {
     if (!ids.length) return;
     let mode = clanModeKey(player);
     let hasPlayerClan = !!clanGetModeInfo(player);
-    _clanWithLock(st => {
+    let playerIsLeader = hasPlayerClan && typeof clanIsLeaderRole === 'function' && clanIsLeaderRole(player);
+    let events = [];
+    let result = _clanWithLock(st => {
         let world = st.npcWorlds[mode];
         if (!world) return { commit:false };
         ids.forEach(id => {
@@ -1087,10 +1215,15 @@ function npcClanOnPlayerKilledBy(killers) {
             if (clan) {
                 if (hasPlayerClan) clan.known = true;
                 _npcClanApplyHatredLocked(clan, -1);
+                if (hasPlayerClan) _npcClanApplyMoraleLocked(world, clan, playerIsLeader ? 10 : 1, events, mode);
             }
         });
         return {};
     });
+    if (result && result.ok) {
+        delete _npcClanWarCache[mode];
+        _npcClanEventLog(events);
+    }
 }
 
 function npcClanKillIgnoresAlignment(mob) {
@@ -1121,6 +1254,9 @@ function npcClanGroupBattleEnd(reason) {
     let battle = mapState && mapState.npcClanBattle;
     if (!battle) return;
     let name = battle.clanName || '';
+    if (reason === 'leave' && battle.clanId && typeof clanGetModeInfo === 'function' && clanGetModeInfo(player)) {
+        npcClanAdjustMorale(battle.clanId, NPC_CLAN_GROUP_ESCAPE_MORALE, player);
+    }
     mapState.npcClanBattle = null;
     for (let i = 0; i < mapState.mobs.length; i++) {
         let mob = mapState.mobs[i];
@@ -1133,12 +1269,14 @@ function npcClanGroupBattleEnd(reason) {
         logSys(`<span class="text-emerald-300 font-bold">你擊退了「${clanEsc(name)}」的團戰部隊，狩獵區恢復平靜。</span>`);
     } else if (reason === 'retreat' && typeof logSys === 'function') {
         logSys(`<span class="text-amber-300">「${clanEsc(name)}」失去戰意，團戰部隊撤離了。</span>`);
+    } else if (reason === 'leave' && typeof logSys === 'function') {
+        logSys(`<span class="text-amber-300">你撤離了與「${clanEsc(name)}」的團戰，對方血盟士氣上升。</span>`);
     }
     if (typeof renderMobs === 'function') renderMobs();
 }
 
-function npcClanOnLeaveBattleArea() {
-    if (mapState && mapState.npcClanBattle) npcClanGroupBattleEnd('leave');
+function npcClanOnLeaveBattleArea(escaped) {
+    if (mapState && mapState.npcClanBattle) npcClanGroupBattleEnd(escaped === false ? 'cancel' : 'leave');
     if (typeof wcMassTauntOnLeaveBattleArea === 'function') wcMassTauntOnLeaveBattleArea();
 }
 

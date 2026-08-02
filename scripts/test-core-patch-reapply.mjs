@@ -24,7 +24,7 @@ if (sourceDir && (!isAbsolute(sourceDir) || !existsSync(join(sourceDir, 'index.h
 // 預演刻意不複製 assets，讓同步前檢查快速且不碰工作樹。
 const TARGETS = [
   'index.html', 'sw.js', 'afk-pwa.js',
-  'afk-bossring.js', 'afk-junkmgr.js', 'afk-offline.js', 'afk-powersave.js',
+  'afk-bossring.js', 'afk-junkmgr.js', 'afk-mobile.js', 'afk-offline.js', 'afk-powersave.js',
   'afk-skin.js', 'afk-slotinfo.js', 'afk-synccompress.js', 'afk-toggles.js', 'afk-training.js',
   'afk-wiki.js',
   'js/00-data.js', 'js/01-drops-config.js', 'js/03-combat-core.js', 'js/05-kill-progression.js',
@@ -123,7 +123,7 @@ try {
   const pluginCheck = runPluginPatch(fixture, ['--check']);
   const offlineCheck = runOfflinePatch(fixture, ['--check']);
   assert.match(check, /全部 \d+ 個核心補丁均已就位/, '--check 未確認完整補丁');
-  assert.match(pluginCheck, /7 支 PP 外掛生命週期修正完整/, '外掛 --check 未確認完整補丁');
+  assert.match(pluginCheck, /8 支 PP 外掛生命週期修正完整/, '外掛 --check 未確認完整補丁');
   assert.match(offlineCheck, /--check：離線安全政策均已就位/, '離線安全 --check 未確認完整補丁');
 
   console.log(`✅ 乾淨上游核心／外掛／離線補丁預演：首次完整套用、第二次零變更、--check 通過（${sourceDir || sourceRef}）`);

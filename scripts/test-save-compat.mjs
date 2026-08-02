@@ -3,7 +3,7 @@
  *   - 簽章有效、JSON 可解析
  *   - 可載入並重新存成有效 SIG1
  *   - 角色身分、等級、背包、裝備、傭兵數不因載入／存檔往返而改變
- *   - 舊傭兵獎勵／招募／受僱政策與回城免費刷新生效、妖精傭兵不限目前屬性，且 PP v3.8.5 戰鬥模組仍存在
+ *   - 舊傭兵獎勵／招募／受僱政策與回城免費刷新生效、妖精傭兵不限目前屬性，且 PP v3.8.34 戰鬥模組仍存在
  *
  * 可由 CLI 傳入多個絕對路徑，也可 import 後呼叫 testSaveFiles(paths)。
  */
@@ -252,7 +252,7 @@ export async function testSaveFiles(paths) {
           failures.push(`倉庫資料載入後不一致（物品 ${got.expectedWarehouseTotal} → ${got.loadedWarehouseTotal}；金幣 ${got.expectedWarehouseGold} → ${got.loadedWarehouseGold}）`);
         }
         if (got.loadWarehouseCalls !== 1) failures.push(`載入角色期間重複解析倉庫 ${got.loadWarehouseCalls} 次`);
-        if (got.version !== 'v3.8.5') failures.push('核心版本不是 PP v3.8.5');
+        if (got.version !== 'v3.8.34') failures.push('核心版本不是 PP v3.8.34');
         if (got.partyCount !== got.expectedPartyCount) failures.push('傭兵經驗均分人數錯誤');
         if (got.rewardMult !== 1) failures.push('金幣仍有隊伍人數加乘');
         if (Math.abs(got.dropMult - got.expectedDropMult) > 1e-12 ||
@@ -262,7 +262,7 @@ export async function testSaveFiles(paths) {
         if (got.employmentKeys.length) failures.push('仍寫入反向受僱登記');
         if (got.safeAreaBlocked !== false) failures.push('受僱角色仍被鎖在安全區');
         if (JSON.stringify(got.rehireCosts) !== JSON.stringify([0, 0, 0])) failures.push('免費更新快照費率錯誤');
-        if (got.legacyPolicy !== '3.7.61-hybrid-drop60-town-refresh-on-pp-v3.8.5') failures.push('傭兵混合政策層未啟動');
+        if (got.legacyPolicy !== '3.7.61-hybrid-drop60-town-refresh-on-pp-v3.8.34') failures.push('傭兵混合政策層未啟動');
         if (got.townRefresh !== true || got.paidManualRehire !== false || !got.townRefreshUsesCore) {
           failures.push('回城免費自動刷新快照政策未完整啟動：' + JSON.stringify({
             townRefresh: got.townRefresh,
@@ -276,7 +276,7 @@ export async function testSaveFiles(paths) {
         if (got.mercElementRestriction !== false || got.mismatchedElfSkillAllowed !== true) failures.push('妖精傭兵仍受目前屬性限制');
         if (got.offlineVersion !== '2.3.0-jesper-rift-offline' || got.offlineOwner !== true) failures.push('裂痕離線安全引擎未獨占啟動');
         if (got.siegeStages !== 5 || !got.threatEnabled || got.mercThreatKey !== 'A:test' || !got.bindMercSupported || !got.guardLoaded) {
-          failures.push('PP v3.8.5 戰鬥模組未完整作用於傭兵');
+          failures.push('PP v3.8.34 戰鬥模組未完整作用於傭兵');
         }
         if (i === 0) {
           const offlineStart = await page.evaluate(() => {

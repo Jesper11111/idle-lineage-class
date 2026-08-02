@@ -1,6 +1,6 @@
 ﻿/** 遊戲核心資料庫 */
 // 🏷️ 遊戲版本號（顯示於登入頁面下方·單一真相來源）：更新版本時只改這一行，登入頁面自動同步。
-const GAME_VERSION = 'v3.8.5';   // 🏷️ 版本號：末段 0~99 線性遞增，達 100 進位（中位 +1、末段歸 0）
+const GAME_VERSION = 'v3.8.34';   // 🏷️ 版本號：末段 0~99 線性遞增，達 100 進位（中位 +1、末段歸 0）
 // ===== 💾 存檔壓縮（LZString compressToUTF16/decompressFromUTF16·MIT, Pieroxy）：localStorage 內部以 UTF-16 壓縮，省 ~89%，繞過 5MB 上限 =====
 //  ⚠️ 只壓 localStorage（存檔位/倉庫/共用桶/_bak）；匯出檔維持明文 JSON（可攜·importSave 用 JSON.parse 驗證）。_lzGet 相容舊明文存檔（無 'LZ1:' 前綴→原樣回傳）。
 var LZString = (function () {
@@ -317,7 +317,7 @@ function lootRng(tag) {
     return _seededFloat((player.enSeed || 'nseed') + '|loot|' + (player.lootSeq++) + '|' + (tag || ''));
 }
 
-// 🛡️ 存檔簽章：網頁版與可攜匯出使用 SIG1；WebView2 內部存檔由 Host 產生 SIG2。
+// 🛡️ 存檔簽章：網頁版使用 SIG1；WebView2 內部與安裝版專用匯出由 Host 產生 SIG2。
 //    SIG1 的鹽值必須留在純網頁版；SIG2 金鑰只存在桌面 Host，JS 不接觸金鑰。
 const _SAVE_SALT = 'fb5#9c3a7e1d-save-integrity-salt-do-not-edit#a1b2c3';
 function _signSave(s) {
@@ -1047,9 +1047,10 @@ const DB = {
         "relic_ghost_teardrop":    { n: "受困幽魂的淚滴",     type: "acc", slot: "ring", relic: true, noEnhance: true, ac: 2, dotMpRefund: 25, req: "all", p: 10000, gachaWeight: 0, d: "【遺物】受困幽魂凝結的淚滴，痛楚在其中化作魔力。因持續傷害損失 HP 時，恢復損失 HP 25% 量的 MP。" },
         "relic_true_dragonslayer": { n: "真‧屠龍劍",          type: "wpn", w2h: true, relic: true, noEnhance: true, dmgS: 37, dmgL: 45, hit: 17, dmgBonus: 30, eff: "cleave", ignHardSkin: true, mcrit: 3, dragonSlayStrike: { rate: 15, dice: 5, flat: 60, dragonMult: 3 }, req: "royal,knight,dragon", p: 10000, gachaWeight: 0, d: "【遺物】屠龍劍中沉眠的龍魂徹底甦醒後的真身，劍鳴即龍吟。切割（一般限定）；貫穿；爆擊率 +3%；攻擊時 15% 機率觸發滅龍的一擊，對全體造成依力量、敏捷、體質而定的無視防禦物理固定傷害；滅龍的一擊對 龍 類型敵人造成 3 倍傷害。" },
         "relic_flame_dk_sword":    { n: "烈焰的死亡騎士之劍", type: "wpn", relic: true, noEnhance: true, dmgS: 25, dmgL: 25, hit: 15, dmgBonus: 25, ele: "fire", ignHardSkin: true, flameDkMorph: true, procRateBase: 25, procRatePerEn: 0, spellProc: { skn: "煉獄火", dice: [16, 10], flat: 80, ele: "fire", aoe: true, burnDot: { dmg: 30, dur: 6 } }, procBurn: { magicHit: true, dmg: 30, dur: 6 }, req: "royal,knight,dragon", p: 10000, gachaWeight: 0, d: "【遺物】烈焰死亡騎士的佩劍，劍身裹著永不熄滅的地獄之火。反擊（一般限定）；居合（一般限定）；貫穿；裝備時變身 烈焰的死亡騎士；一般攻擊變成火屬性；攻擊時 25% 機率觸發煉獄火（火屬性全體魔法傷害，受魔法傷害影響，並有機率使目標陷入灼燒）；一般攻擊命中時，有機率使目標陷入灼燒（每秒 30 點火屬性傷害，持續 6 秒）。" },
-        // 🔌 Shines v3.8.27 選配回移：天空之神的化身（PP 已具 wearerEle 框架）
+        // 🏺 遺物第二十四批（v3.8.12·2 件·各 0.0001% 單怪掉落）
         "relic_sky_god_avatar":     { n: "天空之神的化身",     type: "arm", slot: "armor", relic: true, noEnhance: true, ac: 11, wearerEle: "wind", req: "all", p: 10000, gachaWeight: 0, d: "【遺物】天空之神遺留在人間的羽衣，披上後身軀便與長風融為一體。" },
         "relic_necro_book":         { n: "死靈之書",           type: "arm", slot: "shield", armguard: { stat: "none", base: 0, th: [0, 0, 0] }, relic: true, noEnhance: true, ac: 0, necroBook: true, killTeamHealPct: 1, req: "mage", p: 10000, gachaWeight: 0, d: "【遺物】以亡者皮骨裝訂的禁書，書頁會在敵人倒下時自行翻動，喚回仍不願安息的骸骨。" },
+        // 🏺 遺物第二十五批（v3.8.26·5 件·各 0.0001% 單怪掉落）
         "relic_wing_chaos_blades":  { n: "飛翼的混沌雙刀",     type: "wpn", w2h: true, relic: true, noEnhance: true, eff: "combo", comboRate: 30, ignHardSkin: true, str: 2, dex: 1, dmgS: 16, dmgL: 11, hit: 15, dmgBonus: 16, darkCritMorph: "flywing_double", req: "dark", p: 10000, gachaWeight: 0, d: "【遺物】混沌司祭折翼後留下的雙刀，斬擊如殘翼同時掠過。雙擊 30；貫穿；力量 +2、敏捷 +1；裝備時會心一擊變為飛翼雙連：消耗 MP 12，立即進行兩次一般攻擊，兩次皆必定觸發雙擊。" },
         "relic_corrosive_jelly_skin": { n: "腐蝕的果凍外皮",  type: "arm", slot: "gloves", relic: true, noEnhance: true, ac: 4, dr: 5, corrosiveJellySkin: true, req: "all", p: 10000, gachaWeight: 0, d: "【遺物】象牙塔果凍怪的腐蝕外皮仍在緩緩蠕動。傷害減免 +5；受到一般攻擊時，使攻擊者的一般攻擊力永久 -3，最多疊加 5 層，直到該目標死亡。" },
         "relic_goat_demon_feet":    { n: "山羊惡魔的雙足",   type: "arm", slot: "boots", relic: true, noEnhance: true, ac: 11, str: 3, int: 3, moveSpeedPct: 33, mpR: 3, bossEncounterPct: 3, req: "knight,elf,dark,dragon", p: 10000, gachaWeight: 0, d: "【遺物】巴列斯踏碎地獄岩層的雙足，仍帶著炙熱蹄印。力量 +3、智力 +3、移動速度 +33%、MP 自然恢復量 +3；頭目遭遇機率變更為 3%。" },
@@ -2795,7 +2796,7 @@ const DB = {
                 { id: "npc_zeus_golem", n: "宙斯之熔岩高崙", title: "製作", type: "craft", d: "由熔岩鑄成的宙斯之熔岩高崙，爐心燃著遠古之火，專為戰士鍛兵。以惡魔斧頭與黑色米索莉金屬板為戰士鍛造「魔物的斧頭」；亦能以古老的盔甲融合 +7 以上的抗魔法鏈甲，鍛造出驅邪避魔的「滅魔」系列裝備。" },
                 { id: "npc_doll_merchant", n: "魔法娃娃商人", title: "卡片合成", type: "synth", d: "蒐羅怪物卡片的魔法娃娃商人。能將你身上重複的卡片合成為更高階的卡片——10 張同名普卡換 1 張銀卡，10 張同名銀卡換 1 張金卡。" },
                 { id: "npc_wh_witon", n: "艾斯倫", title: "倉庫", type: "warehouse", d: "艾斯倫在威頓村的庫房裡替旅人看管行囊，存放物品與金幣，四個存檔角色共用。" },
-                { id: "npc_doruga_bell", n: "多魯嘉貝爾", title: "副本", type: "dungeon", d: "多魯嘉家族的守望者，世代看守著被侵蝕的龍之巢穴。可由此進入「侵蝕的安塔瑞斯巢穴」（相同模式所有角色合計每日通關 1 次·UTC+8 凌晨重置；副本內禁止傳送），並設定最多 4 位助戰者提供增益。" },   // 🐉 v3.7.62 安塔瑞斯副本入口＋助戰者
+                { id: "npc_doruga_bell", n: "多魯嘉貝爾", title: "副本", type: "dungeon", d: "多魯嘉家族的守望者，世代看守著被侵蝕的龍之巢穴。可由此進入「侵蝕的安塔瑞斯巢穴」（每個角色每日可擔任主戰或傭兵通關 1 次·UTC+8 凌晨重置；成功時全體出戰角色都會消耗次數；副本內禁止傳送），並設定最多 4 位助戰者提供增益。" },   // 🐉 安塔瑞斯副本入口＋助戰者
                 { id: "npc_mimi", n: "米米", title: "製作", type: "craft", d: "精通龍鱗鍛造的工匠米米。能解開地龍之魔眼的封印，並以龍鱗盔甲與龍族之心重鑄「古代龍鱗盔甲」，再融合安塔瑞斯之心鍛出安塔瑞斯系列盔甲。" },   // 🐉 v3.7.57
                 { id: "npc_riley_aide", n: "萊利的輔佐官", title: "兌換", type: "exchange", d: "替萊利打理庶務的輔佐官。收購安塔瑞斯的素材兌換積分（同一模式角色共通累積），每滿 10 積分即可開啟一次「多魯嘉7世傳家之寶」。" }   // 🐉 v3.7.57
             ]
@@ -2804,8 +2805,7 @@ const DB = {
             n: "席琳神殿",
             npcs: [
                 { id: "npc_sherine", n: "席琳", title: "祈禱", type: "pray", d: "靜謐的神女席琳，傾聽虔誠者的禱詞。等級 40 以上可向席琳祈禱，開啟或關閉「席琳的世界」。" },
-                { id: "npc_io", n: "伊奧", title: "遺骸兌換", type: "quest", d: "看守遺骸祭壇的祭司伊奧。以席琳結晶兌換指定部位的席琳遺骸（之爪／之眼／之血／之肉／之心／之骨／之牙／之鱗），遺骸必附隨機一種席琳套裝詞綴。" },
-                { id: "npc_lachesis", n: "菈克希絲", title: "遺骸拆分", type: "quest", d: "掌管命運絲線的菈克希絲。可將你身上穿著、帶有席琳套裝詞綴的裝備拆分：裝備保留其他詞綴與強化值，席琳詞綴化為對應部位的遺骸。" }
+                { id: "npc_io", n: "伊奧", title: "遺骸兌換", type: "quest", d: "看守遺骸祭壇的祭司伊奧。以席琳結晶兌換指定部位的席琳遺骸（之爪／之眼／之血／之肉／之心／之骨／之牙／之鱗），遺骸必附隨機一種席琳套裝詞綴。" }
             ]
         },
         "town_silent": {   // 🔧 黑暗妖精出生地：沉默洞穴

@@ -156,7 +156,20 @@
     if (fState.perf && r.settleMs != null) {
       var _simMs = (r.simTicks || 0) * 100;                          // 每拍＝100ms 遊戲時間
       var _fastMs = Math.max(0, (r.settledMs || 0) - _simMs);        // 其餘＝快轉掉的遊戲時間
-      html += '<div class="m-hist-perf">⏱ 結算耗時 ' + (r.settleMs / 1000).toFixed(1) + ' 秒（完整模擬 ' + fmtDur(_simMs) + ' · 快轉 ' + fmtDur(_fastMs) + '）</div>';
+      var _why = '';
+      try { if (r.fastWhy && window.__afk && __afk.fastWhyText) _why = __afk.fastWhyText(r.fastWhy); } catch (e) {}
+      // 「每個事件多貴」與「存檔占多少」——分辨慢在「算太多次」還是「卡在存檔」,兩者要修的地方完全不同
+      var _cost = [];
+      if (r.fastEvents) _cost.push('快轉事件 ' + fmtNum(r.fastEvents) + ' 個，平均 ' + (r.settleMs / r.fastEvents).toFixed(2) + ' 毫秒');
+      if (r.ckptMs != null && r.ckptN) _cost.push('中途存檔 ' + r.ckptN + ' 次共 ' + (r.ckptMs / 1000).toFixed(1) + ' 秒（占 ' + Math.round(r.ckptMs / Math.max(1, r.settleMs) * 100) + '%）');
+      // 背景／等畫面／切片分佈：分辨「每次都貴一點」和「大部分很快但卡了幾次超大的」
+      if (r.hiddenMs) _cost.push('切到背景 ' + (r.hiddenMs / 1000).toFixed(1) + ' 秒');
+      if (r.paceMs != null) _cost.push('等畫面 ' + (r.paceMs / 1000).toFixed(1) + ' 秒');
+      if (r.sliceN) _cost.push('最久一段 ' + r.sliceMax + ' 毫秒');
+      if (r.settleSeq) _cost.push('本次開啟第 ' + r.settleSeq + ' 次結算');
+      html += '<div class="m-hist-perf">⏱ 結算耗時 ' + (r.settleMs / 1000).toFixed(1) + ' 秒（完整模擬 ' + fmtDur(_simMs) + ' · 快轉 ' + fmtDur(_fastMs) + '）'
+        + (_why ? '<br>└ ' + esc(_why) : '')
+        + (_cost.length ? '<br>└ ' + esc(_cost.join(' · ')) : '') + '</div>';
     }
     // 道具(依品階上色)
     if (fState.items && r.items && r.items.length) {

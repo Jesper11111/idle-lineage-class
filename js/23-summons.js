@@ -184,7 +184,7 @@ function _zmbDerive(s, owner) {
     };
 }
 
-// ---------- 死靈之書：骷髏復生（Shines v3.8.12）----------
+// ---------- 死靈之書：骷髏復生（v3.8.12）----------
 // 執行期清單刻意不掛在 player 上，避免戰鬥實體進入角色存檔；切換角色時以物件參照自動清空。
 const NECRO_SKELETON_TIERS = [
     { min: 24, max: 30, lv: 20, hp: 80,  ref: '哈柏哥布林', ratio: 1 },
@@ -195,7 +195,7 @@ const NECRO_SKELETON_TIERS = [
     { min: 71, max: Infinity, lv: 70, hp: 480, ref: '黑豹', ratio: 1 / 6 }
 ];
 const NECRO_SKELETON_MAX = 6;
-const NECRO_SKELETON_ASPD = 10;
+const NECRO_SKELETON_ASPD = 10;   // 0.1 秒 tick：10 ticks＝每秒攻擊 1 次
 const NECRO_SKELETON_HIT_BONUS = 5;
 let _necroSkeletonsV2 = [];
 let _necroPlayerRef = null;
@@ -295,7 +295,7 @@ function necroBookOnKill(mob) {
     if (_necroOwnerAlive(player) && necroBookEquipped(player)) holders.push(player);
     (player.allies || []).forEach(a => { if (_necroOwnerAlive(a) && necroBookEquipped(a)) holders.push(a); });
     if (!holders.length) return;
-    _necroTeamHeal(holders);
+    _necroTeamHeal(holders);   // 遺物效果不是治癒法術，故骷髏亦可取得這 1% 回復
 
     let changed = false;
     let active = holders.filter(owner => necroBookPassiveEnabled(owner));

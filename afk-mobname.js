@@ -23,9 +23,9 @@
   var STORAGE_KEY = 'afk_mobname_mode';
   var DEFAULT_MODE = 'vanilla';
   var MODES = [
-    { k: 'all',     label: '全部常駐顯示',   desc: '場上所有怪物的名字一直顯示，不用移游標。' },
-    { k: 'locked',  label: '鎖定中常駐顯示', desc: '只有目前鎖定攻擊的那隻怪名字常駐顯示，其餘維持移游標到圖片才顯示。' },
-    { k: 'vanilla', label: '原版行為',       desc: '名字平常隱藏，滑鼠移到怪物圖片上才顯示（遊戲預設）。' }
+    { k: 'all',     label: '全部常駐顯示',   desc: '場上所有怪物的名字一直顯示，不用移游標' },
+    { k: 'locked',  label: '鎖定中常駐顯示', desc: '只有目前鎖定攻擊的那隻怪名字常駐顯示，其餘維持移游標到圖片才顯示' },
+    { k: 'vanilla', label: '原版行為',       desc: '名字平常隱藏，滑鼠移到怪物圖片上才顯示（遊戲預設）' }
   ];
 
   function ready(fn) {

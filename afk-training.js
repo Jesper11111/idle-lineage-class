@@ -904,8 +904,6 @@
   // ---- 入口：自動化面板「🔌 外掛」列加一顆鈕（沿用 afk-dex 的共用列 id；木人場自成一列、不擠進查詢鈕排） ----
   function injectAutoNav() {
     var panel = document.getElementById('tab-automation');   // v2.6.74 起自動化設定改為遊戲分頁(靜態 DOM,不會被重繪洗掉)
-    var scroll = panel;
-    if (!panel) { panel = document.getElementById('automation-panel'); scroll = panel && (panel.querySelector('.overflow-y-auto') || panel); }   // 舊版面後備
     if (!panel) return false;
     if (document.getElementById('m-afk-nav-train')) return true;
     var row = document.getElementById('m-afk-navrow');
@@ -915,7 +913,7 @@
       row.className = 'bg-slate-800 p-3 rounded-lg border border-slate-700';
       row.innerHTML = '<div class="text-sm text-amber-400 mb-2 border-b border-slate-700 pb-1 font-bold">🔌 外掛</div>' +
         '<div id="m-afk-navrow-btns" style="display:flex;gap:8px;flex-wrap:wrap;"></div>';
-      scroll.appendChild(row);
+      panel.appendChild(row);
     }
     var hdr = row.querySelector('.text-amber-400');   // 防呆:dex/wiki/training 現在建列都用「🔌 外掛」,此改名只為兜「舊快取的 dex/wiki 還寫『外掛 · 查詢』」的情況
     if (hdr) hdr.textContent = '🔌 外掛';
@@ -1010,7 +1008,7 @@
     (function tryInject() {
       if (injectAutoNav()) return;
       if (++tries < 40) setTimeout(tryInject, 500);
-      else console.warn('[AFK-training] 找不到 automation-panel，入口未注入（其餘功能仍可用）');
+      else console.warn('[AFK-training] 找不到 tab-automation，入口未注入（其餘功能仍可用）');
     })();
   }
 
