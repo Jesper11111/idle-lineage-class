@@ -91,8 +91,10 @@
             //      ⚠ 背包條列式(afk-invlist)把 .classic-inventory-viewport 設成自己的捲動容器(overflow:auto+overscroll contain),
             //        分頁流式化後它 height 撐開、沒東西可捲 → 手勢在它身上被 contain 擋死、不鏈給 #game-screen=整頁滑不動。
             //        手機流式下退回普通元素,由 #game-screen 單層捲動(桌機/平板不受影響,invlist 原規則照舊)。
+            //        touch-action 用 manipulation 不用 auto:捲動權限跟 auto 一樣,但這裡帶 !important,寫 auto 會把
+            //        afk-nozoom 的「不雙擊放大」在背包整片打回來(玩家連點道具時整頁被放大)。
             + '  body.m-mobile #tab-content-panel:not(.equipment-panel-host) .classic-inventory-shell{ height: auto !important; }\n'
-            + '  body.m-mobile #tab-content-panel:not(.equipment-panel-host) .classic-inventory-viewport{ height: auto !important; overflow: visible !important; overscroll-behavior: auto !important; touch-action: auto !important; }\n'
+            + '  body.m-mobile #tab-content-panel:not(.equipment-panel-host) .classic-inventory-viewport{ height: auto !important; overflow: visible !important; overscroll-behavior: auto !important; touch-action: manipulation !important; }\n'
             + '}\n'
             //   ⑥ 內層捲動區的 iOS 觸控三件套：溢出量小時沒有這組會「滑不動」(觸控被外層吃掉·afk-invlist 踩過同一雷)；
             //      overscroll-behavior:contain 同時擋「捲到底把後面的遊戲畫面一起帶著捲」的連鎖(雙層捲軸打架)。
@@ -116,11 +118,7 @@
             + 'body.m-mobile #login-art-stage{ height:auto !important; min-height:100dvh; aspect-ratio:auto !important; display:flex !important; flex-direction:column !important; justify-content:flex-start !important; }\n'
             + 'body.m-mobile #login-title-layer, body.m-mobile #main-menu, body.m-mobile #login-meta-layer{ position:static !important; left:auto !important; right:auto !important; top:auto !important; bottom:auto !important; width:auto !important; transform:none !important; }\n'
             + 'body.m-mobile #login-title-layer{ margin-top:14px; }\n'
-            + 'body.m-mobile #login-meta-layer{ margin:10px auto 18px !important; text-align:center; }\n'
-            // 選角畫面（上游新版）：每列＝存檔鈕 + 固定寬匯入區，手機會把鈕擠成「存...」。改成直向堆疊：鈕全寬、匯入區在下。
-            + 'body.m-mobile #slot-list > div{ flex-wrap:wrap !important; }\n'
-            + 'body.m-mobile #slot-list > div > button:first-child{ flex:1 1 100% !important; }\n'
-            + 'body.m-mobile #slot-list > div > .w-56{ width:100% !important; }';
+            + 'body.m-mobile #login-meta-layer{ margin:10px auto 18px !important; text-align:center; }';
         (document.head || document.documentElement).appendChild(st);
     }
 
@@ -336,7 +334,7 @@
     //   player 換掉，剩下的 tick 與錨點推進就會算到新角色頭上（實測會把上一隻的結算進度寫進新角色的
     //   afk_ts_<slot>）。結算幾秒就結束，等它跑完再換即可；玩家也可用結算畫面的「長按放棄」提早結束。
     function settling() {
-        // 本地舊離線引擎公開 isCatchingUp；保留 busy/catchupActive 兼容未來上游與舊快取。
+        // 🔒 Jesper 本地離線換角守衛：本站舊離線引擎公開 isCatchingUp；busy/catchupActive 保留 PP 相容。
         try { if (window.__afk && typeof __afk.isCatchingUp === 'function' && __afk.isCatchingUp()) return true; } catch (e) {}
         try { if (window.__afk && typeof __afk.busy === 'function' && __afk.busy()) return true; } catch (e) {}
         try { if (typeof catchupActive === 'function' && catchupActive()) return true; } catch (e) {}

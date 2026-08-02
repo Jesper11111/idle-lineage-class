@@ -216,7 +216,7 @@ const untranslatedMaps = await page.evaluate(() => {
   return out;
 });
 
-// 離線引擎互斥契約：PP v3.8.5 不載入 js/27；獨立 owner 只在沒有其他離線鉤子時授權舊引擎。
+// 離線引擎互斥契約：PP v3.8.34 不載入 js/27；獨立 owner 只在沒有其他離線鉤子時授權舊引擎。
 const offlineEngineProblems = await page.evaluate(() => {
   const bad = [];
   if (window.__afkLegacyOfflineOwnsSettlement !== true) bad.push('afk-offline-owner 未授權舊版離線引擎獨占');
@@ -243,7 +243,7 @@ const offlineEngineProblems = await page.evaluate(() => {
   }
   if (!window.__afk || __afk.engineRev !== 3 ||
       __afk.offStatsSchema !== 2 ||
-      __afk.offStatsRuleset !== 'pp-v3.8.5+shines-v3.8.27-content-r4-grace-events' ||
+      __afk.offStatsRuleset !== 'pp-v3.8.34+shines-v3.8.27-content-r4-grace-events' ||
       typeof __afk.offStatsSignature !== 'function') {
     bad.push('離線 _offStats v5 完整簽章契約未啟動');
   } else {
@@ -345,12 +345,12 @@ const powersaveInventoryProblems = await page.evaluate(() => {
   return bad;
 });
 
-// 舊傭兵獎勵／招募／受僱政策＋回城免費刷新 + PP v3.8.5 戰鬥模組並存契約。
+// 舊傭兵獎勵／招募／受僱政策＋回城免費刷新 + PP v3.8.34 戰鬥模組並存契約。
 const mercPolicyProblems = await page.evaluate(() => {
   const bad = [];
   const p = window.__legacyMercPolicy;
-  if (!p || p.version !== '3.7.61-hybrid-drop60-town-refresh-on-pp-v3.8.5') bad.push('傭兵混合政策層未啟動');
-  if (typeof GAME_VERSION === 'undefined' || GAME_VERSION !== 'v3.8.5') bad.push(`核心版本不是 v3.8.5（${typeof GAME_VERSION === 'undefined' ? 'missing' : GAME_VERSION}）`);
+  if (!p || p.version !== '3.7.61-hybrid-drop60-town-refresh-on-pp-v3.8.34') bad.push('傭兵混合政策層未啟動');
+  if (typeof GAME_VERSION === 'undefined' || GAME_VERSION !== 'v3.8.34') bad.push(`核心版本不是 v3.8.34（${typeof GAME_VERSION === 'undefined' ? 'missing' : GAME_VERSION}）`);
   if (!p || p.dropPerMercPct !== 60 || p.goldPartyMultiplier !== false) bad.push('傭兵掉寶／金幣政策中繼資料錯誤');
   if (typeof partyRewardMult !== 'function' || partyRewardMult() !== 1) bad.push('金幣仍按隊伍人數加乘');
   if (typeof partyDropMult !== 'function' || typeof partyDropRate !== 'function') {
@@ -478,9 +478,9 @@ if (powersaveInventoryProblems.length) {
 }
 
 if (mercPolicyProblems.length) {
-  console.error('冒煙測試失敗:傭兵混合政策與 v3.8.5 戰鬥模組並存契約不成立:');
+  console.error('冒煙測試失敗:傭兵混合政策與 v3.8.34 戰鬥模組並存契約不成立:');
   for (const p of mercPolicyProblems) console.error('  ' + p);
   process.exit(1);
 }
 
-console.log('冒煙測試通過:外掛 hooks、舊離線互斥、傭兵混合政策與 v3.8.5 戰鬥模組均成立，且地圖名已完整翻譯。');
+console.log('冒煙測試通過:外掛 hooks、舊離線互斥、傭兵混合政策與 v3.8.34 戰鬥模組均成立，且地圖名已完整翻譯。');

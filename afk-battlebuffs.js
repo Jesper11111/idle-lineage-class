@@ -11,8 +11,10 @@
  *   ・內容字串沒變就不寫 DOM（每 tick 都會經過，避免無謂的 innerHTML 重排）。
  *   ・state.ff（離線補跑）期間直接不做事，比照原函式。
  *
- * 顯示時機一律自己判，不讀 afk-mobile 掛的 body class（那支可被玩家關掉）：
- *   ・手機與否 → 與核心手機版面同一條 media query；桌機永遠 display:none（那裡本來就看得到狀態欄）。
+ * 顯示時機一律自己判，不讀別的外掛掛的 class（那些可被玩家關掉）：
+ *   ・手機 → 與核心手機版面同一條 media query；桌機永遠 display:none（那裡本來就看得到狀態欄）。
+ *   ・平板缺口（我方手機殼在、上游手機 media query 不在）→ 自己算一次（tabletGap），不讀 afk-battlehud 的 class。
+ *     這裡讀 body.m-mobile 是對的：手機殼被關掉＝畫面回三欄，狀態欄本來就看得到，這塊不該出現。
  *   ・在不在戰鬥 → 看 #battle-view 有沒有 .hidden（村莊/城鎮時整塊自動收起）。
  *   ・切到背包/隊伍欄時，這塊在 #col-center 裡會跟著整欄隱藏，不必特別處理。
  *
@@ -24,20 +26,37 @@
 
   // 與 css/style.css 手機版面那條完全一致（afk-mapbar / afk-battlehud 也用同一條）
   var MOBILE_MQ = '(max-width: 768px), (max-height: 520px) and (pointer: coarse)';
-  var host = null, lastHTML = '';
+  var host = null, lastHTML = '', mq = null;
+
+  // 平板缺口:我方已套手機殼(單欄+底部導覽),但上游那條窄 media query 不成立 → CSS 不會生效,改用 body class 補
+  function tabletGap() {
+    try {
+      if (!document.body.classList.contains('m-mobile')) return false;
+      if (!mq) mq = matchMedia(MOBILE_MQ);
+      return !mq.matches;
+    } catch (e) { return false; }
+  }
 
   function injectCSS() {
     if (document.getElementById('afk-battlebuffs-style')) return;
     var s = document.createElement('style');
     s.id = 'afk-battlebuffs-style';
     s.textContent = [
-      '#m-battle-buffs{display:none;}',
+      /* 外觀無條件宣告(沒顯示時 display:none 看不到);max-height 讓 buff 一多時自己捲,不把戰鬥框擠掉 */
+      '#m-battle-buffs{display:none;flex:0 0 auto;margin:2px 12px 8px;padding:8px 12px;max-height:22vh;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y pinch-zoom;overscroll-behavior:contain;background:#0f172a;border:1px solid #334155;border-radius:10px;color:#e2e8f0;font-size:13px;line-height:1.5;}',
+      /* .on 由 JS 掛（＝現在在戰鬥畫面）；顯示條件:手機 media query，或平板缺口(body class 由本檔自己算) */
       '@media ' + MOBILE_MQ + '{',
-      /* .on 由 JS 掛（＝現在在戰鬥畫面且狀態欄有內容）；max-height 讓 buff 一多時自己捲，不把戰鬥框擠掉 */
-      '#m-battle-buffs.on{display:block;flex:0 0 auto;margin:2px 12px 8px;padding:8px 12px;max-height:22vh;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y pinch-zoom;overscroll-behavior:contain;background:#0f172a;border:1px solid #334155;border-radius:10px;color:#e2e8f0;font-size:13px;line-height:1.5;}',
-      '}'
+      '#m-battle-buffs.on{display:block;}',
+      '}',
+      'body.afk-buffs-tab #m-battle-buffs.on{display:block;}'
     ].join('\n');
     (document.head || document.documentElement).appendChild(s);
+  }
+
+  //  平板 body class 要在「遊戲迴圈還沒跑」時就正確(主選單/剛進遊戲),故 init 與視窗變動時也各套一次
+  function applyTab() {
+    var tab = tabletGap();
+    if (document.body.classList.contains('afk-buffs-tab') !== tab) document.body.classList.toggle('afk-buffs-tab', tab);
   }
 
   function inBattle() {
@@ -49,6 +68,7 @@
     var src = document.getElementById('dt-buffs');
     if (!host || !src) return;
     var show = inBattle();
+    applyTab();
     if (host.classList.contains('on') !== show) host.classList.toggle('on', show);
     if (!show) return;                       // 村莊/城鎮：收起來就不必再同步內容
     var html = src.innerHTML;
@@ -67,6 +87,9 @@
     host = document.createElement('div');
     host.id = 'm-battle-buffs';
     bv.parentNode.insertBefore(host, bv.nextSibling);   // 戰鬥框正下方
+    applyTab();
+    addEventListener('resize', applyTab);
+    addEventListener('orientationchange', applyTab);
 
     var orig = window.renderStatusEffects;
     window.renderStatusEffects = function () {

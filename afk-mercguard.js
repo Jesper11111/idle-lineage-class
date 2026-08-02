@@ -23,7 +23,7 @@
   if (window.AFK_TOGGLES) {
     AFK_TOGGLES.register({
       id: 'mercguard', name: '傭兵招募擋下提示', def: true, group: '遊戲介面',
-      desc: '招募傭兵被擋下時跳彈窗說明原因（擔任助戰者／人數已滿…），不再只寫在系統日誌'
+      desc: '傭兵召喚點了沒反應時，跳視窗說明原因'
     });
   }
 

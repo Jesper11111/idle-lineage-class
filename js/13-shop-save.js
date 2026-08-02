@@ -511,6 +511,11 @@ async function exportSave(slot){
         let _obj = JSON.parse(data);
         if(!_obj || typeof _obj !== 'object' || !_obj.p || typeof _obj.p !== 'object') throw new Error('invalid player save');
         let _p = _obj.p;
+        // 🐉 傭兵通關日記在角色外部小鍵，匯出任意存檔位時同步回角色欄位，確保跨機匯入後仍保留今日次數。
+        if(typeof antharasRoleRef === 'function' && typeof antharasRoleClearDay === 'function'){
+            let _antRef = antharasRoleRef(_p, slotNo);
+            if(_antRef) _p.antharasClearDay = Math.max(Number(_p.antharasClearDay) || 0, antharasRoleClearDay(_antRef));
+        }
         _obj.p.allies = [];   // 🤝 傭兵引用其他存檔位；單角色備份一律不攜帶，避免幽靈傭兵
         let _whRaw = _lzGet(whKey(_p));   // 🎮 指定角色（經典/非經典）對應的倉庫（💾 解壓成明文）
         let _wh = (_whRaw == null) ? { items: [], gold: 0 } : JSON.parse(_whRaw);
@@ -540,15 +545,31 @@ async function exportSave(slot){
         alert('匯出失敗：角色、倉庫、寵物、龍之鑽石或血盟資料無法正確讀取，未產生匯出檔。');
         return;
     }
-    data = _saveWrapPortable(data);   // 🛡️ 可攜匯出固定使用 SIG1，確保網頁版與桌面版可互相匯入
+    const desktopExport = !!_FS;
+    if(desktopExport){
+        if(typeof _FS.sign !== 'function'){
+            alert('匯出失敗：安裝版儲存服務未就緒，請重新啟動遊戲後再試。');
+            return;
+        }
+        // 桌面版備份使用 Host 簽發的 SIG2，並以獨立容器標記來源；網頁版無法驗證或讀取。
+        data = _saveWrap(JSON.stringify({
+            format: 'idle-lineage-desktop-save',
+            schema: 1,
+            version: GAME_VERSION,
+            exportedAt: new Date().toISOString(),
+            save: JSON.parse(data)
+        }));
+    } else {
+        data = _saveWrapPortable(data);   // 網頁版維持既有 SIG1 可攜格式
+    }
     let sum = slotSummary(slotNo);
     let cname = (sum && sum.name) ? sum.name : ('slot' + slotNo);   // 未命名 → 用 slotN 當檔名
-    let fname = `fable5_save_${slotNo}_${cname}.json`;
+    let fname = desktopExport ? `idle_lineage_desktop_save_${slotNo}_${cname}.json` : `fable5_save_${slotNo}_${cname}.json`;
     if(window.showSaveFilePicker){
         try {
             let handle = await window.showSaveFilePicker({
                 suggestedName: fname,
-                types: [{ description: '放置天堂存檔', accept: { 'application/json': ['.json'] } }]
+                types: [{ description: desktopExport ? 'Idle Lineage 安裝版存檔' : '放置天堂網頁版存檔', accept: { 'application/json': ['.json'] } }]
             });
             let w = await handle.createWritable();
             await w.write(data);
@@ -583,13 +604,28 @@ function importSave(n){
         let reader = new FileReader();
         reader.onload = function(){
             let _raw = String(reader.result || '');
-            let _u = _saveUnwrap(_raw);   // 🛡️ 解存檔簽章（相容舊版無簽章明文匯出檔）
-            if(_u.signed && !_u.ok){ alert('匯入失敗：檔案完整性校驗未通過，可能已被竄改。'); return; }   // 🛡️ 簽章不符＝被改過：拒絕匯入
-            if(!_u.signed && !confirm('此存檔檔案沒有完整性簽章（可能來自舊版本，或被外部修改/移除簽章）。\n仍要匯入嗎？')) return;   // 🛡️ 未簽章檔（含被剝掉 SIG1 前綴後竄改者）：明示警告＋需確認，避免簽章被「刪前綴」無聲繞過
+            const desktopImport = !!_FS;
+            if(!desktopImport && _raw.startsWith('SIG2:')){
+                alert('匯入失敗：這是 Idle Lineage 安裝版匯出檔，網頁版資料與安裝版資料彼此獨立。');
+                return;
+            }
+            let _u = _saveUnwrap(_raw);
+            if(_u.signed && !_u.ok){ alert('匯入失敗：檔案完整性校驗未通過，可能已被竄改。'); return; }
+            if(!desktopImport && !_u.signed && !confirm('此存檔檔案沒有完整性簽章（可能來自舊版本，或被外部修改/移除簽章）。\n仍要匯入嗎？')) return;
             let text = _u.payload;
             let d;
             try { d = JSON.parse(text); }
             catch(e){ alert('匯入失敗：檔案不是有效的存檔（JSON 解析錯誤）。'); return; }
+            if(desktopImport){
+                if(!_u.signed || !_u.ok || !d || d.format !== 'idle-lineage-desktop-save' || d.schema !== 1 || !d.save){
+                    alert('匯入失敗：安裝版只支援由 Idle Lineage 安裝版匯出的專用存檔，網頁版資料無法匯入。');
+                    return;
+                }
+                d = d.save;
+            } else if(d && d.format === 'idle-lineage-desktop-save'){
+                alert('匯入失敗：這是 Idle Lineage 安裝版匯出檔，網頁版資料與安裝版資料彼此獨立。');
+                return;
+            }
             if(!d || typeof d !== 'object' || !d.p || typeof d.p !== 'object' || !d.p.cls){
                 alert('匯入失敗：檔案內容不是有效的放置天堂存檔。'); return;
             }
@@ -971,6 +1007,7 @@ function loadDeleteSelected(){
     if(fp && !_roleMarkDeleted(fp)){ alert('無法建立刪除保護，為避免舊分頁寫回角色，本次刪除已取消。'); return; }
     try { if(typeof petReleaseSlotAssignments === 'function') petReleaseSlotAssignments(slot); } catch(e){ console.warn('pet delete cleanup', e); }
     try { if(typeof mercLedgerPurgeSlot === 'function') mercLedgerPurgeSlot(slot); } catch(e){ console.warn('merc delete cleanup', e); }
+    try { if(typeof antharasForgetRoleClear === 'function') antharasForgetRoleClear(oldPlayer, slot); } catch(e){ console.warn('antharas clear cleanup', e); }
     _lsRemove('lineage_idle_save_' + slot);
     _lsRemove('lineage_idle_save_' + slot + '_bak');
     if(_lsGet('lineage_idle_save_' + slot)){ alert('角色存檔刪除失敗，請重新整理後再試。'); return; }
@@ -1684,7 +1721,8 @@ function loadGame() {
         if(player.allies === undefined || !Array.isArray(player.allies)) player.allies = [];   // 協力角色（其他存檔位）
         // 🐾 v3.2.17 夥伴系統 v2：舊項圈/肉/哨子/舊進化果實/舊 petStorage 一次性轉換與清除（項圈→新寵物入共用保管）
         try { if (typeof petMigrateLegacy === 'function') petMigrateLegacy(); } catch (e) { console.warn('petMigrateLegacy', e); }
-        // 🔌 Shines v3.8.27 選配回移：同次讀檔共用一次倉庫解析，避免大型舊存檔重複解壓。
+        // 舊網頁版匯入資料的倉庫可能很大。下方清理、套裝修正與三種圖鑑遷移共用同一份解析結果，
+        // 避免首次進角連續完整解碼多次；資料仍由既有的 saveWarehouse 安全流程回寫。
         let _loadWarehouse = null, _loadWarehouseReady = false;
         try { if (typeof loadWarehouse === 'function') { _loadWarehouse = loadWarehouse(); _loadWarehouseReady = true; } } catch (e) {}
         try { purgeOrphanItems(_loadWarehouseReady ? _loadWarehouse : undefined); } catch (e) { console.warn('purgeOrphanItems', e); }   // 🧹 v3.2.62 清除已停用舊物品（DB 無定義的孤兒·背包+倉庫·排除待轉換的舊項圈）

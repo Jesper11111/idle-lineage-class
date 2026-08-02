@@ -135,19 +135,29 @@
   //   名稱/職業/等級重用遊戲自己的 slotSummary()(職業已翻中文、也處理得了舊明文存檔),
   //   只有它沒提供的「背包/傭兵件數」才自己讀。格數走 SAVE_SLOT_MAX,別自己寫死。
   function slotMax() { return (typeof SAVE_SLOT_MAX !== 'undefined') ? SAVE_SLOT_MAX : 16; }
+  // 好幾個欄位都要讀同一份存檔,而解壓一格可能上百 KB × 16 格(手機上很有感)→ 解一次共用。
+  //   collect() 開頭清空,重開診斷一定拿到當下的值。
+  var _saveCache = {};
+  function savePlayer(s) {
+    if (!(s in _saveCache)) {
+      try { _saveCache[s] = JSON.parse(_saveUnwrap(_lzGet('lineage_idle_save_' + s)).payload).p; }   // 存檔結構 {v,p,ms,ticks},玩家在 p
+      catch (e) { _saveCache[s] = null; }
+    }
+    return _saveCache[s];
+  }
   function charSummary() {
     var out = [];
     for (var s = 1; s <= slotMax(); s++) {
       try {
         var sum = (typeof slotSummary === 'function') ? slotSummary(s) : null;
         if (!sum) continue;
-        var inv = '?', allies = '?';
-        try {
-          var d = JSON.parse(_saveUnwrap(_lzGet('lineage_idle_save_' + s)).payload).p;   // 存檔結構 {v,p,ms,ticks},玩家在 p
-          inv = (d.inv || []).length; allies = (d.allies || []).length;
-        } catch (e) {}
+        var inv = '?', allies = '?', chase = 0;
+        var d = savePlayer(s);
+        // 😤 被追殺清單:離線期間野外每次重生有 5% 變成「白目玩家」遭遇＝玩家型 NPC 戰鬥,
+        //   是除了血盟團戰以外另一條會讓結算變貴的路徑,而且是**逐角色**的(診斷別處看不到)。
+        if (d) { inv = (d.inv || []).length; allies = (d.allies || []).length; chase = (d.trollPlayers || []).length; }
         out.push('第' + s + '格: ' + (sum.name || '(未命名)') + ' / ' + sum.cls + ' Lv' + sum.lv +
-          ' / 背包 ' + inv + ' 件 / 傭兵 ' + allies +
+          ' / 背包 ' + inv + ' 件 / 傭兵 ' + allies + (chase ? ' / 被追殺 ' + chase + ' 人' : '') +
           (sum.classic ? ' / 經典' : '') + (sum.traditional ? ' / 傳統' : ''));
       } catch (e) { out.push('第' + s + '格: ⚠️ 讀取失敗(' + String(e.message).slice(0, 40) + ')'); }
     }
@@ -182,6 +192,134 @@
       out.push('第' + s + '格: ' + name + '(' + (mins >= 60 ? Math.floor(mins / 60) + ' 小時前' : mins + ' 分鐘前') + ')');
     }
     return out.length ? out.join('\n          ') : '(無)';
+  }
+
+  // 「同樣掛一晚,有的跑 30 分鐘、有的 2 分鐘」這類回報的第一現場:結算實際花多久、其中多少是
+  //   逐格完整模擬(慢)、多少被快轉掉(快),以及這次為什麼是這樣。資料來自外掛自己的
+  //   afk_hist_<格>(純 JSON,不是玩家存檔),只讀不寫。
+  //   ⚠ 每格印「全部保留的紀錄」而不是只印最新一筆:玩家不小心多登入一次,那筆想看的就被擠掉了
+  //     (紀錄是 unshift + 只留最近 5 筆)。要回報問題的人通常不會注意到這件事。
+  function fmtDur(ms) {
+    var m = Math.floor(ms / 60000);
+    if (m < 1) return Math.max(0, Math.round(ms / 1000)) + ' 秒';
+    if (m < 60) return m + ' 分';
+    return Math.floor(m / 60) + ' 時' + (m % 60 ? ' ' + (m % 60) + ' 分' : '');
+  }
+  // 結算統計快取(存檔裡的 _offStats):命中就跳過取樣與 BOSS 首打 → 同一隻角色快慢差最多的一項
+  function offStatsNote(s) {
+    var p = savePlayer(s), c = p && p._offStats;
+    if (!c || !c.savedAt) return '統計快取 無';
+    return '統計快取 有(' + fmtDur(Math.max(0, Date.now() - c.savedAt)) + '前 · BOSS ' + Object.keys(c.boss || {}).length + ' 種)';
+  }
+  function clock(ms) {
+    var d = new Date(ms);
+    if (isNaN(d.getTime())) return '?';
+    return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+  }
+  // 一筆紀錄 → 2~3 行。欄位新舊都有,舊紀錄沒有的就不印(不要印出空白或 undefined 誤導判讀)。
+  function settleRec(r) {
+    var L = [];
+    var head = clock(r.loginTs) + ' ' + (r.map || '?') + ' 掛' + fmtDur(r.realMs || 0);
+    if (r.settleMs != null) head += ' → 結算 ' + (r.settleMs / 1000).toFixed(1) + ' 秒';
+    if (r.died) head += ' ⚠️陣亡';
+    if (r.capped) head += ' ·24h上限';
+    if (r.settleSeq) head += ' [本次開啟第 ' + r.settleSeq + ' 次結算]';
+    L.push(head);
+
+    var why = '';
+    try { if (r.fastWhy && window.__afk && __afk.fastWhyText) why = __afk.fastWhyText(r.fastWhy); } catch (e) {}
+    var a = [];
+    if (why) a.push(why);
+    // ⚠️ 「平均 ms/事件」不能拿來比兩隻角色:分母只是快轉呼叫次數,一個事件可能殺 1 隻也可能殺 20 隻
+    //   (batchE)。唯一可比的單位是「µs/隻」——所以同一行一定要把總擊殺數與 batchE 一起印出來。
+    var killN = 0;
+    try { (r.kills || []).forEach(function (k) { killN += (k && k.cnt) || 0; }); } catch (e) {}
+    if (r.fastEvents) {
+      a.push('事件 ' + r.fastEvents + ' 個·平均 ' + (r.settleMs / r.fastEvents).toFixed(2) + ' ms'
+        + (r.batchE != null ? '(每事件殺 ' + r.batchE + ' 隻)' : ''));
+    }
+    if (killN) a.push('共殺 ' + killN + ' 隻·' + Math.round(r.settleMs * 1000 / killN) + ' µs/隻');
+    if (r.simTicks != null) a.push('真模擬 ' + fmtDur(r.simTicks * 100));
+    if (r.ckptN) a.push('存檔 ' + r.ckptN + ' 次 ' + (r.ckptMs / 1000).toFixed(1) + ' 秒(' + Math.round(r.ckptMs / Math.max(1, r.settleMs) * 100) + '%)');
+    if (a.length) L.push('· ' + a.join(' · '));
+
+    // 「為什麼這台這隻特別慢」的鑑別欄位:平均值分不出「每次貴一點」和「卡了幾次超大的」,
+    //   而背景時間/等畫面時間根本不是在計算——這幾個一起看才知道 156 秒到底是什麼組成的。
+    var b = [];
+    if (r.hiddenMs != null) b.push('背景 ' + (r.hiddenMs / 1000).toFixed(1) + ' 秒');
+    if (r.paceMs != null) b.push('等畫面 ' + (r.paceMs / 1000).toFixed(1) + ' 秒');
+    if (r.sliceN) {
+      var slow = 0, h = r.sliceHist || [];
+      for (var i = 3; i < h.length; i++) slow += h[i] || 0;   // 索引 3 起 = ≥256ms 的切片
+      b.push('切片 ' + r.sliceN + ' 個·最久 ' + r.sliceMax + ' ms' + (slow ? '·≥256ms 有 ' + slow + ' 個' : ''));
+    }
+    if (r.invMax) b.push('背包峰值 ' + r.invMax);
+    if (r.allies >= 0) b.push('傭兵 ' + r.allies);
+    if (r.petsOut >= 0) b.push('出戰寵物 ' + r.petsOut);
+    if (r.pvpOn != null) b.push('野外PVP ' + (r.pvpOn ? '開' : '關'));
+    if (r.trollN > 0) b.push('被追殺 ' + r.trollN + ' 人');
+    if (b.length) L.push('· ' + b.join(' · '));
+
+    // ⏱ 分段耗時:上面那些只講「總共多久、卡不卡」,這行才回答「時間到底花在哪一段」。
+    //   擊殺全鏈(掉落/經驗/收集冊)、出怪、血盟讀取、存檔各佔多少,以及 localStorage 被讀了幾次
+    //   (iOS 上每次存取都不便宜,而它跟角色狀態有關 → 兩隻角色差幾十倍時第一個要看的就是這行)。
+    var p = r.perf;
+    if (p) {
+      var pct = function (ms) { return Math.round(ms / Math.max(1, r.settleMs) * 100) + '%'; };
+      var c = [];
+      if (p.kill != null) c.push('擊殺 ' + (p.kill / 1000).toFixed(1) + 's(' + pct(p.kill) + ')');
+      if (p.spawn != null) c.push('出怪 ' + (p.spawn / 1000).toFixed(1) + 's(' + pct(p.spawn) + ')');
+      if (p.clan) c.push('血盟讀取 ' + (p.clan / 1000).toFixed(1) + 's(' + pct(p.clan) + ')');
+      if (p.save) c.push('存檔 ' + (p.save / 1000).toFixed(1) + 's(' + pct(p.save) + ')');
+      if (p.lsGet) c.push('localStorage 讀 ' + p.lsGet + ' 次/' + p.lsGetMB + ' MB·寫 ' + p.lsSet + ' 次');
+      if (c.length) L.push('· 分段 ' + c.join(' · '));
+    }
+    return L;
+  }
+  // 🏴 血盟戰況:離線結算會不會被 NPC 血盟「團戰」拖垮,取決於有沒有 NPC 血盟處於「宣戰中且仇恨>80」
+  //   (那是 npcClanMaybeStartGroupBattle 的候選條件)。團戰一開打,場上就持續補滿敵盟的玩家型 NPC
+  //   ＝完整職業對戰,實測會讓結算慢兩位數倍。
+  //   ⚠ 一定要用讀的、不要問玩家「你有沒有宣戰過」——宣戰有兩條路(王族按宣戰、對求和回應「嗆聲」),
+  //     而且血盟世界是**同模式所有角色共用**,可能是別隻角色很久以前做的,本人不會記得。
+  //   讀法比照遊戲自己的路徑;讀不到就說讀不到,不要靜靜顯示 0 讓人誤判成「沒事」。
+  function clanWarState() {
+    if (typeof _clanReadState !== 'function' || typeof clanModeKey !== 'function') return '(這版核心沒有血盟系統)';
+    var st = null;
+    try { st = _clanReadState(); } catch (e) {}
+    if (!st) return '⚠️ 血盟資料讀取失敗';
+    var out = [];
+    try {
+      var mine = (typeof clanGetModeInfo === 'function') ? clanGetModeInfo(player) : null;
+      out.push('目前角色的血盟: ' + (mine && mine.name ? mine.name : '(未加入或未載入角色)'));
+    } catch (e) { out.push('目前角色的血盟: (讀取失敗)'); }
+    ['normal', 'classic'].forEach(function (mode) {
+      var w = st.npcWorlds && st.npcWorlds[mode];
+      if (!w || !Array.isArray(w.clans)) return;
+      var war = w.clans.filter(function (c) { return c && c.war; });
+      var hot = war.filter(function (c) { return c.hatred > 80; });
+      var hostile = w.clans.filter(function (c) { return c && c.hostile; });
+      out.push((mode === 'normal' ? '一般' : '經典') + '世界: NPC 血盟 ' + w.clans.length
+        + ' 個 / 宣戰中 ' + war.length + ' / 其中仇恨>80(會開團戰) ' + hot.length + ' / 敵對 ' + hostile.length
+        + (hot.length ? '  ⚠️ 離線會被開團戰(除非關掉「掛機期間遭遇玩家對戰」)' : ''));
+      if (war.length) out.push('  宣戰中: ' + war.map(function (c) { return (c.name || '?') + '(仇恨' + Math.round(c.hatred || 0) + ')'; }).join('、'));
+    });
+    return out.length ? '\n          ' + out.join('\n          ') : '(無資料)';
+  }
+  function offlineSettle() {
+    var out = [];
+    for (var s = 1; s <= slotMax(); s++) {
+      var arr = null;
+      try { arr = JSON.parse(localStorage.getItem('afk_hist_' + s) || 'null'); } catch (e) {}
+      if (!Array.isArray(arr) || !arr.length) continue;
+      var sum = null;
+      try { sum = (typeof slotSummary === 'function') ? slotSummary(s) : null; } catch (e) {}
+      out.push('第' + s + '格' + (sum ? ' ' + sum.cls + ' Lv' + sum.lv : '') + '（' + arr.length + ' 筆）/ ' + offStatsNote(s));
+      arr.forEach(function (r) {
+        if (!r) return;
+        settleRec(r).forEach(function (ln, i) { out.push((i === 0 ? '  ' : '    ') + ln); });
+      });
+    }
+    return out.length ? '\n          ' + out.join('\n          ') : '(還沒有任何離線結算紀錄)';
   }
 
   // ── 存檔健康:玩家回報「創血盟失敗 / 寵物不給放生 / 進度不見」時的第一現場 ──────────
@@ -267,8 +405,47 @@
       '\n          ' + orphan.join('\n          ');
   }
 
+  // ── 當下的記憶體／畫面量測(自己算,不依賴 afk-blackbox) ──────────────
+  //   黑盒子 2026-07-27 暫停載入後，這段若還掛在它身上，玩家手動交出來的診斷就剛好少了
+  //   最關鍵的欄位。這裡是純唯讀的一次性計算：不寫 IndexedDB、沒有心跳、不上傳，
+  //   只在玩家按下「快取診斷」那一刻跑一次。
+  function liveStats() {
+    var o = {};
+    try {
+      var m = performance.memory;
+      if (m) { o.mu = Math.round(m.usedJSHeapSize / 1048576); o.ml = Math.round(m.jsHeapSizeLimit / 1048576); }
+    } catch (e) {}
+    try { o.dom = document.getElementsByTagName('*').length; } catch (e) {}
+    try {
+      var px = 0, ims = document.images, n = ims.length;
+      for (var i = 0; i < n; i++) px += (ims[i].naturalWidth || 0) * (ims[i].naturalHeight || 0);
+      o.img = n; o.imgmb = Math.round(px * 4 / 1048576);   // iOS 沒有 performance.memory,這是那邊唯一的記憶體量化指標
+    } catch (e) {}
+    try {
+      var el = function (id) { var e2 = document.getElementById(id); return e2 ? e2.childElementCount : -1; };
+      o.vfx = el('vfx-layer'); o.mob = el('mob-list'); o.log = el('combat-log') + el('sys-log');
+    } catch (e) {}
+    try { if (typeof state !== 'undefined' && state) { o.tk = state.ticks; o.run = state.running ? 1 : 0; } } catch (e) {}
+    try { if (typeof mapState !== 'undefined' && mapState) o.map = String(mapState.current || ''); } catch (e) {}
+    try { if (typeof player !== 'undefined' && player) { o.inv = (player.inv || []).length; o.ally = (player.allies || []).length; } } catch (e) {}
+    // 白畫面的直接證據:主容器被壓成 0 或整個推出視窗
+    try {
+      var bad = [];
+      ['app-stage', 'game-screen'].forEach(function (id) {
+        var e3 = document.getElementById(id);
+        if (!e3 || e3.classList.contains('hidden')) return;
+        if (e3.clientWidth < 50 || e3.clientHeight < 50) { bad.push(id + '=' + e3.clientWidth + 'x' + e3.clientHeight); return; }
+        var r = e3.getBoundingClientRect();
+        if (r.bottom < 20 || r.right < 20 || r.top > innerHeight - 20 || r.left > innerWidth - 20) bad.push(id + '離屏');
+      });
+      o.view = bad.length ? bad.join(' ') : 'ok';
+    } catch (e) { o.view = '?'; }
+    return o;
+  }
+
   function collect() {
     var out = {};
+    _saveCache = {};   // 每次重開診斷都重讀存檔,不吃上一次的舊值
     var _jobs = [];
     // 診斷的意義就是「出事時還讀得到」——任一欄位拋錯都不可以把整份帶走(實機踩過:
     //   cache.keys() 拋 Operation too large,整個診斷只印一行「診斷失敗」,其他全沒了)。
@@ -293,12 +470,25 @@
       return (navigator.connection.effectiveType || '?') +
         (navigator.connection.saveData ? ' / ⚠️ 省流量模式(圖可能抓不下來)' : '');
     });
+    // 這段擺最前面:玩家是為了「當掉/白畫面」來開這個視窗的,證據要第一眼就看到
+    put('目前狀態', function () {
+      var n = liveStats();
+      var mem = (n.mu != null && n.ml) ? n.mu + '/' + n.ml + ' MB(' + Math.round(n.mu / n.ml * 100) + '%)'
+        : '此瀏覽器不提供(iPhone 都是這樣→改看下面的圖片量)';
+      return '記憶體 ' + mem + '(只算JS·不含圖片)' +
+        '\n          圖片 ' + (n.img != null ? n.img + ' 張·解碼約 ' + n.imgmb + ' MB' : '?') +
+        ' / DOM ' + n.dom + ' 節點 / 特效 ' + n.vfx + ' / 怪卡 ' + n.mob + ' / 日誌 ' + n.log +
+        '\n          畫面 ' + n.view + ' / 地圖 ' + (n.map || '?') + ' / tick ' + (n.tk != null ? n.tk : '?') +
+        (n.run ? ' / 戰鬥中' : '') + ' / 背包 ' + (n.inv != null ? n.inv + ' 件' : '?');
+    });
     put('存檔健康', saveHealth);   // 擺在角色前面:它是「進度到底有沒有在存」,比其他欄位都急
     put('角色', charSummary);
     put('角色身分碼', identitySeeds);
     put('寵物歸屬', petOwnership);
     put('倉庫', warehouseSummary);
     put('離線錨點', offlineAnchors);
+    put('血盟戰況', clanWarState);
+    put('離線結算', offlineSettle);
 
     var ls = localStorageStats();
     if (!ls) out.localStorage = '❌ 讀取失敗(可能被瀏覽器擋掉)';
@@ -408,6 +598,24 @@
           btn.textContent = '請長按選取複製';
         }
       };
+      var sbtn = document.getElementById('m-diag-save');
+      sbtn.onclick = function () {
+        try {
+          var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; };
+          var name = 'afk-diag-' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) +
+            '-' + p(d.getHours()) + p(d.getMinutes()) + '.txt';   // 純 ASCII 檔名:中文檔名經通訊軟體轉傳常變亂碼
+          var blob = new Blob(['﻿' + txt], { type: 'text/plain;charset=utf-8' });   // BOM:Windows 記事本開才不會整份中文變亂碼
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url; a.download = name; a.style.display = 'none';
+          document.body.appendChild(a); a.click();
+          setTimeout(function () { try { URL.revokeObjectURL(url); a.remove(); } catch (e) {} }, 2000);
+          sbtn.textContent = '✅ 已下載';
+          setTimeout(function () { sbtn.textContent = '💾 下載檔案'; }, 1500);
+        } catch (e) {
+          sbtn.textContent = '下載失敗,請用複製';
+        }
+      };
     }).catch(function (e) { body.textContent = '診斷失敗:' + e.message; });
   }
 
@@ -428,6 +636,7 @@
         '<pre id="m-diag-body"></pre>' +
         '<div id="m-diag-foot">' +
           '<button id="m-diag-copy">📋 複製全部</button>' +
+          '<button id="m-diag-save">💾 下載檔案</button>' +
           '<span id="m-diag-note">回報問題時,把這份貼給維護者</span>' +
         '</div>' +
       '</div>';
@@ -450,8 +659,10 @@
       '#m-diag-close{color:#9ca3af;background:none;border:0;font-size:18px;cursor:pointer;padding:2px 6px}' +
       '#m-diag-body{margin:0;padding:12px 14px;overflow:auto;color:#e5e7eb;font-size:12px;line-height:1.65;white-space:pre-wrap;word-break:break-all;flex:1}' +
       '#m-diag-foot{display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid #374151}' +
-      '#m-diag-copy{background:#1d4ed8;color:#fff;border:0;border-radius:6px;padding:6px 12px;font-size:13px;cursor:pointer}' +
-      '#m-diag-note{color:#6b7280;font-size:11px}';
+      '#m-diag-copy,#m-diag-save{background:#1d4ed8;color:#fff;border:0;border-radius:6px;padding:6px 12px;font-size:13px;cursor:pointer;flex:none}' +
+      '#m-diag-save{background:#047857}' +
+      '#m-diag-note{color:#6b7280;font-size:11px}' +
+      '@media(max-width:420px){#m-diag-foot{flex-wrap:wrap}#m-diag-note{width:100%;order:3}}';
     document.head.appendChild(s);
   }
 

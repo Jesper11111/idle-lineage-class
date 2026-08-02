@@ -659,7 +659,7 @@
             let isFoe = !!(mob && mob._pvpDuelFoe && _duel && mob.uid === _duel.uid && !mob._dead);
             if (!isFoe) return _pvpOrigKillMob.apply(this, arguments);
 
-            // 一般 killMob 會處理性向、金幣、掉落、擊殺回魔與裝備擊殺特效；決鬥明確只記勝負，
+            // 一般 killMob 會處理性向、金幣、掉落與裝備擊殺特效；決鬥明確只記勝負，
             // 因此在模組邊界直接完成死亡動畫／清場，再記錄勝利，不呼叫一般擊殺結算。
             let foeName = mob.n || _duel.name;
             mob._dead = true;

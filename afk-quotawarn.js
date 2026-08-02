@@ -21,7 +21,7 @@
   if (window.AFK_TOGGLES) {
     AFK_TOGGLES.register({
       id: 'quotawarn', name: '存檔空間警告', group: '系統與其他', def: true,
-      desc: '瀏覽器存檔空間(localStorage)使用超過 80% 時,在首頁顯示紅色警告,提醒刪除不玩的角色,避免存檔爆滿造成角色/倉庫消失'
+      desc: '存檔空間快滿時在首頁提醒，避免爆滿害角色或倉庫消失'
     });
     if (!AFK_TOGGLES.enabled('quotawarn')) return;
   }

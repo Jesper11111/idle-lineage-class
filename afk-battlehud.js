@@ -13,8 +13,11 @@
  * 🔮 席琳的世界只顯示一個字（席＝一般、瘋＝瘋狂），狀態列本身不換底色——底色會蓋掉血條的辨識度，
  *   而且 body 上早有核心給的 .sherine-world / .sherine-mad，要辨識世界狀態不缺這一味。
  *
- * 手機判定用「與核心顯示 #mobile-vitals 完全同一條 media query」自己判，不讀 afk-mobile 掛的
- *   body.m-mobile——那支可以被玩家關掉，靠它會變成「關了手機版面就連狀態列一起沒了」的跨外掛耦合。
+ * 兩種顯示模式（都自己判，不讀別的外掛掛的 class）：
+ *   ①手機：條件＝與核心顯示 #mobile-vitals 完全同一條 media query，位置＝上游手機單欄流的第一個（sticky 釘頂）。
+ *   ②平板缺口：我方手機殼已套上、但上游那條窄 media query 不成立（例：直向 890px 觸控平板）→ #game-screen
+ *     其實還是桌機三欄，所以改放進「目前顯示的那一欄」裡當普通區塊（見 placeStrip）。
+ *     這裡讀 body.m-mobile 是對的：手機殼被關掉＝畫面回三欄，桌機完整狀態面板本來就看得到，這條不該出現。
  *
  * 掛接：在 index.html 的 </body> 前 <script src="afk-battlehud.js">；DOM 掛點 #m-status 列入 smoke。
  * ========================================================================== */
@@ -24,6 +27,9 @@
 
   // ⚠ 必須與 css/style.css 裡「顯示 #mobile-vitals」那條 media query 一字不差,否則會出現
   //   「兩條狀態列同時在」或「兩條都不見」的破口(例如橫向手機 max-height 那半條)。
+  //   ⚠ 也不可為了平板把它放寬:模式①的 CSS(sticky/order:-11)是「上游手機單欄版面」的一員,
+  //   放寬到 890px 會讓這條變成桌機三欄裡的第四欄 → 戰鬥區被擠掉、喝水鈕消失(2026-07-26 玩家回報)。
+  //   平板走模式②(placeStrip)處理,不動這條。
   var MOBILE_MQ = '(max-width: 768px), (max-height: 520px) and (pointer: coarse)';
   var MIRROR_MS = 300;   // 鏡射頻率:值多半沒變,只在真的變了才寫 DOM,300ms 對眼睛已是即時
 
@@ -60,6 +66,7 @@
   function fitTop() {
     var gs = document.getElementById('game-screen'), strip = document.getElementById('m-status');
     if (!gs || !strip) return;
+    if (document.body.classList.contains('afk-hud-tab')) { strip.style.top = ''; }   // 平板缺口是靜態區塊,不需要 sticky 讓位
     var bar = findBanner(), barBottom = bar ? Math.max(0, Math.ceil(bar.getBoundingClientRect().bottom)) : 0;
     // 狀態列是 sticky in #game-screen → 要的是「橫幅底緣超出容器頂端多少」(容器已被讓位時為 0)
     var top = Math.max(0, barBottom - Math.round(gs.getBoundingClientRect().top));
@@ -166,11 +173,20 @@
     s.id = 'afk-battlehud-style';
     s.textContent = [
       '#m-status,#m-stat-modal{display:none;}',   /* 桌機:本外掛完全不出現(桌機有完整的狀態面板) */
+      /* 外觀(無條件宣告:沒啟用時 display:none 看不到) —— 沿用上游 #mobile-vitals 的皮,換掉的只是內容 */
+      '#m-status{flex-direction:column;flex:0 0 auto;gap:6px;width:100%;padding:6px 8px 8px;border:1px solid #8d6846;border-radius:4px;background:linear-gradient(180deg,rgba(48,47,57,.98),rgba(28,27,34,.98));box-shadow:0 4px 12px rgba(0,0,0,.72);font-size:13px;color:#e8e2d6;line-height:1.2;}',
+      /* 啟用模式①手機:上游手機版面在 → 它就是單欄流裡的一員(sticky 釘頂、order 排到最前) */
       '@media ' + MOBILE_MQ + '{',
-      /* 上游那條只有血條的狀態列讓位給本外掛(關掉本外掛就會自動回來) */
       '#mobile-vitals{display:none !important;}',
-      /* 外框沿用上游 #mobile-vitals 的釘法與配色,換掉的只是內容 → 看起來仍是同一套皮 */
-      '#m-status{position:sticky;top:0;z-index:70;order:-11;display:flex !important;flex-direction:column;flex:0 0 auto;gap:6px;width:100%;padding:6px 8px 8px;border:1px solid #8d6846;border-radius:4px;background:linear-gradient(180deg,rgba(48,47,57,.98),rgba(28,27,34,.98));box-shadow:0 4px 12px rgba(0,0,0,.72);font-size:13px;color:#e8e2d6;line-height:1.2;}',
+      '#m-status{display:flex !important;position:sticky;top:0;z-index:70;order:-11;}',
+      '}',
+      /* 啟用模式②平板缺口:手機殼在、但上游手機版面(那條窄 media query)不在 → #game-screen 其實還是桌機三欄。
+         這時**不能**當 #game-screen 的 flex 子項(會變成第四欄把戰鬥區擠掉,2026-07-26 踩過),
+         由 JS 放進「目前顯示的那一欄」裡當普通區塊(見 placeStrip)。 */
+      'body.afk-hud-tab #m-status{display:flex !important;position:sticky;top:0;z-index:70;order:0;margin:0 0 6px;}',
+      'body.afk-hud-tab #mobile-vitals{display:none !important;}',
+      /* 以下都是 #m-status / #m-stat-* 自己的內部外觀,兩種模式共用 → 不包 media query
+         (沒啟用時整條 display:none,無條件宣告不會影響桌機) */
       '#m-status .ms-row{display:flex;align-items:center;}',
       '#m-status .ms-row1{gap:6px 12px;flex-wrap:wrap;}',
       '#m-status .ms-seg{white-space:nowrap;}',
@@ -204,8 +220,7 @@
       '#m-status .ms-hp .ms-bar-txt b{color:#fecaca;}',
       '#m-status .ms-mp .ms-bar-txt b{color:#bfdbfe;}',
       /* 經驗值:貼在整條最下緣的細線,不佔高度(絕對定位) */
-      '#m-status #ms-exp{position:absolute;left:0;bottom:0;height:3px;width:0%;background:#eab308;transition:width .25s;}',
-      '}'
+      '#m-status #ms-exp{position:absolute;left:0;bottom:0;height:3px;width:0%;background:#eab308;transition:width .25s;}'
     ].join('\n');
     (document.head || document.documentElement).appendChild(s);
   }
@@ -265,6 +280,43 @@
     }
   }
 
+  // 🩹 平板缺口:手機殼在(單欄切換+底部導覽),但上游那條手機版面 media query 不成立(寬 890 的直向平板)
+  //   → 版面骨架其實還是桌機三欄。此時狀態列**不可以**待在 #game-screen 裡(會被當成第四欄,
+  //   把戰鬥區壓成看不見、喝水鈕也擠掉:2026-07-26 玩家回報),改掛到 #game-screen 前面當獨立區塊。
+  //   判斷只讀「手機殼有沒有套」+ 自己的 media query,不需要 afk-mobile 提供任何 API。
+  function inTabletGap() {
+    try {
+      if (!document.body.classList.contains('m-mobile')) return false;
+      return !matchMedia(MOBILE_MQ).matches;
+    } catch (e) { return false; }
+  }
+  //   ⚠ #game-screen 是 position:absolute(釘在 #app-stage 裡)→ 把狀態列放它「外面」會被整張畫面蓋住(踩過)。
+  //   平板缺口時改插進「目前顯示的那一欄」(手機殼一次只顯示一欄:col-left/col-center/col-right),
+  //   在欄內就只是普通區塊 + sticky 釘欄頂,不會變成第四欄。切換分頁時本函式會把它搬到新的可見欄。
+  function visibleCol(gs) {
+    var kids = gs.children;
+    for (var i = 0; i < kids.length; i++) {
+      var c = kids[i];
+      if (c.id && c.id.indexOf('col-') === 0 && c.getBoundingClientRect().width > 0) return c;
+    }
+    return null;
+  }
+  function placeStrip() {
+    var strip = document.getElementById('m-status'), gs = document.getElementById('game-screen');
+    if (!strip || !gs) return;
+    var tab = inTabletGap();
+    document.body.classList.toggle('afk-hud-tab', tab);
+    if (!tab) {
+      if (strip.parentNode !== gs || gs.firstChild !== strip) gs.insertBefore(strip, gs.firstChild);
+      return;
+    }
+    var col = visibleCol(gs);
+    if (!col) return;                                          // 還沒進遊戲(全部隱藏)→ 等下一輪
+    if (strip.parentNode === col && col.firstChild === strip) return;
+    col.insertBefore(strip, col.firstChild);
+    strip.style.top = '';                                      // 欄內 sticky:讓位量由欄自己決定,不用 fitTop 算的值
+  }
+
   function init() {
     var gs = document.getElementById('game-screen');
     if (!gs) { console.warn('[AFK-battlehud] 找不到 #game-screen，手機狀態列停用。'); return; }
@@ -272,6 +324,10 @@
     injectCSS();
     var strip = buildStrip();
     gs.insertBefore(strip, gs.firstChild);
+    placeStrip();
+    window.addEventListener('resize', placeStrip);
+    window.addEventListener('orientationchange', placeStrip);
+    setInterval(placeStrip, 1000);   // 手機殼那支是非同步掛 body.m-mobile(還會隨轉向變) → 定期對齊一次即可,成本極低
     strip.addEventListener('click', openStatModal);   // 點整條 → 開角色資訊彈窗
     cache(strip);
     mirror();

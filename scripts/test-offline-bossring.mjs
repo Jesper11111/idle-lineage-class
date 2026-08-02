@@ -180,7 +180,7 @@ assert.ok(
   '瘋狂席琳 Boss 雙快取事件重播補丁必須存在'
 );
 assert.ok(
-  offlineSource.includes("OFFSTATS_RULESET = 'pp-v3.8.5+shines-v3.8.27-content-r4-grace-events'"),
+  offlineSource.includes("OFFSTATS_RULESET = 'pp-v3.8.34+shines-v3.8.27-content-r4-grace-events'"),
   '規則版必須提升，讓舊的 3131 tick 等污染快取失效'
 );
 assert.ok(

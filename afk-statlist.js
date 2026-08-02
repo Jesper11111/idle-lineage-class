@@ -23,7 +23,7 @@
   if (window.AFK_TOGGLES) {
     AFK_TOGGLES.register({
       id: 'statlist', name: '能力面板條列式', group: '遊戲介面', def: true,
-      desc: '「能力」分頁改為放大的卡片條列版面（原版是貼在經典背景圖上的小字小按鈕）；關閉即回原版圖面'
+      desc: '「能力」分頁改成大字卡片，數字看得比較清楚'
     });
     if (!AFK_TOGGLES.enabled('statlist')) return;
   }

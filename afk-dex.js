@@ -14,6 +14,7 @@
   if (window.AFK_TOGGLES && !AFK_TOGGLES.enabled('dex')) return;   // 🎚️ 外掛開關:關掉就透明放行原版行為
 
   var MAX_RESULTS = 60;
+  var DROP_LIST_CAP = 12;   // 物品詳情「誰會掉這件」最多列幾隻怪(再多就洗版,完整清單走「查掉落」鈕)
   var INDEX = [];   // [{ id, mob, maps:[名稱], drops:[[id,名稱,pct]], hay:可搜尋字串(小寫) }]
   // 搜尋打字防抖:每次按鍵只重設計時器,停手這麼久才真的過濾+重渲染(降低逐字輸入的 INP)。
   var SEARCH_DEBOUNCE_MS = 150;
@@ -534,16 +535,18 @@
 
   // ===== 對外 API:給小百科「裝備」分頁重用「取得方式」呈現(手動/製作/商店/怪物掉落) =====
   //   小百科裝備頁的「數值」用遊戲自己的 buildItemDescHTML,取得方式則接這裡(與掉落查詢同一套來源判斷)。
-  var _dropBy = null;   // itemId -> [怪名…](去重):哪些怪會掉這件
+  var _dropBy = null;   // itemId -> [{n:怪名, lv:等級, pct:機率%}…](去重):哪些怪會掉這件、各多少機率
   function buildDropBy() {
     _dropBy = {};
     INDEX.forEach(function (h) {
       (h.drops || []).forEach(function (dr) {
         var iid = dr[0]; if (!iid) return;
         var arr = (_dropBy[iid] = _dropBy[iid] || []);
-        if (arr.indexOf(h.mob.n) < 0) arr.push(h.mob.n);
+        if (!arr.some(function (x) { return x.n === h.mob.n; })) arr.push({ n: h.mob.n, lv: h.mob.lv || 0, pct: dr[2] });
       });
     });
+    // 機率高→低;同機率等級低→高(遺物全是 0.0001%,等級低的那隻最好打,排前面才有用)
+    Object.keys(_dropBy).forEach(function (iid) { _dropBy[iid].sort(function (a, b) { return b.pct - a.pct || a.lv - b.lv; }); });
   }
   // 寶箱開出的物品(讀遊戲獎勵池 BOX_LOOT_BY_ID:歐西里斯/庫庫爾坎全寶箱,作者改池自動跟上);底比斯/提卡爾武器只此來源,否則會誤標「沒有固定取得途徑」
   var _boxBy = null;   // itemId -> { <寶箱全名>: 1 }
@@ -598,9 +601,9 @@
     parts.push(shopInfoHTML(id));
     var mobs = _dropBy[id];
     if (mobs && mobs.length) {
-      var cap = 12, more = mobs.length > cap;
+      var more = mobs.length > DROP_LIST_CAP;
       parts.push('<div class="m-dex-craft"><div class="m-dex-craft-h">👹 怪物掉落</div><div class="m-dex-craft-mats">' +
-        mobs.slice(0, cap).map(esc).join('、') + (more ? ' …等 ' + mobs.length + ' 種' : '') + '（機率見掉落查詢）</div></div>');
+        mobs.slice(0, DROP_LIST_CAP).map(function (m) { return esc(m.n) + ' ' + fmtPct(m.pct) + '%'; }).join('、') + (more ? ' …等 ' + mobs.length + ' 種' : '') + '</div></div>');
     }
     var tiers = boxTiersOf(id);
     if (tiers && tiers.length) {
@@ -617,9 +620,17 @@
 
   // ----- 物品詳情彈窗(點掉落物名字 → 顯示遊戲內數值與圖示) ------------------
   var IT_TYPE = { wpn: '武器', arm: '防具', acc: '飾品', pot: '藥水', scroll: '卷軸', skillbk: '魔法書', misc: '道具', etc: '道具' };
-  var IT_SLOT = { helm: '頭盔', armor: '盔甲', shin: '脛甲', tshirt: '內衣', boots: '長靴', gloves: '手套', shield: '盾牌', cloak: '斗篷', belt: '腰帶', ring: '戒指', amulet: '項鍊', ear: '耳環', ear1: '耳環', ear2: '耳環', pet: '寵物裝備', petwpn: '寵物武器', petarm: '寵物防具', doll: '娃娃',
+  var IT_SLOT = { helm: '頭盔', armor: '盔甲', shin: '脛甲', tshirt: '內衣', boots: '長靴', gloves: '手套', shield: '盾牌', cloak: '斗篷', belt: '腰帶', ring: '戒指', amulet: '項鍊', ear: '耳環', ear1: '耳環', ear2: '耳環', pet: '寵物裝備', petwpn: '寵物武器', petarm: '寵物防具', doll: '娃娃', eye: '魔眼',
     rem_claw: '席琳遺骸', rem_eye: '席琳遺骸', rem_blood: '席琳遺骸', rem_flesh: '席琳遺骸', rem_heart: '席琳遺骸', rem_bone: '席琳遺骸', rem_fang: '席琳遺骸', rem_scale: '席琳遺骸' };
   function _baseInst(id) { return { id: id, uid: 0, cnt: 1, en: 0, bless: false, anc: false, attr: false, seteff: false, lock: false, junk: false }; }
+  // 適用職業:遊戲的 buildItemDescHTML 只擺一排職業 logo(16px 小圖、彼此又長得像,認不出誰是誰)→ 每個 logo 後補上職業名。
+  //   職業名取自 logo 自己的 alt(遊戲產生時就填好中文名),作者加職業自動跟上;圖載入失敗(onerror 隱藏)時文字仍在。
+  function withClassNames(html) {
+    return String(html).replace(/<img\b[^>]*\bclass="[^"]*class-eq-icon[^"]*"[^>]*>/g, function (tag) {
+      var m = tag.match(/\balt="([^"]*)"/);
+      return (m && m[1]) ? tag + '<span class="m-dex-clsname">' + esc(m[1]) + '</span>' : tag;
+    });
+  }
   function itemDetailHTML(id, opts) {
     opts = opts || {};   // 🔧 noHead:不要圖示+名稱列(呼叫端自己有名稱,如小百科裝備卡)。「查掉落」鈕一律帶(只在有怪掉時)、click 走全域 handler,dex 內或小百科裝備頁皆可用
     var d = DB.items[id];
@@ -636,7 +647,7 @@
     var gameHTML = '';
     try { if (typeof buildItemDescHTML === 'function') gameHTML = buildItemDescHTML(_baseInst(id)); } catch (e) {}
     if (!gameHTML) gameHTML = d.d || '';
-    var body = gameHTML ? '<div style="line-height:1.8;margin:4px 0;">' + gameHTML + '</div>' : '';
+    var body = gameHTML ? '<div style="line-height:1.8;margin:4px 0;">' + withClassNames(gameHTML) + '</div>' : '';
     // 攻擊速度:遊戲的 buildItemDescHTML 不顯示武器攻速,在這補回(讀 DB 的 spd=每次攻擊間隔秒數,越低越快;未填預設 1.0,與戰鬥碼 wpn.spd 同源)
     var spdLine = '';
     if (d.type === 'wpn') {
@@ -657,8 +668,20 @@
     var trialLine = _tc ? '<div class="m-dex-craft" style="margin:4px 0;border-left:3px solid #b45309;padding-left:7px;"><div class="m-dex-craft-h">🔒 職業限定</div><div class="m-dex-craft-mats">只有 <b>' + _tc.join('／') + '</b> 擊殺對應怪物才會掉落（其他職業打同一隻怪不會掉）。</div></div>' : '';
     // 「查有哪些怪會掉這件」鈕:只在真的有怪會掉時顯示(純製作/兌換成品不顯示);click 由全域 handler 接 → dex 詳情彈窗內 或 小百科裝備頁 點到都會開掉落查詢並以物品名搜尋
     if (_dropBy === null) buildDropBy();
-    var tail = (_dropBy[id] && _dropBy[id].length) ? '<button class="m-dex-pop-search" data-item="' + esc(d.n) + '">🔍 查有哪些怪會掉這件</button>' : '';
-    return head + typeLine + trialLine + body + spdLine + priceLine + craftInfoHTML(id) + shopInfoHTML(id) + acq + tail;
+    // 👹 誰會掉這件:怪名＋機率直接列在詳情裡(小百科裝備頁與掉落查詢彈窗共用),不必再跳一次掉落查詢。
+    //   多隻時只列前 DROP_LIST_CAP 隻(已依機率高→低、同機率等級低→高排序),完整清單與出沒地圖走下面那顆鈕。
+    var dl = _dropBy[id] || [];
+    var dropList = '';
+    if (dl.length) {
+      dropList = '<div class="m-dex-craft"><div class="m-dex-craft-h">👹 誰會掉這件</div><table class="m-dex-drops">' +
+        dl.slice(0, DROP_LIST_CAP).map(function (m) {
+          return '<tr><td><span class="m-dexlink" data-dexq="' + esc(m.n) + '">' + esc(m.n) + '</span> <span class="m-dex-ik">Lv' + m.lv + '</span></td>' +
+            '<td class="m-dex-pct">' + fmtPct(m.pct) + '%</td></tr>';
+        }).join('') + '</table>' +
+        (dl.length > DROP_LIST_CAP ? '<div class="m-dex-craft-mats" style="margin-top:4px;">…等 ' + dl.length + ' 種怪物</div>' : '') + '</div>';
+    }
+    var tail = dl.length ? '<button class="m-dex-pop-search" data-item="' + esc(d.n) + '">🔍 查有哪些怪會掉這件</button>' : '';
+    return head + typeLine + trialLine + body + spdLine + priceLine + craftInfoHTML(id) + shopInfoHTML(id) + acq + dropList + tail;
   }
   function openItemPop(id) {
     var pop = document.getElementById('m-dex-itempop'); if (!pop) return;
@@ -756,8 +779,6 @@
   // 標題統一「🔌 外掛」(這列不只查詢,還有木人場)→ 三支建列字串一致,不靠事後改名。
   function injectAutoNav(btnId, label, onClick) {
     var panel = document.getElementById('tab-automation');   // v2.6.74 起自動化設定改為遊戲分頁(靜態 DOM,不會被重繪洗掉)
-    var scroll = panel;
-    if (!panel) { panel = document.getElementById('automation-panel'); scroll = panel && (panel.querySelector('.overflow-y-auto') || panel); }   // 舊版面後備
     if (!panel) return;
     var row = document.getElementById('m-afk-navrow');
     if (!row) {
@@ -766,7 +787,7 @@
       row.className = 'bg-slate-800 p-3 rounded-lg border border-slate-700';
       row.innerHTML = '<div class="text-sm text-amber-400 mb-2 border-b border-slate-700 pb-1 font-bold">🔌 外掛</div>' +
         '<div id="m-afk-navrow-btns" style="display:flex;gap:8px;"></div>';
-      scroll.appendChild(row);
+      panel.appendChild(row);
     }
     if (document.getElementById(btnId)) return;
     var b = document.createElement('button');
@@ -806,12 +827,11 @@
       '用途：席琳神殿的「<b>伊奧</b>」處，1 顆換 1 件指定部位的<b>席琳遺骸</b>（詞綴隨機）'
     ] },
     { id: 'remains', title: '🦴 席琳遺骸（套裝效果的唯一來源）', keys: ['席琳遺骸', '遺骸', '之爪', '之眼', '之血', '之肉', '之心', '之骨', '之牙', '之鱗', '伊奧', '菈克希絲'], lines: [
-      '<b>怪物不會掉遺骸</b>，裝備上也不會再自己長出席琳套裝詞綴。取得只有兩條路：',
-      '① <b>席琳神殿・伊奧</b>：<b>席琳結晶 ×1</b> 換 1 件指定部位的遺骸（8 部位任選），附帶的席琳套裝詞綴<b>隨機一種</b>（共 12 組）',
-      '② <b>席琳神殿・菈克希絲</b>：把<b>身上穿著或背包裡</b>、帶有舊席琳詞綴的武器防具拆分成對應部位的遺骸（免費、可一鍵全部拆；裝備與強化值都保留，只有詞綴被取下。共用倉庫內的要先領出來）',
+      '<b>怪物不會掉遺骸</b>，裝備上也不會再自己長出席琳套裝詞綴。取得只有一條路：',
+      '<b>席琳神殿・伊奧</b>：<b>席琳結晶 ×1</b> 換 1 件指定部位的遺骸（8 部位任選），附帶的席琳套裝詞綴<b>隨機一種</b>（共 12 組）',
       '遺骸裝在「裝備」分頁最下面的專屬 8 格（之爪／之眼／之血／之肉／之心／之骨／之牙／之鱗），本身沒有任何數值、不佔負重、不能強化',
       '<b>同一組名</b>的遺骸湊滿 <b>2／3／5</b> 格 → 發動該席琳套裝的 2／3／5 件效果（效果內容見小百科「席琳」分頁）',
-      '<b>一般裝備上的舊詞綴已不再計入套裝件數</b>（只是留著顯示），要生效請找菈克希絲拆成遺骸'
+      '<b>一般裝備上的舊詞綴已不再計入套裝件數</b>（只是留著顯示），也沒辦法轉成遺骸——席琳神殿原本有位「菈克希絲」可以拆，已經沒有這個 NPC 了'
     ] },
     { id: 'blessscroll', title: '✦ 賦予祝福卷軸（等級 40 以上頭目）', keys: ['賦予祝福', '祝福卷軸'], lines: [
       '條件：等級 40 以上頭目，夢幻之島、攻城區除外',
@@ -1041,6 +1061,7 @@
       '.m-dex-drops{width:100%;border-collapse:collapse;font-size:13px;}',
       '.m-dex-drops td{padding:3px 4px;border-bottom:1px solid #1e293b;color:#e2e8f0;}',
       '.m-dex-pct{text-align:right;color:#fcd34d;white-space:nowrap;width:1%;}',
+      '.m-dex-clsname{font-size:11.5px;color:#cbd5e1;margin:0 7px 0 2px;vertical-align:middle;}',   // 職業 logo 後面補的職業名(見 withClassNames)
       '#m-dex-special{flex:0 0 auto;border-top:1px solid #1e293b;}',
       '#m-dex-special > summary{padding:10px 14px;color:#fcd34d;font-size:12.5px;font-weight:bold;cursor:pointer;list-style:none;user-select:none;}',
       '.m-dex-sp-label{text-decoration:underline;}',   /* 標題加底線,看起來像可點(展開/收合) */

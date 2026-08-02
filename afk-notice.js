@@ -33,7 +33,7 @@
   if (window.AFK_TOGGLES) {
     AFK_TOGGLES.register({
       id: 'notice', name: '首頁公告', group: '系統與其他', def: true,
-      desc: '首頁顯示作者的公告卡（有公告時才出現）'
+      desc: '首頁顯示公告（有公告時才出現）'
     });
     if (!AFK_TOGGLES.enabled('notice')) return;
   }

@@ -30,13 +30,15 @@
                 desc: spec.desc || '',
                 group: spec.group || '其他',
                 def: spec.def !== false,  // 預設開；傳 def:false 才預設關
-                locked: spec.locked || ''  // 非空＝暫時停用：一律當關閉、面板上不可勾，字串是給玩家看的原因
+                locked: spec.locked || '', // 非空＝暫時停用：一律當關閉、面板上不可勾，字串是給玩家看的原因
+                parent: spec.parent || ''  // 非空＝這是某支外掛的子選項：面板上縮排排在該支底下（父項關掉時子項一律當關閉）
             });
         },
         // 這支外掛現在是否啟用（讀 localStorage，未設過→用預設；讀不到 localStorage→啟用）
         enabled: function (id) {
             var r = find(id), def = r ? r.def : true;
             if (r && r.locked) return false;   // 暫時停用中：不管 localStorage 存過什麼都當關閉
+            if (r && r.parent && !api.enabled(r.parent)) return false;   // 父項關掉 → 子選項一律失效（子選項自己不必再問一次父項）
             try { var v = localStorage.getItem(LS + id); return v === null ? def : v === '1'; }
             catch (e) { return def; }
         },
@@ -48,40 +50,52 @@
 
     // ── 內建外掛目錄：先自動登錄，面板一定列得出來（就算某支外掛載入失敗也能被關/開）──
     //   id = 外掛檔名去掉 afk- 前綴；def:false 才預設關。infra(afk-ui/extradata/sw/toggles)刻意不列＝不可關。
+    //
+    //   🚨 **檔頭就早退的外掛（`if (!enabled('x')) return;`）一定要列在這裡**，否則會變成死結：
+    //      關掉 → 下次載入在 register 之前就 return → 面板上整項消失 → 玩家再也開不回來（踩過）。
+    //      判準：外掛裡的 `AFK_TOGGLES.register` 若排在早退之後，它的 id 就必須出現在這張表。
+    //      有 scripts/check-toggle-deadend.mjs 靜態擋。
     [
-        { id: 'mobile', name: '手機版面', desc: '底部導覽/浮動日誌/手機提示 toast/橫幅讓位；版面內部用上游原版', group: '遊戲介面' },
-        { id: 'mobname', name: '怪物名稱顯示', desc: '怪物名稱常駐/鎖定中/hover 三選一', group: '遊戲介面' },
-        { id: 'statpts', name: '能力值來源分解', desc: '能力值面板顯示始/升/藥/總點數來源', group: '遊戲介面' },
-        { id: 'itemsearch', name: '背包名稱搜尋', desc: '背包武器/防具/道具分頁加搜尋框', group: '遊戲介面' },
-        { id: 'invlist', name: '背包條列式', desc: '背包改成一行一物品（取代上游格狀皮膚）；桌機/手機通用', group: '遊戲介面' },
-        { id: 'warehouse', name: '倉庫擴充', desc: '金幣全部存入/取出、遺物與席琳遺骸分類', group: '遊戲介面' },
-        { id: 'eqlist', name: '裝備條列式', desc: '隱藏裝備分頁的 12 格圖形視窗，顯示原版部位條列', group: '遊戲介面' },
-        { id: 'npclist', name: '村莊 NPC 條列式', desc: '村莊畫面改為 NPC 列表（取代地圖站位；點列開功能）', group: '遊戲介面' },
-        { id: 'mapbar', name: '手機地圖列壓縮', desc: '冒險地圖標題列由三排壓成兩排（隱藏「冒險地圖」四個字、短按鈕併排；僅手機）', group: '遊戲介面' },
-        { id: 'battlehud', name: '手機戰鬥狀態列', desc: '戰鬥畫面頂端顯示暱稱/等級/防/魔防/金幣/經驗＋HP·MP 血條（取代上游只有血條那條；僅手機）', group: '遊戲介面' },
-        { id: 'nozoom', name: '手機取消雙擊放大', desc: '連點兩下不會把畫面放大（兩指捏合縮放照常可用；僅手機）', group: '遊戲介面' },
-        { id: 'battlebuffs', name: '手機戰鬥狀態欄', desc: '戰鬥框下方顯示整條狀態（增益/異常/魔物追蹤），不用切到能力分頁看（僅手機）', group: '遊戲介面' },
-        { id: 'trackinfo', name: '魔物追蹤剩餘時間', desc: '狀態欄顯示目前追蹤的怪物與還剩多久（不用回去問城堡的追蹤 NPC）', group: '遊戲介面' },
-        { id: 'relicguard', name: '快速廢品不選遺物', desc: '背包「快速廢品」按全選時跳過遺物（仍可逐件手動勾選）', group: '遊戲介面' },
-        { id: 'junkmgr', name: '廢品標記管理', desc: '自動化分頁「🔌 外掛」列開啟：查看/搜尋/刪除廢品標記', group: '遊戲介面' },
-        { id: 'backnav', name: '手機返回鍵', desc: '子畫面按返回回首頁而非關 App（僅手機）', group: '遊戲介面' },
-        { id: 'dex', name: '怪物/掉落查詢', desc: '首頁入口：查怪名/地圖/掉落物', group: '查詢與資訊' },
-        { id: 'wiki', name: '小百科', desc: '首頁入口：職業/裝備/機制/地圖等資料', group: '查詢與資訊' },
-        { id: 'slotinfo', name: '選角掛機資訊', desc: '選存檔位顯示掛哪張圖、掛多久', group: '查詢與資訊' },
-        { id: 'loadslots', name: '選角 16 格分頁', desc: '卡片式選角分頁擴充到 16 格(上游原生只有 8 格)', group: '查詢與資訊' },
-        { id: 'history', name: '離線掛機紀錄', desc: '設定選單：最近離線結算紀錄', group: '查詢與資訊' },
-        { id: 'diag', name: '快取診斷', desc: '設定選單：回報問題用的取證工具', group: '查詢與資訊' },
-        { id: 'autobuy', name: '自動購買魔法屏障', desc: '魔法屏障卷軸耗盡自動補貨（肉已被上游移除；箭矢/藥水上游原生已有）', group: '自動化' },
-        { id: 'training', name: '木人場', desc: '自動化分頁「🔌 外掛」列開啟：量測真實 DPS', group: '遊戲玩法' },
+        { id: 'mobile', name: '手機版面', desc: '手機專用版面：底部分頁切換、浮動日誌、避開頂端橫幅', group: '遊戲介面' },
+        { id: 'npclabel', name: '村莊名牌不出界', desc: '村莊裡站得靠邊的 NPC，名字不會被畫面邊緣切掉', group: '遊戲介面' },
+        { id: 'mobname', name: '怪物名稱顯示', desc: '怪物名字要一直顯示、只在鎖定時顯示，還是滑過才顯示', group: '遊戲介面' },
+        { id: 'statpts', name: '能力值來源分解', desc: '能力值旁列出「初始／升級／藥水」各給了多少點', group: '遊戲介面' },
+        { id: 'itemsearch', name: '背包名稱搜尋', desc: '背包分頁加搜尋框，打字就找得到東西', group: '遊戲介面' },
+        { id: 'invlist', name: '背包條列式', desc: '背包改成一行一件，比格子好找', group: '遊戲介面' },
+        { id: 'warehouse', name: '倉庫擴充', desc: '倉庫可一鍵存入／取出全部金幣，遺物與席琳遺骸分開列', group: '遊戲介面' },
+        { id: 'eqlist', name: '裝備條列式', desc: '裝備分頁改成部位條列，不用看 12 格圖', group: '遊戲介面' },
+        { id: 'npclist', name: '村莊 NPC 條列式', desc: '村莊改成 NPC 清單，點名字就能互動', group: '遊戲介面' },
+        { id: 'mapbar', name: '手機地圖列壓縮', desc: '冒險地圖的標題列壓成兩排，少佔畫面', group: '遊戲介面' },
+        { id: 'battlehud', name: '手機戰鬥狀態列', desc: '戰鬥畫面上方多一排：等級、防禦、金幣、經驗與血魔量', group: '遊戲介面' },
+        { id: 'nozoom', name: '手機取消雙擊放大', desc: '連點兩下不會放大畫面（兩指縮放照常）', group: '遊戲介面' },
+        { id: 'statusicon', name: '手機狀態圖示縮小', desc: '手機上的狀態圖示縮成一半，不會蓋住戰鬥畫面', group: '遊戲介面' },
+        { id: 'battlebuffs', name: '手機戰鬥狀態欄', desc: '戰鬥框下方直接顯示增益、異常與魔物追蹤', group: '遊戲介面' },
+        { id: 'trackinfo', name: '魔物追蹤剩餘時間', desc: '狀態欄顯示正在追蹤哪隻怪、還剩多久', group: '遊戲介面' },
+        { id: 'locksafe', name: '上鎖裝備不被收購', desc: '潘朵拉的收購與遺物布告欄不會拿走你上鎖的裝備', group: '遊戲介面' },
+        { id: 'relicguard', name: '快速廢品不選遺物', desc: '背包「快速廢品」按全選時自動跳過遺物', group: '遊戲介面' },
+        { id: 'junkmgr', name: '廢品標記管理', desc: '查看與刪除「以後掉到同款就自動標廢品」的記憶（自動化分頁開啟）', group: '遊戲介面' },
+        { id: 'backnav', name: '手機返回鍵', desc: '按返回鍵回上一層，不會直接關掉 App', group: '遊戲介面' },
+        { id: 'dex', name: '怪物/掉落查詢', desc: '查怪物、地圖與掉落物（首頁入口）', group: '查詢與資訊' },
+        { id: 'wiki', name: '小百科', desc: '查職業、裝備、機制、地圖等資料（首頁入口）', group: '查詢與資訊' },
+        { id: 'slotinfo', name: '選角掛機資訊', desc: '選角畫面顯示每個角色掛在哪張圖、掛了多久', group: '查詢與資訊', parent: 'offline' },
+        { id: 'loadslots', name: '選角 16 格分頁', desc: '選角畫面從 8 格擴充到 16 格', group: '查詢與資訊' },
+        { id: 'history', name: '離線掛機紀錄', desc: '在設定選單查最近幾次的離線結算紀錄', group: '查詢與資訊', parent: 'offline' },
+        { id: 'diag', name: '快取診斷', desc: '回報問題時用的取證工具（設定選單）', group: '查詢與資訊', parent: 'storage' },
+        { id: 'autobuy', name: '自動購買魔法屏障', desc: '魔法屏障卷軸用完自動買', group: '自動化' },
+        { id: 'training', name: '木人場', desc: '木人場：實際打一段時間量出你的每秒傷害（自動化分頁開啟）', group: '遊戲玩法' },
         { id: 'bossring', name: '傳送控制戒指自動找 BOSS', desc: '戒指放背包即生效（不必裝備）；場上無 BOSS 自動用瞬移卷軸召來（線上/離線；排名/裂痕/軍王/攻城不套用）', group: '自動化' },
-        { id: 'pwa', name: '安裝成 App / 離線快取', desc: '把遊戲裝成手機或電腦上的 App、圖片離線快取對帳', group: '系統與其他' },
-        { id: 'storage', name: '設定選單', desc: '首頁 ⚙ 設定鈕與存檔大小檢查', group: '系統與其他' },
-        { id: 'synccompress', name: '存檔即時壓縮', desc: '每次存檔當下就壓縮再寫入,根治「登出/多開後存檔未壓縮、佔用暴增導致角色/倉庫消失」;代價是存檔瞬間多花一點時間(手機大存檔可能小卡),故預設關', group: '系統與其他', def: false },
-        { id: 'powersave', name: '省電模式', desc: '首頁設定→關戰鬥動畫/降畫面更新頻率（補回上游沒有的 2 個省電選項）', group: '系統與其他' },
-        { id: 'skin', name: '首頁外掛入口/資訊', desc: '外掛入口整理（桌機收成🔌鈕/手機依原版按鈕樣式直接排列）＋原作者資訊、最後更新時間、巴哈/Line 連結', group: '系統與其他' },
-        { id: 'offline', name: '離線快速結算', desc: '關掉遊戲後回來自動結算掛機收益', group: '遊戲玩法' },
-        { id: 'traditional', name: '傳統模式(偽)', desc: '打到/製作/潘朵拉的裝備自帶隨機強化值（商店除外）；在選角畫面的人物卡右上角勾「傳統」逐角色開關', group: '遊戲玩法' },
-        { id: 'dograce', name: '賽狗場', desc: '賭狗小遊戲（自動化分頁「🔌 外掛」列開啟，只賺金幣）', group: '遊戲玩法' }
+        // ⚠️ 名稱避開「解壓」「壓縮」字樣:玩家會誤判成壓縮功能而關掉它（回報過）。
+        { id: 'lzcache', name: '資料記憶體暫存', desc: '戰鬥比較不卡、離線結算快好幾倍；會多用一點記憶體', group: '系統與其他' },
+        { id: 'reissueid', name: '換發身分證', desc: '⚠️ 把複製出來的角色換成各自獨立的身分；會改寫全部存檔且無法復原', group: '存檔工具', parent: 'storage' },
+        { id: 'pwa', name: '安裝成 App / 離線快取', desc: '把遊戲裝成手機／電腦上的 App，圖片存在本機不用每次重抓', group: '系統與其他' },
+        { id: 'storage', name: '設定選單', desc: '首頁的 ⚙ 設定選單，可檢查存檔大小', group: '系統與其他' },
+        { id: 'synccompress', name: '存檔即時壓縮', desc: '避免存檔爆掉害角色或倉庫消失；代價是存檔時多花一點時間', group: '系統與其他', def: false },
+        { id: 'powersave', name: '省電模式', desc: '省電選項：降低畫面更新頻率、關動畫、關特效與音效', group: '系統與其他' },
+        { id: 'skin', name: '首頁外掛入口/資訊', desc: '整理首頁的外掛入口，並顯示原作者連結與最後同步原版的時間', group: '系統與其他' },
+        { id: 'offline', name: '離線快速結算', desc: '關掉遊戲回來自動結算掛機收益', group: '遊戲玩法' },
+        { id: 'traditional', name: '傳統模式(偽)', desc: '打到或做出來的裝備自帶隨機強化值（在選角卡右上角逐角色開關）', group: '遊戲玩法' },
+        { id: 'dograce', name: '賽狗場', desc: '賭哪隻狗第一，押金幣或龍鑽、中了自動入袋（自動化分頁開啟）', group: '遊戲玩法' },
+        { id: 'anyclass', name: '裝備不限職業/性別', desc: '所有裝備都不看職業與性別，任何角色都能裝；關掉後穿不上的會自動卸回背包', group: '遊戲玩法', def: false }
     ].forEach(api.register);
 
     // 開啟彈窗當下：實測非官方橫幅(#_orig_pbar)高度,直接寫進 overlay 的 padding-top,讓卡片一定落在橫幅下方。
@@ -108,22 +122,36 @@
         card.style.maxHeight = 'calc(100dvh - ' + (bannerPadPx() + 16) + 'px - env(safe-area-inset-bottom, 0px))';
 
         var groups = {};
-        registry.forEach(function (r) { (groups[r.group] = groups[r.group] || []).push(r); });
+        registry.forEach(function (r) { if (!r.parent) (groups[r.group] = groups[r.group] || []).push(r); });
+        registry.forEach(function (r) {   // 子選項緊接排在自己的父項後面（同一組內）
+            if (!r.parent) return;
+            var pr = find(r.parent), g = groups[(pr && pr.group) || r.group];
+            if (!g) { (groups[r.group] = groups[r.group] || []).push(r); return; }
+            var at = -1;
+            for (var i = 0; i < g.length; i++) if (g[i].id === r.parent) { at = i; break; }
+            if (at < 0) g.push(r); else g.splice(at + 1, 0, r);
+        });
 
         var html = '<div style="padding:16px 18px;border-bottom:1px solid #1e293b;display:flex;align-items:center;justify-content:space-between;gap:12px;flex:0 0 auto;">'
             + '<div><div style="font-size:17px;font-weight:700;">🎚️ 外掛開關</div>'
             + '<div style="font-size:12px;color:#94a3b8;margin-top:3px;">某個外掛出問題時，先關掉它就能用原版繼續玩，作者修好再打開。改完按「重新整理」生效。</div></div>'
             + '<button id="afk-tg-close" style="flex:none;background:#1e293b;border:1px solid #334155;color:#e2e8f0;border-radius:8px;padding:6px 12px;cursor:pointer;">關閉</button></div>'
-            + '<div style="padding:10px 14px;flex:1 1 auto;overflow-y:auto;min-height:0;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;">';
+            // 「只看我改過的」：玩家關掉某項之後往往忘了自己關過什麼（回報過），要他從幾十項裡捲著找出來不合理。
+            + '<div style="padding:9px 14px 0;flex:0 0 auto;"><button id="afk-tg-onlychanged"'
+            + ' style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;border-radius:8px;padding:5px 11px;font-size:12px;cursor:pointer;font-family:inherit;">'
+            + '只看我改過的（' + changedCount() + '）</button></div>'
+            + '<div id="afk-tg-list" style="padding:10px 14px;flex:1 1 auto;overflow-y:auto;min-height:0;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;">'
+            + '<div id="afk-tg-empty" style="display:none;color:#94a3b8;padding:14px;text-align:center;">目前全部都是預設值。</div>';
 
         if (!registry.length) {
             html += '<div style="color:#94a3b8;padding:14px;text-align:center;">目前沒有任何外掛登錄開關。</div>';
         } else {
             Object.keys(groups).forEach(function (g) {
-                html += '<div style="font-size:12px;color:#7dd3fc;font-weight:700;margin:12px 4px 6px;">' + esc(g) + '</div>';
+                html += '<div data-tggroup="' + esc(g) + '" style="font-size:12px;color:#7dd3fc;font-weight:700;margin:12px 4px 6px;">' + esc(g) + '</div>';
                 groups[g].forEach(function (r) {
                     var on = api.enabled(r.id);
-                    html += '<label style="display:flex;align-items:center;gap:12px;padding:9px 10px;border:1px solid #1e293b;border-radius:10px;margin-bottom:6px;background:#0b1222;'
+                    html += '<label data-tgrow="' + esc(r.id) + '" data-tggrp="' + esc(g) + '" data-tgchanged="' + (isChanged(r) ? '1' : '0') + '"'
+                        + ' style="display:flex;align-items:center;gap:12px;padding:9px 10px;border:1px solid #1e293b;border-radius:10px;margin-bottom:6px;background:#0b1222;' + (r.parent ? 'margin-left:22px;' : '')
                         + (r.locked ? 'cursor:not-allowed;opacity:.6;' : 'cursor:pointer;') + '">'
                         + '<input type="checkbox" data-tgid="' + esc(r.id) + '" ' + (on ? 'checked' : '') + (r.locked ? ' disabled' : '')
                         + ' style="width:18px;height:18px;flex:none;accent-color:#38bdf8;">'
@@ -158,6 +186,43 @@
             note.style.display = 'block';
         });
         card.querySelector('#afk-tg-reload').addEventListener('click', function () { try { location.reload(); } catch (e) { close(); } });
+
+        // 只看我改過的：切換時才重算一次（勾選當下不即時隱藏那一列，不然剛按到的東西會在眼前消失）
+        var onlyChanged = false, ocBtn = card.querySelector('#afk-tg-onlychanged');
+        ocBtn.addEventListener('click', function () {
+            onlyChanged = !onlyChanged;
+            var n = 0;
+            card.querySelectorAll('label[data-tgrow]').forEach(function (row) {
+                var r = find(row.getAttribute('data-tgrow'));
+                var show = !onlyChanged || (r && isChanged(r));
+                row.style.display = show ? 'flex' : 'none';   // ⚠ 不可設成 ''：那會把行內樣式的 display:flex 一起清掉，整列版面散開
+                if (show && onlyChanged) n++;
+            });
+            card.querySelectorAll('[data-tggroup]').forEach(function (h) {   // 整組都被濾掉就連標題一起收
+                var g = h.getAttribute('data-tggroup');
+                var any = [].slice.call(card.querySelectorAll('label[data-tggrp="' + g.replace(/"/g, '\\"') + '"]'))
+                    .some(function (row) { return row.style.display !== 'none'; });
+                h.style.display = any ? '' : 'none';
+            });
+            card.querySelector('#afk-tg-empty').style.display = (onlyChanged && n === 0) ? '' : 'none';
+            ocBtn.textContent = onlyChanged ? '看全部（' + n + ' 項改過）' : '只看我改過的（' + changedCount() + '）';
+            ocBtn.style.background = onlyChanged ? '#0e7490' : '#1e293b';
+            ocBtn.style.color = onlyChanged ? '#e0f2fe' : '#cbd5e1';
+        });
+    }
+
+    // 「改過」＝存過設定而且跟預設不同。用存進去的值判斷、不是用 enabled()：
+    //   子選項在父項關掉時 enabled() 一律是 false，拿它比就會把玩家沒碰過的東西也算成改過。
+    function isChanged(r) {
+        var v = null;
+        try { v = localStorage.getItem(LS + r.id); } catch (e) { return false; }
+        if (v === null) return false;
+        return (v === '1') !== !!r.def;
+    }
+    function changedCount() {
+        var n = 0;
+        registry.forEach(function (r) { if (isChanged(r)) n++; });
+        return n;
     }
 
     function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
@@ -197,6 +262,10 @@
         return true;
     }
     injectEntry();
+    // 🏠 小百科／掉落查詢的獨立分頁（?view=…）也要藏：那裡頁首有自己的導覽列（首頁／小百科／掉落查詢），
+    //    這顆固定按鈕的位置正好蓋住第一顆「🏠 首頁」讓人點不到（玩家回報）。獨立分頁只看 location.search，
+    //    不碰任何外掛設的變數／class（逃生門不可依賴可被關掉的東西）；回到首頁就看得到這顆鈕，逃生門仍在。
+    function inStandaloneView() { try { return !!new URLSearchParams(location.search).get('view'); } catch (e) { return false; } }
     // 只在首頁顯示：進遊戲（#game-screen 顯示 / #main-menu 隱藏）就把左上角開關鈕藏起來。
     function syncEntryVisibility() {
         var btn = document.getElementById('afk-toggles-entry');
@@ -204,7 +273,7 @@
         // 以「遊戲畫面是否顯示」為準（最可靠）：game-screen 沒隱藏＝在遊戲中→藏開關鈕；否則(首頁/選角/創角)顯示。
         var gs = document.getElementById('game-screen');
         var inGame = gs && !gs.classList.contains('hidden');
-        btn.style.display = inGame ? 'none' : '';
+        btn.style.display = (inGame || inStandaloneView()) ? 'none' : '';
         syncEntryTop();   // 橫幅由遊戲 loop 晚注入、高度也會變（換行）→ 每秒跟著校正一次
     }
     syncEntryVisibility();

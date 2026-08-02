@@ -186,48 +186,77 @@ patch('afk-powersave.js', [
   '省電設定即時刷新'
 ));
 
-patch('afk-skin.js', [
-  'var _modalEscBound = false;',
-  "var current = document.getElementById('afk-plugin-modal');",
-  "modeObs.observe(document.body, { attributes: true, attributeFilter: ['class'] });",
-], (input) => {
-  let source = replaceOnce(
-    input,
-    '  var _busy = false;',
-    "  var _busy = false;\n  var _modalEscBound = false;",
-    'afk-skin.js',
-    'ESC listener guard'
-  );
-  source = replaceOnce(
-    source,
-    "    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });",
-    "    if (!_modalEscBound) {\n" +
-    "      _modalEscBound = true;\n" +
-    "      document.addEventListener('keydown', function (e) {\n" +
-    "        if (e.key !== 'Escape') return;\n" +
-    "        var current = document.getElementById('afk-plugin-modal');\n" +
-    "        if (current) current.classList.remove('is-open');\n" +
-    "      });\n" +
-    "    }",
-    'afk-skin.js',
-    '單一 ESC listener'
-  );
-  return replaceOnce(
-    source,
-    "      var obs = new MutationObserver(function () { apply(); });\n" +
-    "      obs.observe(menu, { childList: true });\n" +
-    "    }",
-    "      var obs = new MutationObserver(function () { apply(); });\n" +
-    "      obs.observe(menu, { childList: true });\n" +
-    "      if (document.body) {\n" +
-    "        var modeObs = new MutationObserver(function () { apply(); });\n" +
-    "        modeObs.observe(document.body, { attributes: true, attributeFilter: ['class'] });\n" +
-    "      }\n" +
-    "    }",
-    'afk-skin.js',
-    '手機版型 class observer'
-  );
-});
+patch('afk-mobile.js', [
+  '🔒 Jesper 本地離線換角守衛',
+  "typeof __afk.isCatchingUp === 'function' && __afk.isCatchingUp()",
+], (input) => replaceOnce(
+  input,
+  "    function settling() {\n" +
+  "        try { if (window.__afk && typeof __afk.busy === 'function' && __afk.busy()) return true; } catch (e) {}",
+  "    function settling() {\n" +
+  "        // 🔒 Jesper 本地離線換角守衛：本站舊離線引擎公開 isCatchingUp；busy/catchupActive 保留 PP 相容。\n" +
+  "        try { if (window.__afk && typeof __afk.isCatchingUp === 'function' && __afk.isCatchingUp()) return true; } catch (e) {}\n" +
+  "        try { if (window.__afk && typeof __afk.busy === 'function' && __afk.busy()) return true; } catch (e) {}",
+  'afk-mobile.js',
+  '本地離線換角守衛'
+));
+
+{
+  const skinSource = read('afk-skin.js');
+  const panelLayout = skinSource.includes('function ensurePanel(menu)') &&
+    skinSource.includes("document.getElementById('afk-plugin-panel')");
+  const markers = panelLayout
+    ? ["modeObs.observe(document.body, { attributes: true, attributeFilter: ['class'] });"]
+    : [
+        'var _modalEscBound = false;',
+        "var current = document.getElementById('afk-plugin-modal');",
+        "modeObs.observe(document.body, { attributes: true, attributeFilter: ['class'] });",
+      ];
+
+  patch('afk-skin.js', markers, (input) => {
+    let source = input;
+    // PP 2026-08-01 起桌機入口改成常駐 #afk-plugin-panel，已沒有 Modal／ESC listener。
+    // 新版只需保留 body class observer，讓手機版面開關後立即重新安置入口。
+    if (!panelLayout) {
+      source = replaceOnce(
+        source,
+        '  var _busy = false;',
+        "  var _busy = false;\n  var _modalEscBound = false;",
+        'afk-skin.js',
+        'ESC listener guard'
+      );
+      source = replaceOnce(
+        source,
+        "    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });",
+        "    if (!_modalEscBound) {\n" +
+        "      _modalEscBound = true;\n" +
+        "      document.addEventListener('keydown', function (e) {\n" +
+        "        if (e.key !== 'Escape') return;\n" +
+        "        var current = document.getElementById('afk-plugin-modal');\n" +
+        "        if (current) current.classList.remove('is-open');\n" +
+        "      });\n" +
+        "    }",
+        'afk-skin.js',
+        '單一 ESC listener'
+      );
+    }
+    return replaceOnce(
+      source,
+      "      var obs = new MutationObserver(function () { apply(); });\n" +
+      "      obs.observe(menu, { childList: true });\n" +
+      "    }",
+      "      var obs = new MutationObserver(function () { apply(); });\n" +
+      "      obs.observe(menu, { childList: true });\n" +
+      "      if (document.body) {\n" +
+      "        var modeObs = new MutationObserver(function () { apply(); });\n" +
+      "        modeObs.observe(document.body, { attributes: true, attributeFilter: ['class'] });\n" +
+      "      }\n" +
+      "    }",
+      'afk-skin.js',
+      '手機版型 class observer'
+    );
+  });
+}
 
 patch('afk-synccompress.js', [
   "typeof _cancelLzCompressionKey === 'function'",
@@ -258,16 +287,206 @@ patch('afk-training.js', [
   '木人場直接進圖生命週期'
 ));
 
-patch('afk-wiki.js', [
-  'equipPage: 0',
-  'var EQUIP_PAGE_SIZE = 48;',
-  'data-equippage=',
-  "det.innerHTML = linkifyTabs(equipDetailHTML(eqHead.getAttribute('data-eq')), 'equip');",
-  '列表固定分頁，避免手機一次載入數千張取得來源圖片',
-  'function equipSearchRows(terms)',
-  'data-eqsearch-card="1"',
-  'var equipVisible = equipRows.slice(0, 80);',
-], (input) => {
+{
+  const wikiSource = read('afk-wiki.js');
+  const nativeIncrementalEquip = wikiSource.includes('// 🔒 Jesper bounded equip wiki v2') || [
+    '詳情是「點開才建」',
+    'if (willOpen && !det.innerHTML) det.innerHTML = equipDetailHTML(_eid);',
+    'var _eqOpen = {};',
+    'EQ_LF.onScroll(this);',
+    'function eqSearchBlocks(terms, max)',
+  ].every((marker) => wikiSource.includes(marker));
+  const wikiMarkers = nativeIncrementalEquip
+    ? [
+        '// 🔒 Jesper bounded equip wiki v2',
+      ]
+    : [
+        'equipPage: 0',
+        'var EQUIP_PAGE_SIZE = 48;',
+        'data-equippage=',
+        "det.innerHTML = linkifyTabs(equipDetailHTML(eqHead.getAttribute('data-eq')), 'equip');",
+        '列表固定分頁，避免手機一次載入數千張取得來源圖片',
+        'function equipSearchRows(terms)',
+        'data-eqsearch-card="1"',
+        'var equipVisible = equipRows.slice(0, 80);',
+      ];
+
+  patch('afk-wiki.js', wikiMarkers, (input) => {
+  if (nativeIncrementalEquip) {
+    let source = replaceOnce(
+      input,
+      "  var LF_PAGE = 40;            // 一次畫幾列(捲到接近底自動追加)",
+      "  // 🔒 Jesper bounded equip wiki v2\n" +
+      "  var LF_PAGE = 40;            // 一頁固定幾列，避免手機捲到底後把全部裝備永久留在 DOM",
+      'afk-wiki.js',
+      '新版裝備有界契約標記'
+    );
+    source = replaceOnce(
+      source,
+      "  function eqHay(it) {\n" +
+      "    var h = _eqHay[it.id];",
+      "  function eqHay(it) {\n" +
+      "    if (!it || !it.id) return '';   // 閒置工作即使遇到過期索引也不可讓百科整頁拋錯\n" +
+      "    var h = _eqHay[it.id];",
+      'afk-wiki.js',
+      '裝備搜尋索引邊界'
+    );
+    source = replaceOnce(
+      source,
+      "  var _eqWarmAt = -1;\n" +
+      "  function eqWarmHay() {\n" +
+      "    if (_eqWarmAt === -2) return;                                  // 已全部建好\n" +
+      "    var idle = window.requestIdleCallback || function (fn) { return setTimeout(function () { fn({ timeRemaining: function () { return 6; } }); }, 60); };\n" +
+      "    if (_eqWarmAt < 0) _eqWarmAt = 0;\n" +
+      "    idle(function (dl) {\n" +
+      "      var idx = eqIndex(), done = 0;",
+      "  var _eqWarmAt = -1, _eqWarmPending = false;\n" +
+      "  function eqWarmHay() {\n" +
+      "    if (_eqWarmAt === -2) return;                                  // 已全部建好\n" +
+      "    if (_eqWarmPending) return;                                    // 多次開頁只共用一個閒置工作\n" +
+      "    var idle = window.requestIdleCallback || function (fn) { return setTimeout(function () { fn({ timeRemaining: function () { return 6; } }); }, 60); };\n" +
+      "    if (_eqWarmAt < 0) _eqWarmAt = 0;\n" +
+      "    _eqWarmPending = true;\n" +
+      "    idle(function (dl) {\n" +
+      "      _eqWarmPending = false;\n" +
+      "      if (_eqWarmAt === -2) return;                                // 舊的閒置 callback 若已排隊，完成後不得從 -2 倒著讀索引\n" +
+      "      var idx = eqIndex(), done = 0;",
+      'afk-wiki.js',
+      '裝備搜尋閒置工作去重'
+    );
+    source = replaceOnce(
+      source,
+      "      var eqHead = e.target.closest ? e.target.closest('[data-eq]') : null;\n" +
+      "      if (eqHead) {\n" +
+      "        var det = eqHead.parentNode ? eqHead.parentNode.querySelector('.m-eq-detail') : null;\n" +
+      "        if (det) {\n" +
+      "          var _eid = eqHead.getAttribute('data-eq'), willOpen = (det.style.display === 'none');\n" +
+      "          if (willOpen && !det.innerHTML) det.innerHTML = equipDetailHTML(_eid);\n" +
+      "          det.style.display = willOpen ? '' : 'none';\n" +
+      "          if (willOpen) _eqOpen[_eid] = 1; else delete _eqOpen[_eid];\n" +
+      "        }\n" +
+      "        return;\n" +
+      "      }",
+      "      var eqHead = e.target.closest ? e.target.closest('[data-eq]') : null;\n" +
+      "      if (eqHead) {\n" +
+      "        var det = eqHead.parentNode ? eqHead.parentNode.querySelector('.m-eq-detail') : null;\n" +
+      "        if (det) {\n" +
+      "          var _eid = eqHead.getAttribute('data-eq'), willOpen = (det.style.display === 'none');\n" +
+      "          // 同時只保留一件裝備詳情；開新列前釋放上一列的圖片、DOM 與展開狀態。\n" +
+      "          document.querySelectorAll('#m-wiki-body .m-eq-detail').forEach(function (other) {\n" +
+      "            if (other === det) return;\n" +
+      "            var otherHead = other.parentNode && other.parentNode.querySelector('[data-eq]');\n" +
+      "            if (otherHead) delete _eqOpen[otherHead.getAttribute('data-eq')];\n" +
+      "            other.querySelectorAll('img[src],img[srcset]').forEach(function (img) { img.removeAttribute('src'); img.removeAttribute('srcset'); });\n" +
+      "            other.innerHTML = ''; other.style.display = 'none';\n" +
+      "          });\n" +
+      "          if (willOpen) {\n" +
+      "            if (!det.innerHTML) det.innerHTML = equipDetailHTML(_eid);\n" +
+      "            det.style.display = ''; _eqOpen[_eid] = 1;\n" +
+      "          } else {\n" +
+      "            det.querySelectorAll('img[src],img[srcset]').forEach(function (img) { img.removeAttribute('src'); img.removeAttribute('srcset'); });\n" +
+      "            det.innerHTML = ''; det.style.display = 'none'; delete _eqOpen[_eid];\n" +
+      "          }\n" +
+      "        }\n" +
+      "        return;\n" +
+      "      }",
+      'afk-wiki.js',
+      '新版裝備詳情單例惰性載入'
+    );
+    source = replaceOnce(
+      source,
+      "    var st = { sel: {}, num: {}, q: '', qt: [], sort: spec.sorts[0].k, desc: spec.sorts[0].desc !== false, group: true, groupTouched: false, shown: LF_PAGE };",
+      "    var st = { sel: {}, num: {}, q: '', qt: [], sort: spec.sorts[0].k, desc: spec.sorts[0].desc !== false, group: true, groupTouched: false, page: 0 };",
+      'afk-wiki.js',
+      '新版裝備固定分頁狀態'
+    );
+    source = replaceOnce(
+      source,
+      "    function invalidate() { _res = null; st.shown = LF_PAGE; }",
+      "    function invalidate() { _res = null; st.page = 0; }",
+      'afk-wiki.js',
+      '新版裝備固定分頁歸零'
+    );
+    source = replaceOnce(
+      source,
+      "    function moreBtnHTML(arr) {\n" +
+      "      var left = arr.length - st.shown;\n" +
+      "      return left > 0 ? '<button type=\"button\" class=\"m-lf-more\" data-lfmore=\"1\">顯示更多（還有 ' + left + ' 件）</button>' : '';\n" +
+      "    }\n" +
+      "    function listInner() {\n" +
+      "      var arr = results();\n" +
+      "      if (!arr.length) {   // 提示要依「現在是什麼把結果篩空的」給復原路徑:只打了搜尋字時,膠囊列是空的、「清除全部」那顆根本不存在(踩過)\n" +
+      "        var hint = (typeof spec.emptyHint === 'function') ? spec.emptyHint(st, activeCount()) : esc(spec.emptyHint || '沒有符合的項目。');\n" +
+      "        return '<div class=\"m-wiki-hint\">' + hint + '</div>';\n" +
+      "      }\n" +
+      "      return rowsHTML(arr, 0, Math.min(arr.length, st.shown)) + moreBtnHTML(arr);\n" +
+      "    }",
+      "    function pageButtonsHTML(arr) {\n" +
+      "      var pages = Math.max(1, Math.ceil(arr.length / LF_PAGE));\n" +
+      "      st.page = Math.max(0, Math.min(st.page, pages - 1));\n" +
+      "      if (pages <= 1) return '';\n" +
+      "      return '<div class=\"m-lf-pages\" style=\"display:flex;align-items:center;justify-content:center;gap:10px;margin:10px 0;\">' +\n" +
+      "        '<button type=\"button\" class=\"m-lf-btn\" data-equippage=\"' + Math.max(0, st.page - 1) + '\"' + (st.page <= 0 ? ' disabled' : '') + '>上一頁</button>' +\n" +
+      "        '<span style=\"color:#94a3b8;font-size:12px;\">' + (st.page + 1) + ' / ' + pages + '（共 ' + arr.length + ' 件）</span>' +\n" +
+      "        '<button type=\"button\" class=\"m-lf-btn\" data-equippage=\"' + Math.min(pages - 1, st.page + 1) + '\"' + (st.page >= pages - 1 ? ' disabled' : '') + '>下一頁</button></div>';\n" +
+      "    }\n" +
+      "    function listInner() {\n" +
+      "      var arr = results();\n" +
+      "      if (!arr.length) {   // 提示要依「現在是什麼把結果篩空的」給復原路徑:只打了搜尋字時,膠囊列是空的、「清除全部」那顆根本不存在(踩過)\n" +
+      "        var hint = (typeof spec.emptyHint === 'function') ? spec.emptyHint(st, activeCount()) : esc(spec.emptyHint || '沒有符合的項目。');\n" +
+      "        return '<div class=\"m-wiki-hint\">' + hint + '</div>';\n" +
+      "      }\n" +
+      "      var controls = pageButtonsHTML(arr), from = st.page * LF_PAGE;\n" +
+      "      return controls + rowsHTML(arr, from, Math.min(arr.length, from + LF_PAGE)) + controls;\n" +
+      "    }",
+      'afk-wiki.js',
+      '新版裝備固定分頁輸出'
+    );
+    source = replaceOnce(
+      source,
+      "      if ((b = t.closest('[data-lfmore]'))) { appendMore(); return true; }",
+      "      if ((b = t.closest('[data-equippage]'))) { st.page = Math.max(0, Number(b.getAttribute('data-equippage')) || 0); repaint(); return true; }\n" +
+      "      if ((b = t.closest('[data-lfmore]'))) { appendMore(); return true; }",
+      'afk-wiki.js',
+      '新版裝備固定分頁事件'
+    );
+    source = replaceOnce(
+      source,
+      "    function onScroll(box) {\n" +
+      "      if (st.shown >= results().length) return;\n" +
+      "      if (box.scrollTop + box.clientHeight >= box.scrollHeight - LF_NEAR_BOTTOM) appendMore();\n" +
+      "    }",
+      "    function onScroll() { return; }   // 固定分頁維持 DOM 上限，不再隨捲動累加全部裝備",
+      'afk-wiki.js',
+      '新版裝備捲動固定上限'
+    );
+    source = replaceOnce(
+      source,
+      "    var ic = ''; try { ic = (typeof getIconUrl === 'function') ? getIconUrl(d) : ''; } catch (eIc) {}\n" +
+      "    var icImg = ic ? '<img src=\"' + esc(ic) + '\" alt=\"\" style=\"width:26px;height:26px;object-fit:contain;flex:none;border-radius:4px;\" onerror=\"this.style.display=\\'none\\'\">' : '';",
+      "    var ic = ''; if (!(ctx && ctx.lazy)) { try { ic = (typeof getIconUrl === 'function') ? getIconUrl(d) : ''; } catch (eIc) {} }\n" +
+      "    var icImg = ic ? '<img src=\"' + esc(ic) + '\" alt=\"\" style=\"width:26px;height:26px;object-fit:contain;flex:none;border-radius:4px;\" onerror=\"this.style.display=\\'none\\'\">' : '';",
+      'afk-wiki.js',
+      '新版裝備搜尋卡圖片惰性'
+    );
+    source = replaceOnce(
+      source,
+      "    var open = !!(_eqOpen[id] || (ctx && ctx.open));\n" +
+      "    return '<div class=\"m-wiki-card m-eq-card\">' +",
+      "    var open = !(ctx && ctx.lazy) && !!(_eqOpen[id] || (ctx && ctx.open));\n" +
+      "    return '<div class=\"m-wiki-card m-eq-card\"' + ((ctx && ctx.lazy) ? ' data-eqsearch-card=\"1\"' : '') + '>' +",
+      'afk-wiki.js',
+      '新版裝備搜尋卡惰性標記'
+    );
+    source = replaceOnce(
+      source,
+      "        out.push({ title: idx[i].name, html: eqRowHTML(idx[i], { open: true }) });   // 搜尋結果直接展開:命中的字常在詳情裡,收起來看不到",
+      "        out.push({ title: idx[i].name, html: eqRowHTML(idx[i], { lazy: true }) });   // 手機搜尋卡只列名稱與摘要，點開時才建立完整詳情",
+      'afk-wiki.js',
+      '新版裝備完整搜尋惰性卡片'
+    );
+    return source;
+  }
   let source = replaceOnce(
     input,
     "  var state = { tab: 'equipbook', cls: 'knight', q: '', magicCls: 'all', magicChar: '', collMode: null, equipCls: 'all', equipSlot: 'all', equipRegion: 'all', relicRegion: 'all' };",
@@ -508,7 +727,8 @@ patch('afk-wiki.js', [
     'afk-wiki.js',
     '全域搜尋涵蓋全部裝備'
   );
-});
+  });
+}
 
 if (CHECK) {
   if (changed) {
