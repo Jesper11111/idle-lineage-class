@@ -214,6 +214,8 @@ export async function testSaveFiles(paths) {
           signedRoundtrip: true,
           partyCount: partyExpShareCount(),
           expectedPartyCount: Math.min(8, 1 + activeAllies),
+          expDivisor: partyExpShareDivisor(),
+          expectedExpDivisor: 1 + Math.min(7, activeAllies) * 0.4,
           rewardMult: partyRewardMult(),
           dropMult: partyDropMult(),
           expectedDropMult: 1 + Math.min(7, activeAllies) * 0.6,
@@ -253,7 +255,8 @@ export async function testSaveFiles(paths) {
         }
         if (got.loadWarehouseCalls !== 1) failures.push(`載入角色期間重複解析倉庫 ${got.loadWarehouseCalls} 次`);
         if (got.version !== 'v3.8.34') failures.push('核心版本不是 PP v3.8.34');
-        if (got.partyCount !== got.expectedPartyCount) failures.push('傭兵經驗均分人數錯誤');
+        if (got.partyCount !== got.expectedPartyCount) failures.push('傭兵存活成員數相容值錯誤');
+        if (Math.abs(got.expDivisor - got.expectedExpDivisor) > 1e-12) failures.push('傭兵經驗 0.4 權重分母錯誤');
         if (got.rewardMult !== 1) failures.push('金幣仍有隊伍人數加乘');
         if (Math.abs(got.dropMult - got.expectedDropMult) > 1e-12 ||
             Math.abs(got.dropRate - got.expectedDropRate) > 1e-12) {
@@ -262,7 +265,7 @@ export async function testSaveFiles(paths) {
         if (got.employmentKeys.length) failures.push('仍寫入反向受僱登記');
         if (got.safeAreaBlocked !== false) failures.push('受僱角色仍被鎖在安全區');
         if (JSON.stringify(got.rehireCosts) !== JSON.stringify([0, 0, 0])) failures.push('免費更新快照費率錯誤');
-        if (got.legacyPolicy !== '3.7.61-hybrid-drop60-town-refresh-on-pp-v3.8.34') failures.push('傭兵混合政策層未啟動');
+        if (got.legacyPolicy !== 'weighted-exp04-royal30-drop60-town-refresh-on-pp-v3.8.34') failures.push('傭兵混合政策層未啟動');
         if (got.townRefresh !== true || got.paidManualRehire !== false || !got.townRefreshUsesCore) {
           failures.push('回城免費自動刷新快照政策未完整啟動：' + JSON.stringify({
             townRefresh: got.townRefresh,

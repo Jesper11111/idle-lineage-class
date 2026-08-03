@@ -345,14 +345,36 @@ const powersaveInventoryProblems = await page.evaluate(() => {
   return bad;
 });
 
-// 舊傭兵獎勵／招募／受僱政策＋回城免費刷新 + PP v3.8.34 戰鬥模組並存契約。
+// 本地傭兵獎勵／招募／受僱政策＋回城免費刷新 + PP v3.8.34 戰鬥模組並存契約。
 const mercPolicyProblems = await page.evaluate(() => {
   const bad = [];
   const p = window.__legacyMercPolicy;
-  if (!p || p.version !== '3.7.61-hybrid-drop60-town-refresh-on-pp-v3.8.34') bad.push('傭兵混合政策層未啟動');
+  if (!p || p.version !== 'weighted-exp04-royal30-drop60-town-refresh-on-pp-v3.8.34') bad.push('傭兵混合政策層未啟動');
   if (typeof GAME_VERSION === 'undefined' || GAME_VERSION !== 'v3.8.34') bad.push(`核心版本不是 v3.8.34（${typeof GAME_VERSION === 'undefined' ? 'missing' : GAME_VERSION}）`);
-  if (!p || p.dropPerMercPct !== 60 || p.goldPartyMultiplier !== false) bad.push('傭兵掉寶／金幣政策中繼資料錯誤');
+  if (!p || p.expMercWeight !== 0.4 || p.royalLeaderExpPerMercPct !== 30 ||
+      p.royalLeaderExpMaxPct !== 210 || p.royalFullPartySoloFloor !== true ||
+      p.dropPerMercPct !== 60 || p.goldPartyMultiplier !== false) bad.push('傭兵經驗／掉寶／金幣政策中繼資料錯誤');
   if (typeof partyRewardMult !== 'function' || partyRewardMult() !== 1) bad.push('金幣仍按隊伍人數加乘');
+  if (typeof partyExpShareDivisor !== 'function' || typeof partyPlayerExpGain !== 'function') {
+    bad.push('傭兵 0.4 權重／王族統率函式未載入');
+  } else {
+    const oldAllies = player.allies;
+    const oldCls = player.cls;
+    try {
+      player.cls = 'royal';
+      player.allies = Array.from({ length: 7 }, (_, i) => ({ uid: `exp-test-${i}`, _downed: false }));
+      if (Math.abs(partyExpShareDivisor() - 3.8) > 1e-12 || partyRoyalLeadershipPct() !== 210 ||
+          partyPlayerExpGain(100, 0) !== 127 || partyPlayerExpGain(100, 10) !== 139) {
+        bad.push('王族帶滿傭兵經驗公式不是 3.8 分母／+210%／100→127（娃娃 +10%→139）');
+      }
+      player.allies[6]._downed = true;
+      if (Math.abs(partyExpShareDivisor() - 3.4) > 1e-12 || partyRoyalLeadershipPct() !== 180 ||
+          partyPlayerExpGain(100, 0) !== 121) bad.push('倒地傭兵仍被計入經驗分母或王族統率');
+    } finally {
+      player.allies = oldAllies;
+      player.cls = oldCls;
+    }
+  }
   if (typeof partyDropMult !== 'function' || typeof partyDropRate !== 'function') {
     bad.push('傭兵掉寶倍率函式未載入');
   } else {
