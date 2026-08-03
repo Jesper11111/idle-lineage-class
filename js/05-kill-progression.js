@@ -85,7 +85,7 @@ function auditTrackKill(mob) {
     // 📊 v3.6.58 刻意**不乘** getExpGainMult(player.lv)：該倍率在 Lv100 為 0（滿等不入帳），統計頁會整片歸零、
     //    連「這張圖效率如何」都看不出來。此處改記「同條件下應得的經驗」＝練功效率指標（Lv<100 時倍率恆 1，數字與實得完全相同）。
     //    ⚠️ 實際入帳仍在 killMob :320（照樣乘 getExpGainMult）——統計是參考值，不是經驗來源，勿把這裡當入帳口徑。
-    let g = Math.floor((mob.exp || 0) * (1 + partyExpBonusPct() / 100) / partyExpShareCount() * (1 + (typeof dollFieldVal === 'function' ? dollFieldVal('expBonus') : 0) / 100));   // 🔒 舊傭兵政策：統計記主玩家均分後應得經驗
+    let g = partyPlayerExpGain(mob.exp || 0, (typeof dollFieldVal === 'function' ? dollFieldVal('expBonus') : 0));   // ⚖️ 統計與主玩家實際 0.4 權重＋王族統率入帳同口徑
     if (g > 0) _audit.exp += g;
     _audit.kills++;
 }
@@ -242,12 +242,25 @@ setInterval(() => { try { renderAuditTab(); } catch(e) {} }, 2000);   // 開著�
 // ⚠️v3.0.85 用戶指示：經典模式「掉落率 ×1/10」懲罰移除（歷次：v3.0.82 經驗×0.5／金幣÷2 移除 → v3.0.85 掉落×1/10 移除）。
 //   classicDropMult 恆 1 保留為單一真相掛點（十餘個掉落判定點仍乘它·未來要恢復懲罰只改這裡）；trialItemDropMult（試煉道具豁免）同步恆 1。
 //   經典模式現存差異：死亡損失 5% 經驗（時空裂痕/攻城區除外）、隱藏祝福/精通/席琳、停用武器/盾/騎士特效。
-// 🔒 legacy-merc-policy: v3.7.61 經驗均分、金幣不加乘；掉寶每名未倒地傭兵 +60%。
+// 🔒 local-merc-policy: 經驗傭兵權重 0.4；王族本人每名未倒地傭兵 +30%（最高 +210%／帶滿保底單練）；金幣 ×1；掉寶每名 +60%。
 function classicDropMult() { return 1; }
 function trialItemDropMult(id) { return 1; }
-// 🤝 v3.7.62 有效隊伍人數＝主玩家＋未倒地傭兵，最高 8 人。寵物各拿完整經驗，但不佔掉落／金幣倍率名額。
+// 🤝 有效隊伍人數＝主玩家＋未倒地傭兵，最高 8 人；經驗另採 0.4 權重分母。寵物複製加權份額，但不佔分母或掉落／金幣名額。
 function partyActiveMemberCount() { return Math.min(8, 1 + ((player.allies || []).filter(a => a && !a._downed).length)); }
-function partyExpShareCount() { return partyActiveMemberCount(); }   // 🔒 舊傭兵政策：主玩家＋未倒地傭兵均分
+const PARTY_EXP_MERC_WEIGHT = 0.4;
+const ROYAL_LEADERSHIP_EXP_PER_MERC_PCT = 30;
+const ROYAL_LEADERSHIP_EXP_MAX_PCT = 210;
+function partyActiveMercCount() { return Math.max(0, partyActiveMemberCount() - 1); }
+function partyExpShareCount() { return partyActiveMemberCount(); }   // 相容既有外部呼叫：維持回傳實際存活成員數
+function partyExpShareDivisor() { return 1 + partyActiveMercCount() * PARTY_EXP_MERC_WEIGHT; }   // ⚖️ 每名未倒地傭兵只增加 0.4 份有效分母
+function partyRoyalLeadershipPct() { return (player && player.cls === 'royal') ? Math.min(ROYAL_LEADERSHIP_EXP_MAX_PCT, partyActiveMercCount() * ROYAL_LEADERSHIP_EXP_PER_MERC_PCT) : 0; }
+function partyExpSharedRaw(rawExp) { return Math.max(0, Number(rawExp) || 0) * (1 + partyExpBonusPct() / 100) / partyExpShareDivisor(); }
+function partyPlayerExpGain(rawExp, dollBonusPct) {
+    let _raw = Math.max(0, Number(rawExp) || 0), _dollMult = 1 + Math.max(0, Number(dollBonusPct) || 0) / 100;
+    let _gain = Math.floor(partyExpSharedRaw(_raw) * (1 + partyRoyalLeadershipPct() / 100) * _dollMult);
+    if (player && player.cls === 'royal' && partyActiveMercCount() >= 7) _gain = Math.max(_gain, Math.floor(_raw * _dollMult));   // 👑 帶滿 7 名：本人不得低於含娃娃的同條件單練經驗
+    return Math.max(0, _gain);
+}
 function partyRewardMult() { return 1; }   // 🔒 本地政策：金幣不按隊伍人數加乘
 function partyDropMult() { return 1 + Math.max(0, partyActiveMemberCount() - 1) * 0.6; }   // 🔒 本地政策：每名未倒地傭兵使掉寶率 +60%，王族 7 名時 ×5.2
 function partyDropRate(rate) { return Math.min(1, Math.max(0, Number(rate) || 0) * partyDropMult()); }
@@ -373,15 +386,16 @@ function killMob(idx) {
     // 🔧 轉場建築（往上層的樓梯 / 遺忘之島傳送門）：擊敗即進入下一層/島，不顯示「擊敗了…」戰鬥訊息（race 建築且 noAutoTeleport，排除攻城塔/城門）
     let _hideKillMsg = (mob.race === '建築' && mob.noAutoTeleport);
     if(!_hideKillMsg) logCombat(`擊敗了 <span class="${getMobColor(mob.lv)}">${mob.n}</span>！`, 'player-heavy');  // 👈 新增
-    // 🔒 舊傭兵政策：先套既有組隊加成，再由主玩家＋未倒地傭兵均分；寵物複製主玩家份額。
-    let _expShare = mob.exp * (1 + partyExpBonusPct() / 100) / partyExpShareCount();
-    let _petExpGain = Math.floor(_expShare * (1 + dollFieldVal('expBonus') / 100));
-    let _playerExpGain = Math.floor(_petExpGain * getExpGainMult(player.lv));   // ⚠️v3.0.82 經典×0.5 已移除；Lv100 玩家自身仍不獲得經驗
+    // ⚖️ 本地政策：每名未倒地傭兵只增加 0.4 份有效分母；王族本人另吃統率，寵物只複製加權份額。
+    let _expShare = partyExpSharedRaw(mob.exp);
+    let _dollExpBonus = dollFieldVal('expBonus');
+    let _petExpGain = Math.floor(_expShare * (1 + _dollExpBonus / 100));
+    let _playerExpGain = Math.floor(partyPlayerExpGain(mob.exp, _dollExpBonus) * getExpGainMult(player.lv));   // 👑 帶滿 7 名保底含娃娃的同條件單練經驗；Lv100 仍不獲得
     player.exp += _playerExpGain;
     checkLvUp();
-    // 🐾 舊傭兵政策：每隻未倒地寵物複製主玩家均分後份額；不受玩家 Lv100 封頂影響
+    // 🐾 每隻未倒地寵物複製 0.4 權重份額＋隊長娃娃加成；不吃王族本人統率、不受玩家 Lv100 封頂影響
     if (typeof petsGainExp === 'function') petsGainExp(_petExpGain);
-    // 🤝 舊傭兵政策：每名未倒地傭兵各取得同一份均分經驗。
+    // 🤝 每名未倒地傭兵各取得同一份 0.4 權重經驗；不吃隊長娃娃與王族本人統率。
     if (player.allies && player.allies.length && mob.exp) {
         player.allies.forEach(a => {
             if (!a || a._downed) return;

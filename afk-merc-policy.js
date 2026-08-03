@@ -1,12 +1,13 @@
 /*
- * afk-merc-policy.js — 在 PP 最新版上保留 v3.7.61 的傭兵獎勵／招募／受僱政策，另採回城免費刷新。
+ * afk-merc-policy.js — 在 PP 最新版上保留本站傭兵獎勵／招募／受僱政策，另採回城免費刷新。
  *
  * 戰鬥本體仍使用 PP 最新核心（威脅值、綁定、城堡護衛等照常作用）。
  * 這裡只覆寫政策層：
  *   - 招募維持收費
  *   - 回村免費自動結算累積經驗並刷新戰力快照
  *   - 不建立反向受僱登記、不限制同一角色只能受僱一次、不鎖安全區
- * 經驗均分、金幣固定 ×1、每名未倒地傭兵掉寶 +60%，
+ * 經驗採傭兵權重 0.4；王族本人每名未倒地傭兵 +30%（最高 +210%），帶滿保底含娃娃的單練經驗；
+ * 金幣固定 ×1、每名未倒地傭兵掉寶 +60%，
  * 在核心 js/05 由 apply-policy-patches.mjs 固定。
  */
 (function () {
@@ -203,8 +204,12 @@
   window.renderAllyNPC = renderAllyNPCLegacy;
 
   window.__legacyMercPolicy = Object.freeze({
-    version: '3.7.61-hybrid-drop60-town-refresh-on-pp-v3.8.34',
+    version: 'weighted-exp04-royal30-drop60-town-refresh-on-pp-v3.8.34',
     rewardShare: true,
+    expMercWeight: 0.4,
+    royalLeaderExpPerMercPct: 30,
+    royalLeaderExpMaxPct: 210,
+    royalFullPartySoloFloor: true,
     dropPerMercPct: 60,
     goldPartyMultiplier: false,
     paidRecruit: true,
@@ -214,5 +219,5 @@
     safeAreaLock: false,
     elementRestriction: false
   });
-  console.log('[AFK-merc-policy] hooks OK — 保留舊版傭兵獎勵／受僱規則，回城免費更新快照。');
+  console.log('[AFK-merc-policy] hooks OK — 傭兵經驗權重 0.4、王族統率、掉寶 +60% 與回城免費快照政策已啟用。');
 })();

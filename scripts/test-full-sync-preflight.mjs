@@ -177,7 +177,7 @@ try {
   assert.match(checkOutputs[0], /全部 \d+ 個核心補丁均已就位/, '核心 --check 未通過');
   assert.match(checkOutputs[1], /\d+ 支 PP 外掛生命週期修正完整/, '外掛 --check 未通過');
   assert.match(checkOutputs[2], /全部 \d+ 個 Shines 回移契約均已就位/, 'Shines --check 未通過');
-  assert.match(checkOutputs[3], /傭兵均分經驗、掉寶 \+60%/, '政策 --check 未通過');
+  assert.match(checkOutputs[3], /傭兵經驗 0\.4 權重、王族統率 \+30%\/名（最高 \+210%）/, '政策 --check 未通過');
   assert.match(checkOutputs[4], /離線安全政策均已就位/, '離線 --check 未通過');
 
   console.log(`✅ 完整同步隔離預演：核心 → 外掛 → Shines → 政策 → 離線，首次套用、二次零變更、五層 --check 通過（${sourceDir || sourceRef}）`);

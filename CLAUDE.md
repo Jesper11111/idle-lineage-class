@@ -3,7 +3,7 @@
 ## 專案性質與架構（2026-07-24 起・PP 鏡像＋本地政策層）
 
 - 網頁放置遊戲。遊戲本體由原作者(巴哈姆特 秋玥)製作,原版:**https://shines871.github.io/idle-lineage-class/**;直接上游:**https://github.com/pp771007/idle-lineage-class**;本站:https://jesper11111.github.io/idle-lineage-class/。
-- **架構=「PP 完整成品鏡像＋本地政策層」**:PP 的核心、外掛、`index.html`、`sw.js`、`assets/`、`public/` 都整包同步;本站只以冪等補丁保留傭兵經驗均分、金幣 ×1、每名未倒地傭兵掉寶 +60%／招募／受僱政策、回城免費更新快照、離線安全、妖精傭兵技能例外與全裝置隱藏來源橫幅。
+- **架構=「PP 完整成品鏡像＋本地政策層」**:PP 的核心、外掛、`index.html`、`sw.js`、`assets/`、`public/` 都整包同步;本站只以冪等補丁保留傭兵經驗權重 0.4、王族本人統率 +30%/名（最高 +210%、帶滿保底含娃娃單練）、金幣 ×1、每名未倒地傭兵掉寶 +60%／招募／受僱政策、回城免費更新快照、離線安全、妖精傭兵技能例外與全裝置隱藏來源橫幅。
 - PP 已負責跟進 shines871;本站不再直接從 shines 組裝。日常同步來源固定為 `pp771007/main`。
 - 本 repo 的 `upstream` remote 指向 PP。**引用上游做任何判斷前先 `git fetch upstream --tags --prune`**。
 - 同步狀態記在 `upstream-checkpoint.json`(`syncedUpstreamCommit`=目前鏡像的 PP commit)。
@@ -69,7 +69,7 @@ CI 版:GitHub Actions `sync-upstream.yml`(**只有 `workflow_dispatch`,無 GitHu
 | `afk-ui.js` | 共用彈窗:接管 alert、`AFK_UI.confirm`、openLayer/closeLayer(返回鍵/ESC 關最上層) |
 | `afk-extradata.js` | dex/wiki 共用手動補充資料(`AFK_EXTRA`:itemAcquire/武器特性白話/mapName) |
 | `afk-offline-owner.js` | 在 PP offline 載入前宣告本站舊離線引擎擁有結算權 |
-| `afk-merc-policy.js` | 傭兵經驗均分、金幣 ×1、每名未倒地傭兵掉寶 +60%／招募／受僱政策、回城免費更新快照與妖精傭兵不限當前屬性精靈魔法 |
+| `afk-merc-policy.js` | 傭兵經驗權重 0.4、王族本人統率 +30%/名（最高 +210%、帶滿保底含娃娃單練）、金幣 ×1、每名未倒地傭兵掉寶 +60%／招募／受僱政策、回城免費更新快照與妖精傭兵不限當前屬性精靈魔法 |
 | `afk-offline.js` | PP 舊版離線掛機整套;由本站安全補丁維持嚴格獨占、首次遷移不補算與特殊副本禁圖 |
 | `afk-mobile.js` | 手機版面薄殼(底部導覽列切三欄、手機幾何的彈窗讓位、浮動日誌;版面用上游原版) |
 | `afk-backnav.js` | 手機返回鍵/手勢在子畫面回上層而不是關 PWA |
