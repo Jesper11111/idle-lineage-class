@@ -139,12 +139,15 @@
         ov.id = 'afk-ps-overlay';
         ov.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.66);display:flex;align-items:flex-start;justify-content:center;padding:calc(var(--orig-bar-h,0px) + 14px) 12px 12px;';
         if (window.AFK_TOGGLES && AFK_TOGGLES.applyBannerPad) AFK_TOGGLES.applyBannerPad(ov);   // 開啟當下實測橫幅高度覆寫 padding-top
-        // 由上而下＝省電效果由大到小(畫面整體節流 > 逐幀動畫 > 光暈濾鏡 > 特效 > 浮動數字 > 音樂 > 音效)
+        // 由上而下＝省電效果由大到小。**順序照實測排,不是照直覺**(2026-08-05 實測,數據與方法見 docs/perf-battery.md):
+        //   關動畫 24~37% > 光暈濾鏡 22~25% > 特效 16~17% >> 降更新頻率 ~0 ≈ 傷害數字 0。
+        //   直覺會把「降更新頻率」排第一(它砍掉最多重繪次數),但畫面照樣每秒合成 57 幀,少畫幾次資料省不到電。
+        //   音樂/音效無頭環境量不到(沒有使用者手勢→不會播),排最後是依「音訊解碼常駐且切背景不停」推估。
         var opts = [
-            { k: 'lowfps', name: '降低畫面更新頻率', desc: '畫面更新節流到約 8fps（遊戲邏輯照跑，只是畫面較不即時）' },
             { k: 'noanim', name: '關閉戰鬥動畫', desc: '怪物/玩家/傭兵/寵物/召喚的逐幀動畫停止（傷害/戰鬥數值不變）' },
             { k: 'nofx', name: '關閉光暈與濾鏡', desc: '裝備與怪物的發光、畫面濾鏡等裝飾效果關閉（鎖定改用紅框標示）' },
             { core: 'vfx', name: '關閉戰鬥特效', desc: '不再播放技能與攻擊的特效動畫' },
+            { k: 'lowfps', name: '降低畫面更新頻率', desc: '畫面更新節流到約 8fps（遊戲邏輯照跑，只是畫面較不即時）' },
             { core: 'vfxnum', name: '關閉傷害數字', desc: '不再跳出傷害/治療的浮動數字' },
             { core: 'bgm', name: '關閉背景音樂', desc: '同遊戲中音量列的音樂開關' },
             { core: 'sfx', name: '關閉音效', desc: '同遊戲中音量列的音效開關' }
