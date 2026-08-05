@@ -17,14 +17,18 @@
     'use strict';
     var LS = 'afk_toggle_';
     var registry = [];   // {id,name,desc,group,def}
+    var byId = {};       // id → registry 項目（enabled() 被多支外掛掛在每 tick/每擊殺的熱路徑上，不能線性掃）
+    // localStorage 原始值快取（'0'/'1'/null=未設過）。同上，熱路徑不能每次同步讀 LS。
+    // 唯一寫入者是本檔的 set() 與面板「全部恢復預設」，都會同步更新快取；多分頁同開互改設定不在支援範圍（重新整理即一致）。
+    var lsCache = {};
 
-    function find(id) { for (var i = 0; i < registry.length; i++) if (registry[i].id === id) return registry[i]; return null; }
+    function find(id) { return byId[id] || null; }
 
     var api = {
         // 外掛自我登錄（重複 id 忽略）
         register: function (spec) {
             if (!spec || !spec.id || find(spec.id)) return;
-            registry.push({
+            var entry = {
                 id: spec.id,
                 name: spec.name || spec.id,
                 desc: spec.desc || '',
@@ -32,17 +36,21 @@
                 def: spec.def !== false,  // 預設開；傳 def:false 才預設關
                 locked: spec.locked || '', // 非空＝暫時停用：一律當關閉、面板上不可勾，字串是給玩家看的原因
                 parent: spec.parent || ''  // 非空＝這是某支外掛的子選項：面板上縮排排在該支底下（父項關掉時子項一律當關閉）
-            });
+            };
+            registry.push(entry);
+            byId[entry.id] = entry;
         },
         // 這支外掛現在是否啟用（讀 localStorage，未設過→用預設；讀不到 localStorage→啟用）
         enabled: function (id) {
             var r = find(id), def = r ? r.def : true;
             if (r && r.locked) return false;   // 暫時停用中：不管 localStorage 存過什麼都當關閉
             if (r && r.parent && !api.enabled(r.parent)) return false;   // 父項關掉 → 子選項一律失效（子選項自己不必再問一次父項）
-            try { var v = localStorage.getItem(LS + id); return v === null ? def : v === '1'; }
-            catch (e) { return def; }
+            var v;
+            if (id in lsCache) v = lsCache[id];
+            else { try { v = lsCache[id] = localStorage.getItem(LS + id); } catch (e) { return def; } }
+            return v === null ? def : v === '1';
         },
-        set: function (id, on) { try { localStorage.setItem(LS + id, on ? '1' : '0'); } catch (e) {} },
+        set: function (id, on) { try { localStorage.setItem(LS + id, on ? '1' : '0'); lsCache[id] = on ? '1' : '0'; } catch (e) {} },
         list: function () { return registry.slice(); },
         openPanel: openPanel
     };
@@ -90,7 +98,7 @@
         { id: 'pwa', name: '安裝成 App / 離線快取', desc: '把遊戲裝成手機／電腦上的 App，圖片存在本機不用每次重抓', group: '系統與其他' },
         { id: 'storage', name: '設定選單', desc: '首頁的 ⚙ 設定選單，可檢查存檔大小', group: '系統與其他' },
         { id: 'synccompress', name: '存檔即時壓縮', desc: '避免存檔爆掉害角色或倉庫消失；代價是存檔時多花一點時間', group: '系統與其他', def: false },
-        { id: 'powersave', name: '省電模式', desc: '省電選項：降低畫面更新頻率、關動畫、關特效與音效', group: '系統與其他' },
+        { id: 'powersave', name: '省電模式', desc: '省電選項：降低畫面更新頻率、關動畫、關光暈濾鏡、關特效與音效', group: '系統與其他' },
         { id: 'skin', name: '首頁外掛入口/資訊', desc: '整理首頁的外掛入口，並顯示原作者連結與最後同步原版的時間', group: '系統與其他' },
         { id: 'offline', name: '離線快速結算', desc: '關掉遊戲回來自動結算掛機收益', group: '遊戲玩法' },
         { id: 'traditional', name: '傳統模式(偽)', desc: '打到或做出來的裝備自帶隨機強化值（在選角卡右上角逐角色開關）', group: '遊戲玩法' },
@@ -182,6 +190,7 @@
         });
         card.querySelector('#afk-tg-reset').addEventListener('click', function () {
             registry.forEach(function (r) { try { localStorage.removeItem(LS + r.id); } catch (e) {} });
+            lsCache = {};
             card.querySelectorAll('input[data-tgid]').forEach(function (cb) { cb.checked = api.enabled(cb.getAttribute('data-tgid')); });
             note.style.display = 'block';
         });
@@ -277,6 +286,6 @@
         syncEntryTop();   // 橫幅由遊戲 loop 晚注入、高度也會變（換行）→ 每秒跟著校正一次
     }
     syncEntryVisibility();
-    setInterval(syncEntryVisibility, 1000);
+    setInterval(function () { if (!document.hidden) syncEntryVisibility(); }, 1000);   // 背景分頁看不到畫面，量測/校正純浪費
     try { console.log('[AFK-toggles] ready'); } catch (e) {}
 })();

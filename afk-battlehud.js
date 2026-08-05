@@ -327,11 +327,11 @@
     placeStrip();
     window.addEventListener('resize', placeStrip);
     window.addEventListener('orientationchange', placeStrip);
-    setInterval(placeStrip, 1000);   // 手機殼那支是非同步掛 body.m-mobile(還會隨轉向變) → 定期對齊一次即可,成本極低
+    setInterval(function () { if (!document.hidden) placeStrip(); }, 1000);   // 手機殼那支是非同步掛 body.m-mobile(還會隨轉向變) → 定期對齊一次即可,成本極低;背景分頁看不到畫面,跳過
     strip.addEventListener('click', openStatModal);   // 點整條 → 開角色資訊彈窗
     cache(strip);
     mirror();
-    setInterval(mirror, MIRROR_MS);
+    setInterval(function () { if (!document.hidden) mirror(); }, MIRROR_MS);   // 背景分頁鏡射純浪費;回前景下一輪(≤300ms)就補上
     // 橫幅是外部注入的、可能晚出現/換行改變高度 → 跟 afk-mobile 同樣的節奏補量幾次 + resize 時重量
     fitTop();
     var n = 0, iv = setInterval(function () { fitTop(); if (++n >= 12) clearInterval(iv); }, 1000);

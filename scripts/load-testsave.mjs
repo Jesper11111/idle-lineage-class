@@ -12,6 +12,7 @@
  *   要拆出來各自寫;其餘欄位才寫進 lineage_idle_save_<slot>。
  * ========================================================================== */
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { basename } from 'node:path';
 
 const DIR = new URL('../.testdata/', import.meta.url);
 
@@ -45,4 +46,59 @@ export async function loadTestSave(page, opts = {}) {
 
   if (r.err) throw new Error(r.err);
   return r;
+}
+
+export async function loadFullBackup(page, opts = {}) {
+  const file = opts.file;
+  if (!file || !existsSync(file)) throw new Error('找不到完整備份：' + String(file || ''));
+
+  let pack;
+  try { pack = JSON.parse(readFileSync(file, 'utf8')); }
+  catch (e) { throw new Error('完整備份不是合法 JSON：' + (e && e.message || e)); }
+  const keys = pack && pack.keys;
+  const entries = keys && typeof keys === 'object' && !Array.isArray(keys) ? Object.entries(keys) : [];
+  if (pack?.format !== 'idle-lineage-full' || !entries.length ||
+      (pack.keyCount != null && pack.keyCount !== entries.length) ||
+      entries.some(([, value]) => typeof value !== 'string')) {
+    throw new Error('完整備份格式不完整或 keyCount 不符');
+  }
+
+  const r = await page.evaluate(({ entries: storageEntries, slot, powersave }) => {
+    localStorage.clear();
+    for (const [key, value] of storageEntries) localStorage.setItem(key, value);
+    // 測試分頁不能沿用備份當下的跨分頁 session；那不是玩家資料，也會擋住隔離載入。
+    localStorage.removeItem('fb5_active_role_sessions_v1');
+    // 效能／生命週期測試從「現在」開始，不能把備份日期到今天的真實離線收益混進量測。
+    localStorage.setItem('afk_offline_legacy_migrated_v3_' + slot, '1');
+    localStorage.setItem('afk_ts_' + slot, String(Date.now()));
+    if (powersave) {
+      localStorage.setItem('afk_ps_noanim', '1');
+      localStorage.setItem('afk_ps_lowfps', '1');
+      localStorage.setItem('afk_ps_nofx', '1');
+      localStorage.setItem('lineage_vfx_off', '1');
+      localStorage.setItem('lineage_vfx_num_off', '1');
+      localStorage.setItem('fb5_bgm', JSON.stringify({ on: false, vol: 35 }));
+      localStorage.setItem('fb5_sfx', JSON.stringify({ on: false, vol: 50 }));
+    }
+    currentSlot = slot;
+    loadGame();
+    let wh = 0;
+    try { const w = _lzGet(whKey()); wh = w ? (JSON.parse(w).items || []).length : 0; } catch (e) {}
+    return {
+      slot: currentSlot,
+      role: player && player.cls,
+      level: player && player.lv,
+      inventory: (player && player.inv || []).length,
+      allies: (player && player.allies || []).length,
+      warehouse: wh,
+      saveBytes: typeof saveStateJson === 'function' ? saveStateJson().length : null,
+    };
+  }, {
+    entries,
+    slot: Math.max(1, Number(opts.slot) || 1),
+    powersave: opts.powersave !== false,
+  });
+
+  if (!r.role) throw new Error('完整備份指定的存檔位沒有可載入角色：' + String(opts.slot || 1));
+  return { source: basename(file), ...r };
 }

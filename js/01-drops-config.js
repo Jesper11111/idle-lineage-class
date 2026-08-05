@@ -1392,11 +1392,18 @@ function _resumeIncrementalBackground(reason) {
 }
 if (typeof document !== 'undefined' && document.addEventListener) {
     document.addEventListener('visibilitychange', function () {
-        if (document.hidden) { if (!_ffHiddenAt) _ffHiddenAt = _perfNow(); return; }
+        if (document.hidden) {
+            if (typeof _ffCancelScheduledLoop === 'function') _ffCancelScheduledLoop();   // 凍結前作廢前景續跑；回前景不得由逾期 callback 先吞掉 hidden elapsed
+            if (!_ffHiddenAt) _ffHiddenAt = _perfNow();
+            return;
+        }
         _resumeIncrementalBackground('visibility');
     });
 }
 if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('pagehide', function () {
+        if (typeof _ffCancelScheduledLoop === 'function') _ffCancelScheduledLoop();   // bfcache／pagehide 也作廢已排程的前景 callback
+    });
     window.addEventListener('pageshow', function (ev) {
         // bfcache 完全凍結期間沒有 callback：以最後一次 gameLoop 為錨，只補尚未執行的尾段。
         if (ev && ev.persisted) {

@@ -1572,7 +1572,7 @@ function saveGame() {
     _mercMonotonicExpGuard();   // 🤝 v3.8.2 受僱中經驗只增不減：序列化前吸收磁碟較高的等級/經驗，防舊快照覆蓋待領帳本領取的經驗
     if(!_lzSet('lineage_idle_save_' + currentSlot, _saveWrap(saveStateJson()))) throw new Error('persistent storage write failed');   // 🔧 寫入成功才回報；並由 saveStateJson 排除戰鬥面向暫存參照
     if(typeof petRosterSave === 'function' && !petRosterSave()) throw new Error('pet roster write failed');
-    logSys(`遊戲進度已儲存。`);
+    try { logSys(`遊戲進度已儲存。`); } catch(e) {}   // 成功提示不是持久化交易的一部分；DOM 日誌失敗不得把已落盤的主檔＋寵物桶回報成失敗
     _saveFailureNotified = false;
     return true;
     } catch(e) {
@@ -1581,7 +1581,7 @@ function saveGame() {
             _saveFailureNotified = true;
             // ⚠️ v3.5.92 原文案宣稱「倉庫存取將暫停」＝不存在的機制（唯一的倉庫暫停在 js/12 loadWarehouse 讀取失敗處，
             //    與存檔失敗無關）。寵物上限回滾會走到這裡並在下一拍補存成功，玩家等於被假警報趕去重新整理。
-            logSys('<span class="text-red-400 font-bold">⚠ 遊戲進度儲存失敗，本次進度未寫入。請重新整理後再試；若反覆失敗，請先用「匯出進度」備份存檔。</span>');
+            try { logSys('<span class="text-red-400 font-bold">⚠ 遊戲進度儲存失敗，本次進度未完整寫入。請重新整理後再試；若反覆失敗，請先用「匯出進度」備份存檔。</span>'); } catch(_logErr) {}
         }
         return false;
     }

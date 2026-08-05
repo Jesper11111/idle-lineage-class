@@ -229,7 +229,11 @@
             var inList = e.target && e.target.closest ? e.target.closest('#wh-inv-list,#wh-store-list') : null;
             if (!inList) _lpHide();
         }, true);
-        document.addEventListener('scroll', function () { _lpHide(); }, true);
+        // 戰鬥日誌自動捲到底也會打進這個 capture handler(每秒數次)→ 資料框沒開就早退,不做無條件 DOM 寫入
+        document.addEventListener('scroll', function () {
+            if (!_lpTip || _lpTip.style.display === 'none') return;
+            _lpHide();
+        }, { capture: true, passive: true });
     }
 
     // ── 「不可穿」列的樣式(核心兩欄只有物品全名,顏色只反映稀有度、跟能不能穿無關) ──

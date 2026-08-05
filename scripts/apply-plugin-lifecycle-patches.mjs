@@ -173,18 +173,43 @@ patch('afk-powersave.js', [
   "cb.addEventListener('change', function () {\n                set(cb.getAttribute('data-ps'), cb.checked);",
   "typeof window.__afkMobileMemoryRefresh === 'function'",
   'window.__afkMobileMemoryRefresh(false);',
-], (input) => replaceOnce(
-  input,
-  "            cb.addEventListener('change', function () { set(cb.getAttribute('data-ps'), cb.checked); });",
-  "            cb.addEventListener('change', function () {\n" +
-  "                set(cb.getAttribute('data-ps'), cb.checked);\n" +
-  "                if (typeof window.__afkMobileMemoryRefresh === 'function') {\n" +
-  "                    window.__afkMobileMemoryRefresh(false);\n" +
-  "                }\n" +
-  "            });",
-  'afk-powersave.js',
-  '省電設定即時刷新'
-));
+  '既有玩家已開「關動畫＋低更新率」就是明確選擇最省電',
+  "localStorage.getItem('afk_ps_nofx') === null",
+  "localStorage.setItem('afk_ps_nofx', '1')",
+], (input) => {
+  const oldHandler = "            cb.addEventListener('change', function () { set(cb.getAttribute('data-ps'), cb.checked); });";
+  const nofxHandler = "            cb.addEventListener('change', function () { set(cb.getAttribute('data-ps'), cb.checked); applyNofx(); });";
+  const next = "            cb.addEventListener('change', function () {\n" +
+    "                set(cb.getAttribute('data-ps'), cb.checked);\n" +
+    (input.includes(nofxHandler) ? "                applyNofx();\n" : '') +
+    "                if (typeof window.__afkMobileMemoryRefresh === 'function') {\n" +
+    "                    window.__afkMobileMemoryRefresh(false);\n" +
+    "                }\n" +
+    "            });";
+  let source = replaceOnce(
+    input,
+    input.includes(nofxHandler) ? nofxHandler : oldHandler,
+    next,
+    'afk-powersave.js',
+    '省電設定即時刷新'
+  );
+  source = replaceOnce(
+    source,
+    '    var _ps = {};',
+    "    // 既有玩家已開「關動畫＋低更新率」就是明確選擇最省電；新 nofx 尚無設定時一併遷移為開啟。\n" +
+    "    // 之後若自行取消會寫入 0，不會在下次載入又被打開。\n" +
+    "    try {\n" +
+    "        if (localStorage.getItem('afk_ps_nofx') === null &&\n" +
+    "            localStorage.getItem('afk_ps_noanim') === '1' && localStorage.getItem('afk_ps_lowfps') === '1') {\n" +
+    "            localStorage.setItem('afk_ps_nofx', '1');\n" +
+    "        }\n" +
+    "    } catch (e) {}\n" +
+    "    var _ps = {};",
+    'afk-powersave.js',
+    '既有雙省電設定遷移 nofx'
+  );
+  return source;
+});
 
 patch('afk-mobile.js', [
   '🔒 Jesper 本地離線換角守衛',

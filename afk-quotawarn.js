@@ -71,7 +71,7 @@
     _wasVisible = visible;
   }
   tick();
-  setInterval(tick, 1000);
+  setInterval(function () { if (!document.hidden) tick(); }, 1000);   // 背景分頁看不到首頁,跳過
 
   console.log('[AFK-quotawarn] hooks OK — 存檔空間超過 ' + WARN_PCT + '% 時首頁會顯示警告。');
 })();

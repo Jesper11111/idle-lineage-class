@@ -81,7 +81,9 @@
     var _origTabs = window.renderTabs;
     var wrapped = function () {
       var r = _origTabs.apply(this, arguments);
-      try { ensureBox(); filterAll(); } catch (e) {}   // 重建後的新列要重套目前的關鍵字
+      // 重建後的新列要重套目前的關鍵字。沒在搜尋(關鍵字空)時新列本來就全可見，
+      // 整輪掃描純浪費——renderTabs 每次射箭/擊殺都會被呼叫，大背包一輪就是幾千次 style 操作。
+      try { ensureBox(); if (norm(q.trim())) filterAll(); } catch (e) {}
       return r;
     };
     wrapped.__afkISearch = true;

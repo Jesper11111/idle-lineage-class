@@ -67,8 +67,8 @@
     function on() { if (document.body) document.body.classList.add('afk-invlist'); }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', on);
     else on();
-    // 保險：有些流程可能重設 body class → 定期確保還在
-    setInterval(on, 3000);
+    // 保險：有些流程可能重設 body class → 定期確保還在（背景分頁跳過）
+    setInterval(function () { if (!document.hidden) on(); }, 3000);
 
     try { console.log('[AFK-invlist] hooks OK — 背包條列式已套用（可於外掛開關關閉回原版格狀）。'); } catch (e) {}
 })();

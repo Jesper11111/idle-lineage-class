@@ -34,6 +34,9 @@ export function patchBackportWikiDocs(ctx) {
       '一般只閃物理；月光5件才連魔法/必中技能也先判定。⚠',
       '一般只閃物理。⚠',
       '移除月光舊魔法迴避說明',
+      [
+        '<b>只閃物理</b>，魔法與必中技能一律閃不掉（唯一例外：黑暗妖精的<b>暗影閃避</b>，50% 閃掉一次必中傷害魔法）。⚠',
+      ],
     ],
     [
       '狂怒 5/5 最多 −20%、鐵衛 3/5 −20%',
@@ -83,14 +86,14 @@ export function patchBackportWikiDocs(ctx) {
   ];
 
   let changed = false;
-  for (const [before, after, label] of replacements) {
-    if (source.includes(after)) continue;
+  for (const [before, after, label, acceptedAlternates = []] of replacements) {
+    if ([after, ...acceptedAlternates].some(contract => source.includes(contract))) continue;
     source = ctx.replaceOnce(file, source, before, after, label);
     changed = true;
   }
 
-  const contracts = replacements.map(([, after]) => after);
-  if (!contracts.every(contract => source.includes(contract))) {
+  const contracts = replacements.map(([, after, , acceptedAlternates = []]) => [after, ...acceptedAlternates]);
+  if (!contracts.every(group => group.some(contract => source.includes(contract)))) {
     throw new Error(`[${file}] 已回移功能的小百科說明仍不完整。`);
   }
   if (changed) ctx.writePatched(file, source, '席琳套裝與死靈之書小百科');

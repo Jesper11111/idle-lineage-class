@@ -17,20 +17,31 @@ const sync = await readFile(new URL('./sync-upstream.mjs', import.meta.url), 'ut
 const policyBlock = await readFile(new URL('./local-policy-block.html', import.meta.url), 'utf8');
 const assetExcludes = await readFile(new URL('./shines-backport-assets.txt', import.meta.url), 'utf8');
 
-function createHarness({ mobile = true, noanim = true, lowfps = true } = {}) {
+function createHarness({
+  mobile = true,
+  mobileClass = mobile,
+  noanim = true,
+  lowfps = true,
+  powersave = true,
+  width = mobile ? 390 : 1280,
+  coarse = mobile,
+  userAgent = mobile ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile' : 'Desktop',
+  readyState = 'complete',
+} = {}) {
   let mobileState = mobile;
   const values = new Map([
     ['afk_ps_noanim', noanim ? '1' : '0'],
     ['afk_ps_lowfps', lowfps ? '1' : '0'],
   ]);
-  const classNames = new Set(mobileState ? ['m-mobile'] : []);
-  const makeClasses = () => ({
-    add: (...names) => names.forEach((name) => classNames.add(name)),
-    remove: (...names) => names.forEach((name) => classNames.delete(name)),
-    contains: (name) => classNames.has(name),
+  const classNames = new Set(mobileClass ? ['m-mobile'] : []);
+  const rootClassNames = new Set();
+  const makeClasses = (names = classNames) => ({
+    add: (...next) => next.forEach((name) => names.add(name)),
+    remove: (...next) => next.forEach((name) => names.delete(name)),
+    contains: (name) => names.has(name),
     toggle: (name, force) => {
-      const enabled = force === undefined ? !classNames.has(name) : !!force;
-      if (enabled) classNames.add(name); else classNames.delete(name);
+      const enabled = force === undefined ? !names.has(name) : !!force;
+      if (enabled) names.add(name); else names.delete(name);
       return enabled;
     },
   });
@@ -58,14 +69,18 @@ function createHarness({ mobile = true, noanim = true, lowfps = true } = {}) {
   const state = { ff: false };
   const document = {
     body: { classList: makeClasses() },
+    documentElement: { classList: makeClasses(rootClassNames) },
+    readyState,
     addEventListener() {},
     getElementById(id) {
       return id === 'battle-view' ? battle : (id === 'town-view' ? town : null);
     },
   };
   const window = {
-    innerWidth: mobileState ? 390 : 1280,
-    matchMedia: () => ({ matches: mobileState }),
+    innerWidth: width,
+    navigator: { userAgent },
+    matchMedia: () => ({ matches: coarse }),
+    AFK_TOGGLES: { enabled: (id) => id !== 'powersave' || powersave },
     applyAreaBackground() {
       areaCalls++;
       battle.style.backgroundImage = 'url("assets/area/1920x1080/full.jpg")';
@@ -96,7 +111,7 @@ function createHarness({ mobile = true, noanim = true, lowfps = true } = {}) {
   };
   vm.runInNewContext(plugin, context, { filename: 'afk-mobile-memory.js' });
   return {
-    window, battle, town, logs, values, timers, state, mobCache, cachedImage,
+    window, battle, town, logs, values, timers, state, mobCache, cachedImage, rootClassNames,
     areaCalls: () => areaCalls,
     townCalls: () => townCalls,
     probeCancelCalls: () => probeCancelCalls,
@@ -466,6 +481,26 @@ assert.equal(trainingCalls, 0, '後載木人場 wrapper 也必須被最外層雙
 assert.match(lite.battle.style.backgroundImage, /^linear-gradient/,
   '木人場在雙省電下必須維持 CSS 漸層');
 
+const staleDisabled = createHarness({ powersave: false, noanim: true, lowfps: true });
+assert.equal(staleDisabled.window.__afkMobileMemoryLite(), false,
+  '省電外掛關閉時必須忽略殘留的雙省電子設定，避免動畫反覆下載／解碼後又被拒收');
+assert.equal(staleDisabled.window.__afkMobileMemoryAcceptFrames(), true,
+  '省電外掛關閉時動畫 probe 必須能正常收進 cache，不得形成下載後立即丟棄的迴圈');
+assert.equal(staleDisabled.window.__afkMobileMobStill('巨大骷髏'), null,
+  '省電外掛關閉時不得套用手機縮圖政策');
+
+const landscapeBoot = createHarness({
+  mobile: true,
+  mobileClass: false,
+  width: 932,
+  coarse: true,
+  readyState: 'loading',
+});
+assert.equal(landscapeBoot.window.__afkMobileMemoryLite(), true,
+  '橫向手機不得依賴稍後才出現的 body.m-mobile 才辨識為手機');
+assert.equal(landscapeBoot.rootClassNames.has('afk-memory-lite-boot'), true,
+  'DOMContentLoaded 前就必須套用輕量背景，避免先解碼 3344x1882 大圖');
+
 const catchup = createHarness();
 catchup.timers.length = 0;
 catchup.state.ff = true;
@@ -556,6 +591,10 @@ for (const marker of [
   assert.ok(plugin.includes(marker), `手機圖片政策缺少生命週期標記：${marker}`);
 }
 assert.match(indexHtml, /afk-memory-lite-boot/, '手機既有雙省電設定必須在 CSS 載入前阻止大 body 背景');
+assert.match(indexHtml, /window\.__afkIsMobileDevice = function \(\)/,
+  'head 啟動閘門必須先建立共用手機偵測，避免橫向寬度與手機外殼判斷分歧');
+assert.match(indexHtml, /localStorage\.getItem\('afk_toggle_powersave'\)/,
+  'head 啟動閘門必須尊重省電外掛總開關，不能只讀殘留子設定');
 assert.equal((indexHtml.match(/data-afk-mobile-lazy="1"/g) || []).length, 12,
   '4 張隱藏選角大圖與 8 張職業 logo 必須延遲載入');
 assert.match(sync, /'afk-mobile-memory\.js'/, '上游同步必須保留本地政策檔');

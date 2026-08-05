@@ -18,6 +18,7 @@
 
     function detectMobile() {
         try {
+            if (typeof window.__afkIsMobileDevice === 'function') return !!window.__afkIsMobileDevice();
             return (matchMedia && matchMedia('(pointer:coarse)').matches) ||
                 /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '') ||
                 (window.innerWidth || 9999) <= 820;
@@ -504,7 +505,7 @@
     }
     bindEquipTouchScroll();
 
-    setInterval(navTick, 1500);
+    setInterval(function () { if (!document.hidden) navTick(); }, 1500);   // 背景分頁不必維護版面;回前景由下一輪或下方 MutationObserver 補上
     navTick();
     // 🚀 遊戲畫面一顯示(#game-screen 移除 .hidden)就「立刻」重建手機殼,不等下一次 1.5s 輪詢。
     //    否則登入後會先看到上游桌機堆疊版面、隔最多 1.5 秒才 reshape 成手機殼(底部導覽/單欄)→ 明顯閃一下。

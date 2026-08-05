@@ -1579,13 +1579,18 @@
     }
     // 切到背景 / 關掉 App 前主動存一次:iOS 在背景更容易被系統直接丟掉整個分頁,
     //   靠下一次定時檢查點就來不及(等於白算)。結算結束時要記得解除,別讓它留著指向舊的閉包。
+    // 🔒 Jesper offline checkpoint commit gate v1
+    // visibilitychange/pagehide 常在同一輪連發；以已真正落盤的 done 做冪等鍵，避免大存檔連續複製／壓縮兩次。
+    var _ckptCommittedDone = -1;
     _ckptNow = function () {
       try {
-        if (!timing || !timing.closeTs || done <= 0 || player.dead || !state.running) return;
-        doCheckpoint();
-      } catch (e) {}
+        if (!timing || !timing.closeTs || done <= 0 || player.dead || !state.running) return false;
+        return doCheckpoint();
+      } catch (e) { return false; }
     };
     function doCheckpoint() {
+      var checkpointDone = done;
+      if (checkpointDone <= _ckptCommittedDone) return true;
       // ⏱ 量自己花掉多少真實時間:存檔(壓縮)在慢裝置上可能很貴,而它是「每 CKPT_MS 一次」——
       //   單次成本一旦逼近 CKPT_MS,結算時間就會失控放大(越慢→存越多次→更慢)。
       //   把它跟結算總耗時並排記進離線紀錄,才分得出「真的在算」還是「卡在存檔」(2026-07-30 玩家回報結算 30 分鐘時加)。
@@ -1593,12 +1598,16 @@
       try {
         var _sq = _saveSquelch; _saveSquelch = false;   // ⚡ 檢查點是「該存的存檔」:暫時放行 saveGame 擋板
         wallHoldsRestore();   // 💾 存檔前先把被撐長的效期(追蹤／追殺)還原,結算中途關頁也不會把假到期時間留在存檔裡
-        try { if (typeof saveGame === 'function') saveGame(); } finally { _saveSquelch = _sq; wallHoldsApply(); }   // ff 下 logSys 靜音,不會洗「進度已儲存」;saveGame 尾端的 offlineStamp 被 catchingUp 擋掉,不影響錨點
-        stampCore(timing.closeTs + done * TICK_MS);       // 錨點=已結算到的時間點(絕不用 now,剩餘離線時間才不會被吃掉)
+        var saved = false;
+        try { if (typeof saveGame === 'function') saved = saveGame() === true; } finally { _saveSquelch = _sq; wallHoldsApply(); }   // ff 下 logSys 靜音,不會洗「進度已儲存」;saveGame 尾端的 offlineStamp 被 catchingUp 擋掉,不影響錨點
+        if (!saved) return false;                         // 主存檔／寵物桶沒完整落地時絕不可先推錨點，否則會吃掉收益
+        stampCore(timing.closeTs + checkpointDone * TICK_MS);       // 錨點=已結算到的時間點(絕不用 now,剩餘離線時間才不會被吃掉)
+        _ckptCommittedDone = checkpointDone;
         _ckptN++; _ckptMs += performance.now() - _ck0;    // 先累計再寫紀錄,這一次的成本才會進到這筆紀錄裡
         recordHistory(buildHistRec());                    // 已結算部分先寫進離線紀錄(同 closeTs 覆寫,不會多筆)
-      } catch (eCk) {}
-      _ckptLastMs = performance.now();
+        _ckptLastMs = performance.now();
+        return true;
+      } catch (eCk) { return false; }
     }
     // ═══ 分段檢查點(宣告結束) ═══════════════════════════════════════════════
 
@@ -2053,7 +2062,12 @@
     if (typeof saveGame === 'function') {
       var _save = saveGame;
       window.saveGame = function () {
-        if (_saveSquelch) return;   // ⚡ 結算迴圈期間擋核心逐殺存檔(頭目擊殺後 saveGame 無 ff 守衛);檢查點/結算尾經 doCheckpoint 放行
+        if (_saveSquelch) {
+          // js/13 的 close-flush 已有 250ms lifecycle 去重；委派同一個 checkpoint，讓它取得 true 並擋住
+          // 後續 pagehide/beforeunload。一般逐殺存檔仍只回 false，不建立額外大字串。
+          if (window.__fb5CloseFlush && typeof _ckptNow === 'function') return _ckptNow();
+          return false;
+        }
         var r = _save.apply(this, arguments); try { stamp(); } catch (e) {} return r;
       };
     }
@@ -2066,25 +2080,33 @@
   //   軍王之室被傳回村)也不影響——快取的 key 就是輸入本身,不是「假設地圖不變」。
   function installFfPerfHooks() {
     // 1) _saveUnwrap(raw):驗簽章要對整包 payload 算雜湊,而核心每殺一隻怪都重讀整包血盟狀態 → 同一份字串重複驗。
-    //    純函式(同字串必同結果),用「最近 8 份字串」的小快取即可;回傳物件每次複製一份,避免呼叫端改到共用物件。
+    //    純函式(同字串必同結果),但成熟角色單份可接近 1MB；同時限制筆數與總字數，避免 8 份大字串長駐手機。
+    //    回傳物件每次複製一份,避免呼叫端改到共用物件。
     if (typeof _saveUnwrap === 'function') {
-      var _uw = _saveUnwrap, _uwKeys = [], _uwVals = Object.create(null), UW_MAX = 8;
+      var _uw = _saveUnwrap, _uwKeys = [], _uwVals = Object.create(null), _uwChars = 0;
+      var UW_MAX = 3, UW_CHAR_MAX = 2500000;
       window._saveUnwrap = function (raw) {
         if (typeof raw !== 'string' || raw.length < 64) return _uw.apply(this, arguments);
         var hit = _uwVals[raw];
         if (!hit) {
           hit = _uw.call(this, raw);
-          _uwVals[raw] = hit; _uwKeys.push(raw);
-          while (_uwKeys.length > UW_MAX) delete _uwVals[_uwKeys.shift()];
+          _uwVals[raw] = hit; _uwKeys.push(raw); _uwChars += raw.length;
+          while (_uwKeys.length > 1 && (_uwKeys.length > UW_MAX || _uwChars > UW_CHAR_MAX)) {
+            var oldRaw = _uwKeys.shift();
+            _uwChars -= oldRaw.length;
+            delete _uwVals[oldRaw];
+          }
         }
         return { payload: hit.payload, signed: hit.signed, ok: hit.ok };
       };
     }
-    // 2) _seedHash(str):純雜湊,被簽章/身分指紋反覆呼叫同一批字串
+    // 2) _seedHash(str):純雜湊,被身分指紋等短鍵反覆呼叫同一批字串。
+    //    存檔簽章也會傳入整份 payload，但每次存檔內容都不同；快取這類數十萬字元的一次性鍵
+    //    只會把多份成熟角色存檔長駐在手機 heap。大鍵直接計算、不進 memo。
     if (typeof _seedHash === 'function') {
-      var _sh = _seedHash, _shKeys = [], _shVals = Object.create(null), SH_MAX = 64;
+      var _sh = _seedHash, _shKeys = [], _shVals = Object.create(null), SH_MAX = 64, SH_KEY_MAX = 4096;
       window._seedHash = function (str) {
-        if (typeof str !== 'string' || str.length < 32) return _sh.apply(this, arguments);
+        if (typeof str !== 'string' || str.length < 32 || str.length > SH_KEY_MAX) return _sh.apply(this, arguments);
         if (!(str in _shVals)) {
           _shVals[str] = _sh.call(this, str); _shKeys.push(str);
           while (_shKeys.length > SH_MAX) delete _shVals[_shKeys.shift()];
