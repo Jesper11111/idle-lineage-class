@@ -137,7 +137,7 @@
         if (document.getElementById('afk-ps-overlay')) return;
         var ov = document.createElement('div');
         ov.id = 'afk-ps-overlay';
-        ov.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.66);display:flex;align-items:flex-start;justify-content:center;padding:calc(var(--orig-bar-h,0px) + 14px) 12px 12px;';
+        ov.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.66);display:flex;align-items:flex-start;justify-content:center;padding:calc(var(--orig-bar-h,0px) + 14px) 12px calc(12px + env(safe-area-inset-bottom, 0px));';
         if (window.AFK_TOGGLES && AFK_TOGGLES.applyBannerPad) AFK_TOGGLES.applyBannerPad(ov);   // 開啟當下實測橫幅高度覆寫 padding-top
         // 由上而下＝省電效果由大到小。**順序照實測排,不是照直覺**(2026-08-05 實測,數據與方法見 docs/perf-battery.md):
         //   關動畫 24~37% > 光暈濾鏡 22~25% > 特效 16~17% >> 降更新頻率 ~0 ≈ 傷害數字 0。
@@ -160,11 +160,13 @@
                 + '<span><span style="font-weight:600;">' + esc(o.name) + '</span><span style="display:block;font-size:11px;color:#94a3b8;margin-top:2px;">' + esc(o.desc) + '</span></span></label>';
         }).join('');
         var card = document.createElement('div');
-        card.style.cssText = 'background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:14px;max-width:460px;width:100%;';
-        card.innerHTML = '<div style="padding:16px 18px;border-bottom:1px solid #1e293b;"><div style="font-size:17px;font-weight:700;">🔋 省電模式</div>'
+        // max-height:100% 是相對「遮罩扣掉 padding 後」的高度 —— 橫幅讓位(applyBannerPad 改的是同一個 padding)
+        // 自動吃得到,不必再自己算 dvh。清單自己捲,標題與「完成」永遠留在畫面上。
+        card.style.cssText = 'background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:14px;max-width:460px;width:100%;max-height:100%;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.6);';
+        card.innerHTML = '<div style="padding:16px 18px;border-bottom:1px solid #1e293b;flex:0 0 auto;"><div style="font-size:17px;font-weight:700;">🔋 省電模式</div>'
             + '<div style="font-size:12px;color:#94a3b8;margin-top:3px;">由上往下省電效果遞減，覺得耗電或卡就從上面開始勾；不影響任何遊戲數值。</div></div>'
-            + '<div style="padding:12px 14px;">' + rows + '</div>'
-            + '<div style="padding:12px 16px;border-top:1px solid #1e293b;text-align:right;"><button id="afk-ps-close" style="background:#0ea5e9;border:none;color:#04263a;font-weight:700;border-radius:8px;padding:8px 16px;cursor:pointer;">完成</button></div>';
+            + '<div style="padding:12px 14px;flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;">' + rows + '</div>'
+            + '<div style="padding:12px 16px;border-top:1px solid #1e293b;text-align:right;flex:0 0 auto;"><button id="afk-ps-close" style="background:#0ea5e9;border:none;color:#04263a;font-weight:700;border-radius:8px;padding:8px 16px;cursor:pointer;">完成</button></div>';
         ov.appendChild(card); document.body.appendChild(ov);
         function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); }
         ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
