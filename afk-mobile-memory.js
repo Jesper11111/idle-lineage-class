@@ -18,18 +18,32 @@
         try { return localStorage.getItem('afk_ps_' + key) === '1'; } catch (e) { return false; }
     }
 
+    function powersaveEnabled() {
+        try {
+            if (window.AFK_TOGGLES && typeof window.AFK_TOGGLES.enabled === 'function') {
+                return !!window.AFK_TOGGLES.enabled('powersave');
+            }
+            var stored = localStorage.getItem('afk_toggle_powersave');
+            return stored === null || stored === '1';
+        } catch (e) {
+            return true;
+        }
+    }
+
     function isMobile() {
         if (document.body && document.body.classList.contains('m-mobile')) return true;
         try {
-            return window.innerWidth <= 900 &&
-                (!!window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+            if (typeof window.__afkIsMobileDevice === 'function') return !!window.__afkIsMobileDevice();
+            return (!!window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
+                /Android|iPhone|iPad|iPod|Mobile/i.test((window.navigator && window.navigator.userAgent) || '') ||
+                (window.innerWidth || 9999) <= 820;
         } catch (e) {
-            return window.innerWidth <= 900;
+            return (window.innerWidth || 9999) <= 820;
         }
     }
 
     function lite() {
-        return isMobile() && settingOn('noanim') && settingOn('lowfps');
+        return powersaveEnabled() && isMobile() && settingOn('noanim') && settingOn('lowfps');
     }
 
     var frameEpoch = 0;
@@ -453,7 +467,7 @@
     // 關動畫時直接建立 body idle_0 單幀；不進 _battleSpriteProbe/_pet8Probe，
     // 因此不會為了「畫一張靜態角色」解碼 idle/attack/skill/hurt/death 全套序列。
     function renderStaticActors() {
-        if (!isMobile() || !settingOn('noanim')) return false;
+        if (!powersaveEnabled() || !isMobile() || !settingOn('noanim')) return false;
         var game = document.getElementById('game-screen');
         var battle = document.getElementById('battle-view');
         if (!game || game.classList.contains('hidden') || !battle ||
@@ -749,6 +763,9 @@
     installMobStillGuard();
     installImagePanelGuards();
     installStartGameFlush();
+    // 本檔位於 body 尾端，DOMContentLoaded 前就先啟用既有雙省電政策；否則橫向手機會先讓
+    // 3344x1882 背景與動畫 probe 進入解碼，等 afk-mobile 稍後掛 m-mobile 已經來不及。
+    refreshMode(true);
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', function () {
             // 所有後載外掛（含 afk-training）已完成，再把目前最外層包回來。
@@ -759,8 +776,6 @@
             refreshMode(true);
             setTimeout(installImagePanelGuards, 0);   // afk-wiki 在本檔之後的 DOMContentLoaded handler 才建立 modal
         }, { once: true });
-    } else {
-        refreshMode(true);
     }
 
     try {

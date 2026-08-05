@@ -6,11 +6,13 @@ import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { platform } from 'node:os';
 import { chromium, devices, webkit } from 'playwright';
-import { listTestSaves, loadTestSave } from './load-testsave.mjs';
+import { listTestSaves, loadFullBackup, loadTestSave } from './load-testsave.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ROUNDS = Math.max(4, Number(process.env.AFK_STRESS_ROUNDS) || 8);
 const BROWSER_ENGINE = process.argv.includes('--webkit') ? 'webkit' : 'chromium';
+const FULL_BACKUP = process.env.AFK_FULL_BACKUP || '';
+const FULL_BACKUP_SLOT = Math.max(1, Number(process.env.AFK_FULL_BACKUP_SLOT) || 1);
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
@@ -84,6 +86,9 @@ async function createSyntheticRole() {
 }
 
 async function loadRole() {
+  if (FULL_BACKUP) {
+    return loadFullBackup(page, { file: FULL_BACKUP, slot: FULL_BACKUP_SLOT, powersave: true });
+  }
   const saves = listTestSaves();
   if (saves.length) {
     const loaded = await loadTestSave(page, { file: saves[0], slot: 1 });

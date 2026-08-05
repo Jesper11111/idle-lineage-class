@@ -1579,13 +1579,18 @@
     }
     // 切到背景 / 關掉 App 前主動存一次:iOS 在背景更容易被系統直接丟掉整個分頁,
     //   靠下一次定時檢查點就來不及(等於白算)。結算結束時要記得解除,別讓它留著指向舊的閉包。
+    // 🔒 Jesper offline checkpoint commit gate v1
+    // visibilitychange/pagehide 常在同一輪連發；以已真正落盤的 done 做冪等鍵，避免大存檔連續複製／壓縮兩次。
+    var _ckptCommittedDone = -1;
     _ckptNow = function () {
       try {
-        if (!timing || !timing.closeTs || done <= 0 || player.dead || !state.running) return;
-        doCheckpoint();
-      } catch (e) {}
+        if (!timing || !timing.closeTs || done <= 0 || player.dead || !state.running) return false;
+        return doCheckpoint();
+      } catch (e) { return false; }
     };
     function doCheckpoint() {
+      var checkpointDone = done;
+      if (checkpointDone <= _ckptCommittedDone) return true;
       // ⏱ 量自己花掉多少真實時間:存檔(壓縮)在慢裝置上可能很貴,而它是「每 CKPT_MS 一次」——
       //   單次成本一旦逼近 CKPT_MS,結算時間就會失控放大(越慢→存越多次→更慢)。
       //   把它跟結算總耗時並排記進離線紀錄,才分得出「真的在算」還是「卡在存檔」(2026-07-30 玩家回報結算 30 分鐘時加)。
@@ -1593,12 +1598,16 @@
       try {
         var _sq = _saveSquelch; _saveSquelch = false;   // ⚡ 檢查點是「該存的存檔」:暫時放行 saveGame 擋板
         wallHoldsRestore();   // 💾 存檔前先把被撐長的效期(追蹤／追殺)還原,結算中途關頁也不會把假到期時間留在存檔裡
-        try { if (typeof saveGame === 'function') saveGame(); } finally { _saveSquelch = _sq; wallHoldsApply(); }   // ff 下 logSys 靜音,不會洗「進度已儲存」;saveGame 尾端的 offlineStamp 被 catchingUp 擋掉,不影響錨點
-        stampCore(timing.closeTs + done * TICK_MS);       // 錨點=已結算到的時間點(絕不用 now,剩餘離線時間才不會被吃掉)
+        var saved = false;
+        try { if (typeof saveGame === 'function') saved = saveGame() === true; } finally { _saveSquelch = _sq; wallHoldsApply(); }   // ff 下 logSys 靜音,不會洗「進度已儲存」;saveGame 尾端的 offlineStamp 被 catchingUp 擋掉,不影響錨點
+        if (!saved) return false;                         // 主存檔／寵物桶沒完整落地時絕不可先推錨點，否則會吃掉收益
+        stampCore(timing.closeTs + checkpointDone * TICK_MS);       // 錨點=已結算到的時間點(絕不用 now,剩餘離線時間才不會被吃掉)
+        _ckptCommittedDone = checkpointDone;
         _ckptN++; _ckptMs += performance.now() - _ck0;    // 先累計再寫紀錄,這一次的成本才會進到這筆紀錄裡
         recordHistory(buildHistRec());                    // 已結算部分先寫進離線紀錄(同 closeTs 覆寫,不會多筆)
-      } catch (eCk) {}
-      _ckptLastMs = performance.now();
+        _ckptLastMs = performance.now();
+        return true;
+      } catch (eCk) { return false; }
     }
     // ═══ 分段檢查點(宣告結束) ═══════════════════════════════════════════════
 
@@ -2053,7 +2062,12 @@
     if (typeof saveGame === 'function') {
       var _save = saveGame;
       window.saveGame = function () {
-        if (_saveSquelch) return;   // ⚡ 結算迴圈期間擋核心逐殺存檔(頭目擊殺後 saveGame 無 ff 守衛);檢查點/結算尾經 doCheckpoint 放行
+        if (_saveSquelch) {
+          // js/13 的 close-flush 已有 250ms lifecycle 去重；委派同一個 checkpoint，讓它取得 true 並擋住
+          // 後續 pagehide/beforeunload。一般逐殺存檔仍只回 false，不建立額外大字串。
+          if (window.__fb5CloseFlush && typeof _ckptNow === 'function') return _ckptNow();
+          return false;
+        }
         var r = _save.apply(this, arguments); try { stamp(); } catch (e) {} return r;
       };
     }

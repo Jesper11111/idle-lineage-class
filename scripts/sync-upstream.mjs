@@ -131,12 +131,14 @@ const regressionTests = [
   ['scripts/test-mobile-memory.mjs'],
   ['scripts/test-mobile-stability-stress.mjs'],
   ['scripts/test-mobile-stability-stress.mjs', '--webkit'],
+  ['scripts/test-mobile-catchup-budget.mjs'],
   ['scripts/test-mobile-audio-memory.mjs'],
   ['scripts/test-powersave-inventory.mjs'],
   ['scripts/test-junk-autosell-policy.mjs'],
   ['scripts/test-wiki-mobile-memory.mjs'],
   ['scripts/test-pwa-versioned-cache.mjs'],
   ['scripts/test-offline-bossring.mjs'],
+  ['scripts/test-offline-checkpoint.mjs'],
   ['scripts/test-shines-backports.mjs'],
 ];
 const privateSaveDir = '.testdata';

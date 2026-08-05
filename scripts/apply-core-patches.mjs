@@ -28,6 +28,7 @@
  *      創角圖片延遲載入，登入逐幀預載也遵守圖片記憶體模式。
  *  15. 手機卡片圖鑑單層縮圖 — 圖鑑沿用 96×96 怪物縮圖時，不再另外疊回原尺寸影子／武器。
  *  16. 背景 Worker Blob 生命週期 — 即使 Worker 建構同步失敗，也會撤銷暫時 Blob URL。
+ *  17. 手機補算排程 — 保留逐 tick 收益，但把手機前景 80/8ms 高占用改成 12/48ms，並優先讓出輸入。
  *
  * 用法：node scripts/apply-core-patches.mjs        （--check 只驗證是否已全部補上、不寫檔）
  */
@@ -1409,6 +1410,8 @@ function patchMobileLoginResources() {
   });
   const lazyLogoCount = (s.match(/class="creation-class-btn[^>]*>\s*<img[^>]*data-afk-mobile-lazy="1"[^>]*>/g) || []).length;
   const loginMarkers = [
+    'window.__afkIsMobileDevice = function ()',
+    "localStorage.getItem('afk_toggle_powersave')",
     "localStorage.getItem('afk_ps_noanim') === '1'",
     "localStorage.getItem('afk_ps_lowfps') === '1'",
     "document.documentElement.classList.add('afk-memory-lite-boot')",
@@ -1426,12 +1429,18 @@ function patchMobileLoginResources() {
 
   const headAnchor = `    <title>放置天堂 - 日出之國</title>`;
   if (!s.includes(headAnchor)) throw new Error(`[${FILE}] 找不到 head 啟動錨點。`);
-  if (!s.includes('afk-memory-lite-boot')) {
-    const bootstrap = `    <!-- 🔌 加掛版補丁：在大型 CSS 圖進入 computed style 前讀取既有雙省電設定，避免先解碼 3344×1882 body 背景。 -->
+  const bootstrap = `    <!-- 🔌 加掛版補丁：在大型 CSS 圖進入 computed style 前讀取既有雙省電設定，避免先解碼 3344×1882 body 背景。 -->
     <script>
       try {
-        if (localStorage.getItem('afk_ps_noanim') === '1' && localStorage.getItem('afk_ps_lowfps') === '1' &&
-            innerWidth <= 900 && matchMedia('(pointer:coarse)').matches) {
+        window.__afkIsMobileDevice = function () {
+          return (typeof matchMedia === 'function' && matchMedia('(pointer:coarse)').matches) ||
+            /Android|iPhone|iPad|iPod|Mobile/i.test((navigator && navigator.userAgent) || '') ||
+            (innerWidth || 9999) <= 820;
+        };
+        var afkPsToggle = localStorage.getItem('afk_toggle_powersave');
+        if ((afkPsToggle === null || afkPsToggle === '1') &&
+            localStorage.getItem('afk_ps_noanim') === '1' && localStorage.getItem('afk_ps_lowfps') === '1' &&
+            window.__afkIsMobileDevice()) {
           document.documentElement.classList.add('afk-memory-lite-boot');
         }
       } catch (e) {}
@@ -1439,6 +1448,13 @@ function patchMobileLoginResources() {
     <style>html.afk-memory-lite-boot body{background-image:linear-gradient(135deg,#172033 0%,#101827 48%,#080d18 100%)!important;background-attachment:scroll!important;}</style>
 
 `;
+  const bootstrapStart = s.indexOf('    <!-- 🔌 加掛版補丁：在大型 CSS 圖進入 computed style 前讀取既有雙省電設定');
+  if (bootstrapStart >= 0) {
+    const styleEnd = s.indexOf('</style>', bootstrapStart);
+    if (styleEnd < 0) throw new Error(`[${FILE}] 手機登入背景啟動區塊缺少 </style>。`);
+    const blockEnd = styleEnd + '</style>'.length;
+    s = s.slice(0, bootstrapStart) + bootstrap.trimEnd() + s.slice(blockEnd);
+  } else if (!s.includes('afk-memory-lite-boot')) {
     s = s.replace(headAnchor, bootstrap + headAnchor);
   }
 
@@ -1598,7 +1614,95 @@ function patchBackgroundHeartbeatBlobLifecycle() {
   console.log(`[patch] 背景心跳 Worker Blob URL 生命週期（${FILE}）`);
 }
 
-const PATCHES = [patchMaybeSpawnMobs, patchTradEnHook, patch16Slots, patchPetAnimTicker, patchBossHuntEscape, patchUseItemKeepModal, patchSellNowNoForce, patchLegacyOfflineOwnership, patchVersionedAssetCaches, patchMobileMemoryPreviewGate, patchMobileMobThumbGate, patchCoalescedSaveCompression, patchMobileImageLifecycleHooks, patchMobileLoginResources, patchMobileCardThumbGate, patchBackgroundHeartbeatBlobLifecycle];
+// ── 補丁 17：手機前景補算降低主執行緒 duty cycle ─────────────────────
+function patchMobileCatchupScheduler() {
+  const FILE = 'js/03-combat-core.js';
+  let s = readFileSync(FILE, 'utf8').replace(/\r\n/g, '\n');
+  const doneMarkers = [
+    'const FF_MOBILE_BUDGET_MS = 12;',
+    'function _ffMobileDevice()',
+    'function _ffShouldYield(budget0, mobile)',
+    'window.__afkCatchupPolicy = function ()',
+    '}, _ffYieldMs());'
+  ];
+  if (doneMarkers.every((marker) => s.includes(marker))) { already++; return; }
+  if (doneMarkers.some((marker) => s.includes(marker))) {
+    throw new Error(`[${FILE}] 手機補算排程補丁只剩部分，拒絕靜默略過。`);
+  }
+
+  s = s.replace(
+`    // ⏩ 補跑路徑（v3.6.95 重建 v3.2.78 時間預算榨乾制）：每次呼叫最多吃 FF_BUDGET_MS 計算時間就讓步，
+    //    未還完的債留待下次呼叫（每 4 tick 量一次 performance.now·FF_HARD_CAP 保底防單次過量）。`,
+`    // ⏩ 補跑路徑（v3.6.95 重建 v3.2.78 時間預算榨乾制）：每次呼叫最多吃目前裝置的時間預算就讓步，
+    //    未還完的債留待下次呼叫（手機每 tick、桌機每 4 tick 檢查·FF_HARD_CAP 保底防單次過量）。`);
+  s = s.replace(
+`    let ran = 0, budget0 = now;
+    let _burstMax = owed;`,
+`    let ran = 0, budget0 = now;
+    let _ffMobile = _ffMobileDevice();
+    let _burstMax = owed;`);
+  s = s.replace(
+`            if ((ran & 3) === 0) {
+                let t = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+                if (t - budget0 >= FF_BUDGET_MS) break;
+            }`,
+`            if ((_ffMobile || (ran & 3) === 0) && _ffShouldYield(budget0, _ffMobile)) break;`);
+  s = s.replace(
+`// ⏩ 補跑專用快速排程：每批最多運算 80ms、讓出 8ms 後續跑；仍逐 tick 真實結算。
+const FF_BUDGET_MS = 80;
+const FF_YIELD_MS = 8;`,
+`// ⏩ 補跑專用快速排程：桌機維持 80/8ms；手機以 12/48ms 降到約 20% duty。
+//    只改分片與讓步，不封頂時間債、不抽樣放大收益，RNG／死亡／藥水／掉落仍逐 tick 相同。
+const FF_BUDGET_MS = 80;
+const FF_YIELD_MS = 8;
+const FF_MOBILE_BUDGET_MS = 12;
+const FF_MOBILE_YIELD_MS = 48;`);
+  s = s.replace(
+`let _ffResumeTimer = null;
+let _ffProgressEl = null;`,
+`let _ffResumeTimer = null;
+let _ffProgressEl = null;
+
+function _ffMobileDevice() {
+    try {
+        if (typeof window !== 'undefined' && typeof window.__afkIsMobileDevice === 'function') {
+            return !!window.__afkIsMobileDevice();
+        }
+        if (typeof document !== 'undefined' && document.body && document.body.classList.contains('m-mobile')) return true;
+        return (typeof matchMedia === 'function' && matchMedia('(pointer:coarse)').matches) ||
+            (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '')) ||
+            (typeof innerWidth === 'number' && innerWidth <= 820);
+    } catch (e) { return false; }
+}
+
+function _ffBudgetMs(mobile) { return mobile ? FF_MOBILE_BUDGET_MS : FF_BUDGET_MS; }
+function _ffYieldMs() { return _ffMobileDevice() ? FF_MOBILE_YIELD_MS : FF_YIELD_MS; }
+function _ffShouldYield(budget0, mobile) {
+    try {
+        if (typeof navigator !== 'undefined' && navigator.scheduling &&
+            typeof navigator.scheduling.isInputPending === 'function' && navigator.scheduling.isInputPending()) return true;
+    } catch (e) {}
+    let t = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    return t - budget0 >= _ffBudgetMs(mobile);
+}
+if (typeof window !== 'undefined') {
+    window.__afkCatchupPolicy = function () {
+        let mobile = _ffMobileDevice();
+        return { mobile: mobile, budgetMs: _ffBudgetMs(mobile), yieldMs: mobile ? FF_MOBILE_YIELD_MS : FF_YIELD_MS };
+    };
+}`);
+  s = s.replace('    }, FF_YIELD_MS);', '    }, _ffYieldMs());');
+
+  const missing = doneMarkers.filter((marker) => !s.includes(marker));
+  if (missing.length || !s.includes('(_ffMobile || (ran & 3) === 0) && _ffShouldYield')) {
+    throw new Error(`[${FILE}] 手機補算排程產生不完整：${missing.join(' | ') || '逐 tick 讓步閘門'}`);
+  }
+  if (!CHECK) writeFileSync(FILE, s);
+  changed++;
+  console.log(`[patch] 手機補算 12/48ms 與輸入讓步（${FILE}）`);
+}
+
+const PATCHES = [patchMaybeSpawnMobs, patchTradEnHook, patch16Slots, patchPetAnimTicker, patchBossHuntEscape, patchUseItemKeepModal, patchSellNowNoForce, patchLegacyOfflineOwnership, patchVersionedAssetCaches, patchMobileMemoryPreviewGate, patchMobileMobThumbGate, patchCoalescedSaveCompression, patchMobileImageLifecycleHooks, patchMobileLoginResources, patchMobileCardThumbGate, patchBackgroundHeartbeatBlobLifecycle, patchMobileCatchupScheduler];
 
 try {
   for (const p of PATCHES) p();

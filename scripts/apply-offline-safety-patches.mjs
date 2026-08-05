@@ -6,6 +6,7 @@
  *   - 每存檔位首次切換只建立新錨點，不補算凍結區間
  *   - 安塔瑞斯／攻城 V2 特殊副本禁止離線模擬
  *   - 遷移完成前，選角頁不顯示歷史殘留的掛機地圖／時間
+ *   - 離頁 checkpoint 依已落盤進度去重，且存檔失敗時不推進收益錨點
  *   - 瘋狂席琳 Boss 以 normal／grace 雙快取＋事件重播避免耗時污染與全逐拍卡頓
  *
  * 所有替換皆以 PP 完成品的明確錨點定位；錨點改寫時直接失敗，不靜默降級。
@@ -26,6 +27,7 @@ const OLD_CRAZY_BOSS_CACHE_MARKER = '// 🔒 Jesper Crazy Sherine Boss cache saf
 const CRAZY_BOSS_CACHE_MARKER = '// 🔒 Jesper Crazy Sherine Boss event cache v2';
 const RIFT_OFFLINE_MARKER = '// 🔒 Jesper rift offline journey v1';
 const AUTOSELL_POLICY_CHAIN_MARKER = '// 🔒 Jesper junk autosell policy chain v1';
+const CHECKPOINT_COMMIT_MARKER = '// 🔒 Jesper offline checkpoint commit gate v1';
 
 function replaceOne(src, from, to, file, label) {
   const at = src.indexOf(from);
@@ -678,6 +680,86 @@ function convergeRiftOffline(src) {
   return src;
 }
 
+function convergeCheckpointCommit(src) {
+  if (src.includes(CHECKPOINT_COMMIT_MARKER)) return src;
+
+  src = replaceOne(
+    src,
+`    _ckptNow = function () {
+      try {
+        if (!timing || !timing.closeTs || done <= 0 || player.dead || !state.running) return;
+        doCheckpoint();
+      } catch (e) {}
+    };
+    function doCheckpoint() {
+      // ⏱ 量自己花掉多少真實時間:存檔(壓縮)在慢裝置上可能很貴,而它是「每 CKPT_MS 一次」——
+      //   單次成本一旦逼近 CKPT_MS,結算時間就會失控放大(越慢→存越多次→更慢)。
+      //   把它跟結算總耗時並排記進離線紀錄,才分得出「真的在算」還是「卡在存檔」(2026-07-30 玩家回報結算 30 分鐘時加)。
+      var _ck0 = performance.now();
+      try {
+        var _sq = _saveSquelch; _saveSquelch = false;   // ⚡ 檢查點是「該存的存檔」:暫時放行 saveGame 擋板
+        wallHoldsRestore();   // 💾 存檔前先把被撐長的效期(追蹤／追殺)還原,結算中途關頁也不會把假到期時間留在存檔裡
+        try { if (typeof saveGame === 'function') saveGame(); } finally { _saveSquelch = _sq; wallHoldsApply(); }   // ff 下 logSys 靜音,不會洗「進度已儲存」;saveGame 尾端的 offlineStamp 被 catchingUp 擋掉,不影響錨點
+        stampCore(timing.closeTs + done * TICK_MS);       // 錨點=已結算到的時間點(絕不用 now,剩餘離線時間才不會被吃掉)
+        _ckptN++; _ckptMs += performance.now() - _ck0;    // 先累計再寫紀錄,這一次的成本才會進到這筆紀錄裡
+        recordHistory(buildHistRec());                    // 已結算部分先寫進離線紀錄(同 closeTs 覆寫,不會多筆)
+      } catch (eCk) {}
+      _ckptLastMs = performance.now();
+    }`,
+`    ${CHECKPOINT_COMMIT_MARKER}
+    // visibilitychange/pagehide 常在同一輪連發；以已真正落盤的 done 做冪等鍵，避免大存檔連續複製／壓縮兩次。
+    var _ckptCommittedDone = -1;
+    _ckptNow = function () {
+      try {
+        if (!timing || !timing.closeTs || done <= 0 || player.dead || !state.running) return false;
+        return doCheckpoint();
+      } catch (e) { return false; }
+    };
+    function doCheckpoint() {
+      var checkpointDone = done;
+      if (checkpointDone <= _ckptCommittedDone) return true;
+      // ⏱ 量自己花掉多少真實時間:存檔(壓縮)在慢裝置上可能很貴,而它是「每 CKPT_MS 一次」——
+      //   單次成本一旦逼近 CKPT_MS,結算時間就會失控放大(越慢→存越多次→更慢)。
+      //   把它跟結算總耗時並排記進離線紀錄,才分得出「真的在算」還是「卡在存檔」(2026-07-30 玩家回報結算 30 分鐘時加)。
+      var _ck0 = performance.now();
+      try {
+        var _sq = _saveSquelch; _saveSquelch = false;   // ⚡ 檢查點是「該存的存檔」:暫時放行 saveGame 擋板
+        wallHoldsRestore();   // 💾 存檔前先把被撐長的效期(追蹤／追殺)還原,結算中途關頁也不會把假到期時間留在存檔裡
+        var saved = false;
+        try { if (typeof saveGame === 'function') saved = saveGame() === true; } finally { _saveSquelch = _sq; wallHoldsApply(); }
+        if (!saved) return false;                         // 主存檔／寵物桶沒完整落地時絕不可先推錨點，否則會吃掉收益
+        stampCore(timing.closeTs + checkpointDone * TICK_MS);
+        _ckptCommittedDone = checkpointDone;
+        _ckptN++; _ckptMs += performance.now() - _ck0;
+        recordHistory(buildHistRec());
+        _ckptLastMs = performance.now();
+        return true;
+      } catch (eCk) { return false; }
+    }`,
+    OFFLINE_FILE,
+    '離頁 checkpoint 落盤去重與失敗閘門'
+  );
+
+  src = replaceOne(
+    src,
+`      window.saveGame = function () {
+        if (_saveSquelch) return;   // ⚡ 結算迴圈期間擋核心逐殺存檔(頭目擊殺後 saveGame 無 ff 守衛);檢查點/結算尾經 doCheckpoint 放行
+        var r = _save.apply(this, arguments); try { stamp(); } catch (e) {} return r;
+      };`,
+`      window.saveGame = function () {
+        if (_saveSquelch) {
+          // js/13 的 close-flush 已有 250ms lifecycle 去重；委派同一個 checkpoint，讓它取得 true 並擋住後續事件。
+          if (window.__fb5CloseFlush && typeof _ckptNow === 'function') return _ckptNow();
+          return false;
+        }
+        var r = _save.apply(this, arguments); try { stamp(); } catch (e) {} return r;
+      };`,
+    OFFLINE_FILE,
+    'close-flush 委派離線 checkpoint'
+  );
+  return src;
+}
+
 function patchOffline() {
   let src = readFileSync(OFFLINE_FILE, 'utf8').replace(/\r\n/g, '\n');
   const srcBefore = src;
@@ -1045,6 +1127,7 @@ function patchOffline() {
 
   src = patchRiftOffline(src);
   src = convergeRiftOffline(src);
+  src = convergeCheckpointCommit(src);
 
   // v1/r3 是 2026-07-31 的保守止血版（瘋狂席琳每隻王都逐拍）。先精確還原成
   // r2 共同基線，再套 v2；如此本腳本同時支援「目前工作樹」與「下次從乾淨 PP 同步」。
@@ -1525,6 +1608,7 @@ function patchOffline() {
   const required = [
     MARKER,
     RIFT_OFFLINE_MARKER,
+    CHECKPOINT_COMMIT_MARKER,
     "MIGRATION_PREFIX = 'afk_offline_legacy_migrated_v'",
     OFFSTATS_MARKER,
     OFFLINE_BOSSRING_MARKER,
@@ -1564,6 +1648,9 @@ function patchOffline() {
     "!isKing && !isRift",
     "hKind = 'rift'",
     "riftSnapshot: riftSnapshot"
+    , 'checkpointDone <= _ckptCommittedDone'
+    , "saved = saveGame() === true"
+    , "window.__fb5CloseFlush && typeof _ckptNow === 'function'"
   ];
   if (hasOfflineAutoSellThrottle) required.push(AUTOSELL_POLICY_CHAIN_MARKER);
   const missing = required.filter(x => !src.includes(x));

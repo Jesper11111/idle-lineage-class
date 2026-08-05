@@ -229,8 +229,8 @@ function gameLoop() {
         return;
     }
 
-    // ⏩ 補跑路徑（v3.6.95 重建 v3.2.78 時間預算榨乾制）：每次呼叫最多吃 FF_BUDGET_MS 計算時間就讓步，
-    //    未還完的債留待下次呼叫（每 4 tick 量一次 performance.now·FF_HARD_CAP 保底防單次過量）。
+    // ⏩ 補跑路徑（v3.6.95 重建 v3.2.78 時間預算榨乾制）：每次呼叫最多吃目前裝置的時間預算就讓步，
+    //    未還完的債留待下次呼叫（手機每 tick、桌機每 4 tick 檢查·FF_HARD_CAP 保底防單次過量）。
     //    state.ff＝全域補跑閘（VFX/動畫/音效/日誌/逐次重繪與存檔全部受抑制）；ffSmall 保留相容但固定 false。
     if (!_ffAcc) {
         if (typeof resetCatchupGainItemIndex === 'function') resetCatchupGainItemIndex();
@@ -249,6 +249,7 @@ function gameLoop() {
     state.ff = true;
     state.ffSmall = false;   // 真實補跑一律略過動畫；小補跑也只保留最終畫面與收益
     let ran = 0, budget0 = now;
+    let _ffMobile = _ffMobileDevice();
     let _burstMax = owed;
     try {
         while (ran < _burstMax && ran < FF_HARD_CAP) {
@@ -271,10 +272,7 @@ function gameLoop() {
             }
             if (player.dead) break;   // 真實補跑戰敗即停止；死亡後的背景時間不得繼續產生收益
             _ffErrorStreak = 0;
-            if ((ran & 3) === 0) {
-                let t = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-                if (t - budget0 >= FF_BUDGET_MS) break;
-            }
+            if ((_ffMobile || (ran & 3) === 0) && _ffShouldYield(budget0, _ffMobile)) break;
         }
     } finally {
         _tickDebt = Math.max(0, _tickDebt - ran * TICK_MS);
@@ -340,9 +338,12 @@ function _ffFinishCatchup() {
     _ffErrorStreak = 0;
     _ffProgressHide();
 }
-// ⏩ 補跑專用快速排程：每批最多運算 80ms、讓出 8ms 後續跑；仍逐 tick 真實結算。
+// ⏩ 補跑專用快速排程：桌機維持 80/8ms；手機以 12/48ms 降到約 20% duty。
+//    只改分片與讓步，不封頂時間債、不抽樣放大收益，RNG／死亡／藥水／掉落仍逐 tick 相同。
 const FF_BUDGET_MS = 80;
 const FF_YIELD_MS = 8;
+const FF_MOBILE_BUDGET_MS = 12;
+const FF_MOBILE_YIELD_MS = 48;
 const FF_HARD_CAP = 6000;
 const FF_MAX_ELAPSED_MS = 300000;
 const FF_ERROR_STREAK_MAX = 3;
@@ -351,6 +352,35 @@ let _ffAcc = null;   // 補跑摘要累計（跨多次 gameLoop 呼叫·還清�
 let _ffErrorStreak = 0;
 let _ffResumeTimer = null;
 let _ffProgressEl = null;
+
+function _ffMobileDevice() {
+    try {
+        if (typeof window !== 'undefined' && typeof window.__afkIsMobileDevice === 'function') {
+            return !!window.__afkIsMobileDevice();
+        }
+        if (typeof document !== 'undefined' && document.body && document.body.classList.contains('m-mobile')) return true;
+        return (typeof matchMedia === 'function' && matchMedia('(pointer:coarse)').matches) ||
+            (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '')) ||
+            (typeof innerWidth === 'number' && innerWidth <= 820);
+    } catch (e) { return false; }
+}
+
+function _ffBudgetMs(mobile) { return mobile ? FF_MOBILE_BUDGET_MS : FF_BUDGET_MS; }
+function _ffYieldMs() { return _ffMobileDevice() ? FF_MOBILE_YIELD_MS : FF_YIELD_MS; }
+function _ffShouldYield(budget0, mobile) {
+    try {
+        if (typeof navigator !== 'undefined' && navigator.scheduling &&
+            typeof navigator.scheduling.isInputPending === 'function' && navigator.scheduling.isInputPending()) return true;
+    } catch (e) {}
+    let t = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    return t - budget0 >= _ffBudgetMs(mobile);
+}
+if (typeof window !== 'undefined') {
+    window.__afkCatchupPolicy = function () {
+        let mobile = _ffMobileDevice();
+        return { mobile: mobile, budgetMs: _ffBudgetMs(mobile), yieldMs: mobile ? FF_MOBILE_YIELD_MS : FF_YIELD_MS };
+    };
+}
 
 function _ffProgressEnsure() {
     if (typeof document === 'undefined' || !document.body) return null;
@@ -417,7 +447,7 @@ function _ffScheduleNext() {
     _ffResumeTimer = setTimeout(function () {
         _ffResumeTimer = null;
         if (_tickDebt >= TICK_MS && state && state.running && player && !player.dead) gameLoop();
-    }, FF_YIELD_MS);
+    }, _ffYieldMs());
 }
 function _ffCancelScheduledLoop() {
     if (_ffResumeTimer !== null) clearTimeout(_ffResumeTimer);

@@ -18,6 +18,7 @@
 
     function detectMobile() {
         try {
+            if (typeof window.__afkIsMobileDevice === 'function') return !!window.__afkIsMobileDevice();
             return (matchMedia && matchMedia('(pointer:coarse)').matches) ||
                 /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '') ||
                 (window.innerWidth || 9999) <= 820;

@@ -14,8 +14,15 @@
     <!-- 🔌 加掛版補丁：在大型 CSS 圖進入 computed style 前讀取既有雙省電設定，避免先解碼 3344×1882 body 背景。 -->
     <script>
       try {
-        if (localStorage.getItem('afk_ps_noanim') === '1' && localStorage.getItem('afk_ps_lowfps') === '1' &&
-            innerWidth <= 900 && matchMedia('(pointer:coarse)').matches) {
+        window.__afkIsMobileDevice = function () {
+          return (typeof matchMedia === 'function' && matchMedia('(pointer:coarse)').matches) ||
+            /Android|iPhone|iPad|iPod|Mobile/i.test((navigator && navigator.userAgent) || '') ||
+            (innerWidth || 9999) <= 820;
+        };
+        var afkPsToggle = localStorage.getItem('afk_toggle_powersave');
+        if ((afkPsToggle === null || afkPsToggle === '1') &&
+            localStorage.getItem('afk_ps_noanim') === '1' && localStorage.getItem('afk_ps_lowfps') === '1' &&
+            window.__afkIsMobileDevice()) {
           document.documentElement.classList.add('afk-memory-lite-boot');
         }
       } catch (e) {}

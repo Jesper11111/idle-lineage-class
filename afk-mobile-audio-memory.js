@@ -17,14 +17,28 @@
     var channelCursor = 0;
     var lastLiteMode = null;
 
+    function powersaveEnabled() {
+        try {
+            if (window.AFK_TOGGLES && typeof window.AFK_TOGGLES.enabled === 'function') {
+                return !!window.AFK_TOGGLES.enabled('powersave');
+            }
+            var stored = localStorage.getItem('afk_toggle_powersave');
+            return stored === null || stored === '1';
+        } catch (e) {
+            return true;
+        }
+    }
+
     function lite() {
         if (typeof window.__afkMobileMemoryLite === 'function') {
             return window.__afkMobileMemoryLite();
         }
         try {
-            var mobile = window.innerWidth <= 900 &&
-                (!!window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
-            return mobile &&
+            var mobile = typeof window.__afkIsMobileDevice === 'function' ? !!window.__afkIsMobileDevice() :
+                ((!!window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
+                /Android|iPhone|iPad|iPod|Mobile/i.test((window.navigator && window.navigator.userAgent) || '') ||
+                (window.innerWidth || 9999) <= 820);
+            return powersaveEnabled() && mobile &&
                 localStorage.getItem('afk_ps_noanim') === '1' &&
                 localStorage.getItem('afk_ps_lowfps') === '1';
         } catch (e) {

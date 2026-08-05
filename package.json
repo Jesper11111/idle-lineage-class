@@ -15,6 +15,7 @@
     "test:mobile-stress": "node scripts/test-mobile-stability-stress.mjs",
     "test:mobile-stress-webkit": "node scripts/test-mobile-stability-stress.mjs --webkit",
     "test:mobile-audio-memory": "node scripts/test-mobile-audio-memory.mjs",
+    "test:mobile-catchup": "node scripts/test-mobile-catchup-budget.mjs",
     "test:wiki-mobile-memory": "node scripts/test-wiki-mobile-memory.mjs",
     "test:save-queue": "node scripts/test-save-compression-queue.mjs",
     "test:pwa-cache": "node scripts/test-pwa-versioned-cache.mjs",
@@ -22,6 +23,7 @@
     "test:offline-integration": "node scripts/test-offline-bossring-integration.mjs",
     "test:offline-grace": "node scripts/test-offline-grace-boss-cache.mjs",
     "test:offline-rift": "node scripts/test-offline-rift.mjs",
+    "test:offline-checkpoint": "node scripts/test-offline-checkpoint.mjs",
     "test:backports": "node scripts/test-shines-backports.mjs",
     "test:training": "node scripts/test-pp-training.mjs",
     "test:role-switch": "node scripts/test-pp-role-switch.mjs"
