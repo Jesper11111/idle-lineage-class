@@ -210,8 +210,8 @@ async function exerciseRoleCycle() {
 
 const cdp = BROWSER_ENGINE === 'chromium' ? await context.newCDPSession(page) : null;
 if (cdp) await cdp.send('Performance.enable');
-async function sample(round) {
-  if (cdp) await cdp.send('HeapProfiler.collectGarbage').catch(() => {});
+async function sample(round, collectGarbage = false) {
+  if (cdp && collectGarbage) await cdp.send('HeapProfiler.collectGarbage').catch(() => {});
   const [dom, performanceMetrics, pageMetrics] = await Promise.all([
     cdp ? cdp.send('Memory.getDOMCounters') : Promise.resolve(null),
     cdp ? cdp.send('Performance.getMetrics') : Promise.resolve(null),
@@ -275,20 +275,25 @@ try {
       document.body.classList.add('mview-center');
     });
     await sleep(100);
-    const current = await sample(round + 1);
+    const peak = await sample(round + 1, false);   // 先量自然峰值；只看強制 GC 後會漏掉 iOS 真正會殺頁的尖峰
+    const current = await sample(round + 1, true);
+    current.peakJsHeap = peak.jsHeap;
     assert.equal(current.wikiNodes + current.wikiImages, 0, `第 ${round + 1} 輪 Wiki 未釋放`);
     assert.equal(current.panelNodes, 0, `第 ${round + 1} 輪收集冊／NPC body 未釋放`);
     assert.equal(current.backpackNodes, 0, `第 ${round + 1} 輪背包未休眠`);
     samples.push(current);
     console.log(`[stress ${round + 1}/${ROUNDS}] nodes=${current.nodes} images=${current.images} ` +
       `decoded=${(current.decodedBytes / 1048576).toFixed(1)}MiB heap=` +
-      `${current.jsHeap == null ? 'n/a' : (current.jsHeap / 1048576).toFixed(1) + 'MiB'}`);
+      `${current.jsHeap == null ? 'n/a' : (current.jsHeap / 1048576).toFixed(1) + 'MiB'} peak=` +
+      `${current.peakJsHeap == null ? 'n/a' : (current.peakJsHeap / 1048576).toFixed(1) + 'MiB'}`);
   }
 
   await page.waitForFunction(() =>
     !window._lzWorkerActive && Object.keys(window._lzWorkerPending || {}).length === 0,
   null, { timeout: 15000 });
-  const final = await sample(ROUNDS + 1);
+  const finalPeak = await sample(ROUNDS + 1, false);
+  const final = await sample(ROUNDS + 1, true);
+  final.peakJsHeap = finalPeak.jsHeap;
   const warm = samples[Math.min(2, samples.length - 1)];
   assert.equal(crashed, false, '手機壓力測試期間 renderer 發生 crash');
   assert.deepEqual(failures, [], `手機壓力測試有 pageerror：\n${failures.join('\n')}`);
@@ -299,6 +304,10 @@ try {
   if (Number.isFinite(final.jsHeap) && Number.isFinite(warm.jsHeap)) {
     assert.ok(final.jsHeap <= warm.jsHeap + 16 * 1024 * 1024,
       `JS heap 未收斂：暖機 ${(warm.jsHeap / 1048576).toFixed(1)} → 最後 ${(final.jsHeap / 1048576).toFixed(1)} MiB`);
+  }
+  if (Number.isFinite(final.peakJsHeap) && Number.isFinite(warm.peakJsHeap)) {
+    assert.ok(final.peakJsHeap <= warm.peakJsHeap + 48 * 1024 * 1024,
+      `自然 GC 前 heap 尖峰持續擴張：暖機 ${(warm.peakJsHeap / 1048576).toFixed(1)} → 最後 ${(final.peakJsHeap / 1048576).toFixed(1)} MiB`);
   }
   assert.ok(final.releases >= ROUNDS * 6,
     `圖片生命週期釋放次數不足：${final.releases}`);

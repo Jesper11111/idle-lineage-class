@@ -1691,12 +1691,12 @@ function patchOffline() {
     "var isRift = savedMap === 'rift_battle'",
     "!isKing && !isRift",
     "hKind = 'rift'",
-    "riftSnapshot: riftSnapshot"
-    , 'checkpointDone <= _ckptCommittedDone'
-    , "saved = saveGame() === true"
-    , "window.__fb5CloseFlush && typeof _ckptNow === 'function'"
-    , 'UW_CHAR_MAX = 2500000'
-    , '_uwChars -= oldRaw.length'
+    "riftSnapshot: riftSnapshot",
+    'checkpointDone <= _ckptCommittedDone',
+    "saved = saveGame() === true",
+    "window.__fb5CloseFlush && typeof _ckptNow === 'function'",
+    'UW_CHAR_MAX = 2500000',
+    '_uwChars -= oldRaw.length'
   ];
   if (hasOfflineAutoSellThrottle) required.push(AUTOSELL_POLICY_CHAIN_MARKER);
   const missing = required.filter(x => !src.includes(x));
