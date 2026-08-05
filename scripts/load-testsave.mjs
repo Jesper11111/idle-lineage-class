@@ -74,6 +74,7 @@ export async function loadFullBackup(page, opts = {}) {
     if (powersave) {
       localStorage.setItem('afk_ps_noanim', '1');
       localStorage.setItem('afk_ps_lowfps', '1');
+      localStorage.setItem('afk_ps_nofx', '1');
       localStorage.setItem('lineage_vfx_off', '1');
       localStorage.setItem('lineage_vfx_num_off', '1');
       localStorage.setItem('fb5_bgm', JSON.stringify({ on: false, vol: 35 }));

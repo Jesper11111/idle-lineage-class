@@ -52,6 +52,7 @@ const context = await browser.newContext({ ...devices['iPhone 13'] });
 await context.addInitScript(() => {
   localStorage.setItem('afk_ps_noanim', '1');
   localStorage.setItem('afk_ps_lowfps', '1');
+  localStorage.setItem('afk_ps_nofx', '1');
 });
 const page = await context.newPage();
 const failures = [];

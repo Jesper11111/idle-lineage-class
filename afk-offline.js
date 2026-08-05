@@ -2080,16 +2080,22 @@
   //   軍王之室被傳回村)也不影響——快取的 key 就是輸入本身,不是「假設地圖不變」。
   function installFfPerfHooks() {
     // 1) _saveUnwrap(raw):驗簽章要對整包 payload 算雜湊,而核心每殺一隻怪都重讀整包血盟狀態 → 同一份字串重複驗。
-    //    純函式(同字串必同結果),用「最近 8 份字串」的小快取即可;回傳物件每次複製一份,避免呼叫端改到共用物件。
+    //    純函式(同字串必同結果),但成熟角色單份可接近 1MB；同時限制筆數與總字數，避免 8 份大字串長駐手機。
+    //    回傳物件每次複製一份,避免呼叫端改到共用物件。
     if (typeof _saveUnwrap === 'function') {
-      var _uw = _saveUnwrap, _uwKeys = [], _uwVals = Object.create(null), UW_MAX = 8;
+      var _uw = _saveUnwrap, _uwKeys = [], _uwVals = Object.create(null), _uwChars = 0;
+      var UW_MAX = 3, UW_CHAR_MAX = 2500000;
       window._saveUnwrap = function (raw) {
         if (typeof raw !== 'string' || raw.length < 64) return _uw.apply(this, arguments);
         var hit = _uwVals[raw];
         if (!hit) {
           hit = _uw.call(this, raw);
-          _uwVals[raw] = hit; _uwKeys.push(raw);
-          while (_uwKeys.length > UW_MAX) delete _uwVals[_uwKeys.shift()];
+          _uwVals[raw] = hit; _uwKeys.push(raw); _uwChars += raw.length;
+          while (_uwKeys.length > 1 && (_uwKeys.length > UW_MAX || _uwChars > UW_CHAR_MAX)) {
+            var oldRaw = _uwKeys.shift();
+            _uwChars -= oldRaw.length;
+            delete _uwVals[oldRaw];
+          }
         }
         return { payload: hit.payload, signed: hit.signed, ok: hit.ok };
       };

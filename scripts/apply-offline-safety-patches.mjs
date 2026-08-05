@@ -760,6 +760,49 @@ function convergeCheckpointCommit(src) {
   return src;
 }
 
+function convergeSaveUnwrapBudget(src) {
+  if (src.includes('UW_CHAR_MAX = 2500000')) return src;
+  return replaceOne(
+    src,
+`    //    純函式(同字串必同結果),用「最近 8 份字串」的小快取即可;回傳物件每次複製一份,避免呼叫端改到共用物件。
+    if (typeof _saveUnwrap === 'function') {
+      var _uw = _saveUnwrap, _uwKeys = [], _uwVals = Object.create(null), UW_MAX = 8;
+      window._saveUnwrap = function (raw) {
+        if (typeof raw !== 'string' || raw.length < 64) return _uw.apply(this, arguments);
+        var hit = _uwVals[raw];
+        if (!hit) {
+          hit = _uw.call(this, raw);
+          _uwVals[raw] = hit; _uwKeys.push(raw);
+          while (_uwKeys.length > UW_MAX) delete _uwVals[_uwKeys.shift()];
+        }
+        return { payload: hit.payload, signed: hit.signed, ok: hit.ok };
+      };
+    }`,
+`    //    純函式(同字串必同結果),但成熟角色單份可接近 1MB；同時限制筆數與總字數，避免 8 份大字串長駐手機。
+    //    回傳物件每次複製一份,避免呼叫端改到共用物件。
+    if (typeof _saveUnwrap === 'function') {
+      var _uw = _saveUnwrap, _uwKeys = [], _uwVals = Object.create(null), _uwChars = 0;
+      var UW_MAX = 3, UW_CHAR_MAX = 2500000;
+      window._saveUnwrap = function (raw) {
+        if (typeof raw !== 'string' || raw.length < 64) return _uw.apply(this, arguments);
+        var hit = _uwVals[raw];
+        if (!hit) {
+          hit = _uw.call(this, raw);
+          _uwVals[raw] = hit; _uwKeys.push(raw); _uwChars += raw.length;
+          while (_uwKeys.length > 1 && (_uwKeys.length > UW_MAX || _uwChars > UW_CHAR_MAX)) {
+            var oldRaw = _uwKeys.shift();
+            _uwChars -= oldRaw.length;
+            delete _uwVals[oldRaw];
+          }
+        }
+        return { payload: hit.payload, signed: hit.signed, ok: hit.ok };
+      };
+    }`,
+    OFFLINE_FILE,
+    '大存檔驗簽快取字數上限'
+  );
+}
+
 function patchOffline() {
   let src = readFileSync(OFFLINE_FILE, 'utf8').replace(/\r\n/g, '\n');
   const srcBefore = src;
@@ -1128,6 +1171,7 @@ function patchOffline() {
   src = patchRiftOffline(src);
   src = convergeRiftOffline(src);
   src = convergeCheckpointCommit(src);
+  src = convergeSaveUnwrapBudget(src);
 
   // v1/r3 是 2026-07-31 的保守止血版（瘋狂席琳每隻王都逐拍）。先精確還原成
   // r2 共同基線，再套 v2；如此本腳本同時支援「目前工作樹」與「下次從乾淨 PP 同步」。
@@ -1651,6 +1695,8 @@ function patchOffline() {
     , 'checkpointDone <= _ckptCommittedDone'
     , "saved = saveGame() === true"
     , "window.__fb5CloseFlush && typeof _ckptNow === 'function'"
+    , 'UW_CHAR_MAX = 2500000'
+    , '_uwChars -= oldRaw.length'
   ];
   if (hasOfflineAutoSellThrottle) required.push(AUTOSELL_POLICY_CHAIN_MARKER);
   const missing = required.filter(x => !src.includes(x));

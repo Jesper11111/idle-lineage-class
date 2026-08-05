@@ -16,6 +16,14 @@
 
     // on() 掛在 sprite ticker / updateUI 的熱路徑上（每秒數十次），不能每次同步讀 localStorage。
     // 唯一寫入者是本檔 set()（面板勾選），快取不會過期。
+    // 既有玩家已開「關動畫＋低更新率」就是明確選擇最省電；新 nofx 尚無設定時一併遷移為開啟。
+    // 之後若自行取消會寫入 0，不會在下次載入又被打開。
+    try {
+        if (localStorage.getItem('afk_ps_nofx') === null &&
+            localStorage.getItem('afk_ps_noanim') === '1' && localStorage.getItem('afk_ps_lowfps') === '1') {
+            localStorage.setItem('afk_ps_nofx', '1');
+        }
+    } catch (e) {}
     var _ps = {};
     function on(k) {
         if (k in _ps) return _ps[k];

@@ -8,6 +8,7 @@
  *   4. 桌機 tick 外操作維持立即重建；手機未開背包時 force／玩家操作也延後。
  *   5. 戰鬥中的自動整理只排序資料，不以 force=true 重建隱藏背包。
  *   6. 手機隱藏背包後切回桌面版，立即重建一次，不能留下空白分頁。
+ *   7. 既有雙省電玩家自動取得新 nofx，且實際注入濾鏡覆寫樣式。
  * ========================================================================== */
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -135,7 +136,17 @@ const browser = await chromium.launch(systemChrome ? { executablePath: systemChr
 
 try {
   const page = await browser.newPage();
+  await page.addInitScript(() => {
+    localStorage.setItem('afk_ps_noanim', '1');
+    localStorage.setItem('afk_ps_lowfps', '1');
+  });
   await page.goto(`http://127.0.0.1:${address.port}/`, { waitUntil: 'domcontentloaded' });
+
+  assert.deepEqual(await page.evaluate(() => ({
+    nofx: localStorage.getItem('afk_ps_nofx'),
+    style: !!document.getElementById('afk-ps-nofx'),
+  })), { nofx: '1', style: true },
+  '既有雙省電設定應自動遷移並立即關閉高成本光暈／濾鏡');
 
   const hook = await page.evaluate(() => window.__afkPsInventory);
   assert.equal(hook?.countPatchMs, 250, '增量數量更新 hook 未載入');

@@ -101,4 +101,35 @@ assert.match(patcher, /CHECKPOINT_COMMIT_MARKER/,
 assert.match(patcher, /window\.__fb5CloseFlush && typeof _ckptNow === 'function'/,
   'patcher 必須保留 close-flush 委派');
 
-console.log('PASS offline checkpoint: lifecycle 去重、成功後推錨點、失敗可重試');
+{
+  const cacheStart = source.indexOf("    if (typeof _saveUnwrap === 'function') {");
+  const cacheEnd = source.indexOf('    // 2) _seedHash', cacheStart);
+  assert.ok(cacheStart >= 0 && cacheEnd > cacheStart, '應能擷取存檔驗簽快取');
+  let unwrapCalls = 0;
+  const context = {
+    Object,
+    _saveUnwrap(raw) {
+      unwrapCalls++;
+      return { payload: raw.slice(0, 8), signed: true, ok: true };
+    },
+  };
+  context.window = context;
+  vm.runInNewContext(source.slice(cacheStart, cacheEnd), context, { filename: 'save-unwrap-budget.js' });
+  const rawA = 'A'.repeat(1_000_000);
+  const rawB = 'B'.repeat(1_000_000);
+  const rawC = 'C'.repeat(1_000_000);
+  context._saveUnwrap(rawA);
+  context._saveUnwrap(rawB);
+  context._saveUnwrap(rawC);
+  assert.equal(unwrapCalls, 3);
+  context._saveUnwrap(rawC);
+  assert.equal(unwrapCalls, 3, '最近的大存檔仍應命中驗簽快取');
+  context._saveUnwrap(rawA);
+  assert.equal(unwrapCalls, 4,
+    '三份 1MB 存檔超過總字數上限後，最舊版本必須被釋放而非長駐到第 8 份');
+}
+
+assert.match(patcher, /UW_CHAR_MAX = 2500000/,
+  '上游同步後必須重套大存檔驗簽快取字數上限');
+
+console.log('PASS offline checkpoint: lifecycle 去重、成功後推錨點、失敗可重試、大存檔快取有界');
