@@ -132,4 +132,30 @@ assert.match(patcher, /window\.__fb5CloseFlush && typeof _ckptNow === 'function'
 assert.match(patcher, /UW_CHAR_MAX = 2500000/,
   '上游同步後必須重套大存檔驗簽快取字數上限');
 
-console.log('PASS offline checkpoint: lifecycle 去重、成功後推錨點、失敗可重試、大存檔快取有界');
+{
+  const seedStart = source.indexOf("    if (typeof _seedHash === 'function') {");
+  const seedEnd = source.indexOf('    // 3) isSiegeArea', seedStart);
+  assert.ok(seedStart >= 0 && seedEnd > seedStart, '應能擷取 seed hash 快取');
+  let seedCalls = 0;
+  const context = {
+    Object,
+    _seedHash(str) { seedCalls++; return String(str).length; },
+  };
+  context.window = context;
+  vm.runInNewContext(source.slice(seedStart, seedEnd), context, { filename: 'seed-hash-budget.js' });
+
+  const shortKey = 'role-fingerprint:'.padEnd(128, 's');
+  context._seedHash(shortKey);
+  context._seedHash(shortKey);
+  assert.equal(seedCalls, 1, '重複短鍵應維持 memo 命中');
+
+  const savePayload = 'P'.repeat(750_000);
+  context._seedHash(savePayload);
+  context._seedHash(savePayload);
+  assert.equal(seedCalls, 3, '完整存檔大鍵不得進 memo 長駐手機 heap');
+}
+
+assert.match(patcher, /SH_KEY_MAX = 4096/,
+  '上游同步後必須重套 seed hash 大鍵旁路上限');
+
+console.log('PASS offline checkpoint: lifecycle 去重、成功後推錨點、失敗可重試、驗簽與 seed hash 大存檔快取有界');

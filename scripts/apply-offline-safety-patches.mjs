@@ -803,6 +803,27 @@ function convergeSaveUnwrapBudget(src) {
   );
 }
 
+function convergeSeedHashBudget(src) {
+  if (src.includes('SH_KEY_MAX = 4096')) return src;
+  return replaceOne(
+    src,
+`    // 2) _seedHash(str):純雜湊,被簽章/身分指紋反覆呼叫同一批字串
+    if (typeof _seedHash === 'function') {
+      var _sh = _seedHash, _shKeys = [], _shVals = Object.create(null), SH_MAX = 64;
+      window._seedHash = function (str) {
+        if (typeof str !== 'string' || str.length < 32) return _sh.apply(this, arguments);`,
+`    // 2) _seedHash(str):純雜湊,被身分指紋等短鍵反覆呼叫同一批字串。
+    //    存檔簽章也會傳入整份 payload，但每次存檔內容都不同；快取這類數十萬字元的一次性鍵
+    //    只會把多份成熟角色存檔長駐在手機 heap。大鍵直接計算、不進 memo。
+    if (typeof _seedHash === 'function') {
+      var _sh = _seedHash, _shKeys = [], _shVals = Object.create(null), SH_MAX = 64, SH_KEY_MAX = 4096;
+      window._seedHash = function (str) {
+        if (typeof str !== 'string' || str.length < 32 || str.length > SH_KEY_MAX) return _sh.apply(this, arguments);`,
+    OFFLINE_FILE,
+    'seed hash 大字串不進快取'
+  );
+}
+
 function patchOffline() {
   let src = readFileSync(OFFLINE_FILE, 'utf8').replace(/\r\n/g, '\n');
   const srcBefore = src;
@@ -1172,6 +1193,7 @@ function patchOffline() {
   src = convergeRiftOffline(src);
   src = convergeCheckpointCommit(src);
   src = convergeSaveUnwrapBudget(src);
+  src = convergeSeedHashBudget(src);
 
   // v1/r3 是 2026-07-31 的保守止血版（瘋狂席琳每隻王都逐拍）。先精確還原成
   // r2 共同基線，再套 v2；如此本腳本同時支援「目前工作樹」與「下次從乾淨 PP 同步」。
@@ -1696,7 +1718,9 @@ function patchOffline() {
     "saved = saveGame() === true",
     "window.__fb5CloseFlush && typeof _ckptNow === 'function'",
     'UW_CHAR_MAX = 2500000',
-    '_uwChars -= oldRaw.length'
+    '_uwChars -= oldRaw.length',
+    'SH_KEY_MAX = 4096',
+    'str.length > SH_KEY_MAX'
   ];
   if (hasOfflineAutoSellThrottle) required.push(AUTOSELL_POLICY_CHAIN_MARKER);
   const missing = required.filter(x => !src.includes(x));

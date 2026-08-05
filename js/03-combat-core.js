@@ -240,7 +240,8 @@ function gameLoop() {
     // 長補跑先讓瀏覽器畫出進度提示再開始重運算；只做一次，不增加每批額外等待。
     if (!_hidden && !_ffAcc.progressPrimed && (_ffAcc.ticks * TICK_MS + _tickDebt) >= FF_PROGRESS_MIN_MS) {
         _ffAcc.progressPrimed = true;
-        _ffProgressUpdate(_ffAcc, _tickDebt);
+        _ffProgressUpdate(_ffAcc, _tickDebt, true);
+        _ffReanchorCatchupClock();   // 補跑提示屬於 housekeeping；重錨後不讓提示成本反過來製造新債務
         _ffScheduleNext();
         return;
     }
@@ -284,12 +285,15 @@ function gameLoop() {
         state.ff = false;
         state.ffSmall = false;
     }
-    if (player.dead) _tickDebt = 0;   // 進入下方統一收尾與最終重繪，不留下死亡後的補跑債務
     if (!_hidden) _ffProgressUpdate(_ffAcc, _tickDebt);
+    // 補跑 tick／進度 DOM 是償還既有時間債的 housekeeping，本身不得再製造新債務；
+    // 否則單 tick + 48ms 讓步超過 100ms 的慢手機永遠追不完，save/render 也會形成回授。
+    _ffReanchorCatchupClock();
+    if (player.dead || _ffAcc.aborted) _tickDebt = 0;   // 重錨後再清除，三次錯誤停損不會被本批耗時復活
     if (_tickDebt < TICK_MS) {   // 補跑完畢
         if (!_hidden) _ffFinishCatchup();   // 背景已追平也先保留摘要；回到前景後才重繪、存檔與顯示一次
     } else {
-        _ffScheduleNext();   // 尚未還清：讓出短暫時間後立即續跑，不等待下一次 100ms 主迴圈
+        _ffScheduleNext();   // 固定讓出 48ms（手機）／8ms（桌機）；不縮成 0ms，也不靜默略過任何債務
     }
 }
 
@@ -331,19 +335,21 @@ function _ffFinishCatchup() {
         } catch (e) {}
     }
     if (_acc.aborted && typeof logSys === 'function') {
-        logSys('<span class="text-red-400 font-bold">補跑連續發生錯誤，已停止剩餘補跑，避免進度卡在重複補跑；請重新整理後確認。</span>');
+        try { logSys('<span class="text-red-400 font-bold">補跑連續發生錯誤，已停止剩餘補跑，避免進度卡在重複補跑；請重新整理後確認。</span>'); } catch (e) {}
     }
     _ffAcc = null;
     if (typeof resetCatchupGainItemIndex === 'function') resetCatchupGainItemIndex();
     _ffErrorStreak = 0;
     _ffProgressHide();
+    _ffReanchorCatchupClock();   // 收尾重繪／大型存檔也屬於 housekeeping，不可回灌成 finish→save 迴圈
 }
 // ⏩ 補跑專用快速排程：桌機維持 80/8ms；手機以 12/48ms 降到約 20% duty。
-//    只改分片與讓步，不封頂時間債、不抽樣放大收益，RNG／死亡／藥水／掉落仍逐 tick 相同。
+//    手機每 tick 都檢查讓步，不抽樣放大或略過收益；RNG／死亡／藥水／掉落仍逐 tick 相同。
 const FF_BUDGET_MS = 80;
 const FF_YIELD_MS = 8;
 const FF_MOBILE_BUDGET_MS = 12;
 const FF_MOBILE_YIELD_MS = 48;
+const FF_PROGRESS_INTERVAL_MS = 250;
 const FF_HARD_CAP = 6000;
 const FF_MAX_ELAPSED_MS = 300000;
 const FF_ERROR_STREAK_MAX = 3;
@@ -351,6 +357,7 @@ const FF_PROGRESS_MIN_MS = 3000;
 let _ffAcc = null;   // 補跑摘要累計（跨多次 gameLoop 呼叫·還清時歸零）
 let _ffErrorStreak = 0;
 let _ffResumeTimer = null;
+let _ffResumeGeneration = 0;   // invalidate 已排入 task queue、clearTimeout 也未必攔得住的舊前景 callback
 let _ffProgressEl = null;
 
 function _ffMobileDevice() {
@@ -367,6 +374,10 @@ function _ffMobileDevice() {
 
 function _ffBudgetMs(mobile) { return mobile ? FF_MOBILE_BUDGET_MS : FF_BUDGET_MS; }
 function _ffYieldMs() { return _ffMobileDevice() ? FF_MOBILE_YIELD_MS : FF_YIELD_MS; }
+function _ffReanchorCatchupClock() {
+    _loopLast = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    return _loopLast;
+}
 function _ffShouldYield(budget0, mobile) {
     try {
         if (typeof navigator !== 'undefined' && navigator.scheduling &&
@@ -419,8 +430,11 @@ function _ffProgressDuration(ms) {
     return seconds + ' 秒';
 }
 
-function _ffProgressUpdate(acc, remainingMs) {
+function _ffProgressUpdate(acc, remainingMs, force) {
     if (!acc || typeof document === 'undefined' || document.hidden) return;
+    let paintNow = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    if (!force && Number.isFinite(acc.progressPaintAt) && paintNow - acc.progressPaintAt < FF_PROGRESS_INTERVAL_MS) return;
+    acc.progressPaintAt = paintNow;
     let doneMs = Math.max(0, Number(acc.ticks) || 0) * TICK_MS;
     let remainMs = Math.max(0, Math.floor((Number(remainingMs) || 0) / TICK_MS) * TICK_MS);
     let totalMs = doneMs + remainMs;
@@ -444,12 +458,16 @@ function _ffProgressHide() {
 function _ffScheduleNext() {
     if (_ffResumeTimer !== null || _tickDebt < TICK_MS || !state || !state.running || !player || player.dead) return;
     if (typeof document !== 'undefined' && document.hidden) return;
+    let _ffResumeToken = ++_ffResumeGeneration;
     _ffResumeTimer = setTimeout(function () {
+        if (_ffResumeToken !== _ffResumeGeneration) return;   // hide／換角已取消；不得清掉新 timer 或吞掉背景 elapsed
         _ffResumeTimer = null;
+        if (typeof document === 'undefined' || !document.hidden) _ffReanchorCatchupClock();   // 前景補跑讓步時間暫停遊戲鐘；背景 heartbeat 仍由正常 elapsed 全額入債
         if (_tickDebt >= TICK_MS && state && state.running && player && !player.dead) gameLoop();
     }, _ffYieldMs());
 }
 function _ffCancelScheduledLoop() {
+    _ffResumeGeneration++;
     if (_ffResumeTimer !== null) clearTimeout(_ffResumeTimer);
     _ffResumeTimer = null;
 }

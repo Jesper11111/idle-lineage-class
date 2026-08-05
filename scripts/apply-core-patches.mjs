@@ -29,6 +29,8 @@
  *  15. 手機卡片圖鑑單層縮圖 — 圖鑑沿用 96×96 怪物縮圖時，不再另外疊回原尺寸影子／武器。
  *  16. 背景 Worker Blob 生命週期 — 即使 Worker 建構同步失敗，也會撤銷暫時 Blob URL。
  *  17. 手機補算排程 — 保留逐 tick 收益，但把手機前景 80/8ms 高占用改成 12/48ms，並優先讓出輸入。
+ *  18. 手機補算正確性 — 補跑 housekeeping 暫停遊戲鐘、節流進度重繪，並確保慢 tick 有限完成與三次錯誤真的停止。
+ *  19. 前後景補跑競態 — hidden/pagehide 作廢舊續跑 callback，避免回前景時吞掉背景時間。
  *
  * 用法：node scripts/apply-core-patches.mjs        （--check 只驗證是否已全部補上、不寫檔）
  */
@@ -787,6 +789,24 @@ function _flushSaveNow(){
 `;
     save = save.slice(0, start) + replacement + save.slice(end);
   }
+  const saveLogMarker = '成功提示不是持久化交易的一部分';
+  if (!save.includes(saveLogMarker)) {
+    const saveLogAnchor = '    logSys(`遊戲進度已儲存。`);';
+    if (!save.includes(saveLogAnchor)) {
+      throw new Error(`[${SAVE_FILE}] 找不到 saveGame 成功提示錨點，上游可能改寫提交結果。`);
+    }
+    save = save.replace(saveLogAnchor,
+      '    try { logSys(`遊戲進度已儲存。`); } catch(e) {}   // 成功提示不是持久化交易的一部分；DOM 日誌失敗不得把已落盤的主檔＋寵物桶回報成失敗');
+  }
+  const saveFailureLogMarker = '本次進度未完整寫入';
+  if (!save.includes(saveFailureLogMarker)) {
+    const failureLogAnchor = "            logSys('<span class=\"text-red-400 font-bold\">⚠ 遊戲進度儲存失敗，本次進度未寫入。請重新整理後再試；若反覆失敗，請先用「匯出進度」備份存檔。</span>');";
+    if (!save.includes(failureLogAnchor)) {
+      throw new Error(`[${SAVE_FILE}] 找不到 saveGame 失敗提示錨點，上游可能改寫錯誤處理。`);
+    }
+    save = save.replace(failureLogAnchor,
+      "            try { logSys('<span class=\"text-red-400 font-bold\">⚠ 遊戲進度儲存失敗，本次進度未完整寫入。請重新整理後再試；若反覆失敗，請先用「匯出進度」備份存檔。</span>'); } catch(_logErr) {}");
+  }
 
   const dataDone = data.includes('_lzWorkerPending = Object.create(null)') &&
     data.includes('_lzWorkerWatchdog = null') &&
@@ -799,7 +819,9 @@ function _flushSaveNow(){
     data.includes('if (workerUrl) {') &&
     data.includes('_cancelLzCompressionKey(key); // raw 寫失敗轉同步 fallback');
   const saveDone = save.includes('function _closeFlushClock()') &&
-    save.includes('if(_flushSaved) _lastCloseFlushAt = _flushNow');
+    save.includes('if(_flushSaved) _lastCloseFlushAt = _flushNow') &&
+    save.includes(saveLogMarker) &&
+    save.includes(saveFailureLogMarker);
   if (!dataDone || !saveDone) throw new Error('存檔壓縮合併補丁未完整產生。');
   const dataBefore = readFileSync(DATA_FILE, 'utf8');
   const saveBefore = readFileSync(SAVE_FILE, 'utf8');
@@ -814,7 +836,9 @@ function _flushSaveNow(){
     '_cancelLzCompressionKey(key); // raw 寫失敗轉同步 fallback'
   ].every((marker) => dataBefore.includes(marker)) &&
     saveBefore.includes('function _closeFlushClock()') &&
-    saveBefore.includes('if(_flushSaved) _lastCloseFlushAt = _flushNow');
+    saveBefore.includes('if(_flushSaved) _lastCloseFlushAt = _flushNow') &&
+    saveBefore.includes(saveLogMarker) &&
+    saveBefore.includes(saveFailureLogMarker);
   if (wasDone) { already++; return; }
   if (!CHECK) {
     writeFileSync(DATA_FILE, data);
@@ -1702,7 +1726,189 @@ if (typeof window !== 'undefined') {
   console.log(`[patch] 手機補算 12/48ms 與輸入讓步（${FILE}）`);
 }
 
-const PATCHES = [patchMaybeSpawnMobs, patchTradEnHook, patch16Slots, patchPetAnimTicker, patchBossHuntEscape, patchUseItemKeepModal, patchSellNowNoForce, patchLegacyOfflineOwnership, patchVersionedAssetCaches, patchMobileMemoryPreviewGate, patchMobileMobThumbGate, patchCoalescedSaveCompression, patchMobileImageLifecycleHooks, patchMobileLoginResources, patchMobileCardThumbGate, patchBackgroundHeartbeatBlobLifecycle, patchMobileCatchupScheduler];
+// ── 補丁 18：補算 wall-time 守恆、進度節流與錯誤停損 ────────────────
+function patchMobileCatchupAccounting() {
+  const FILE = 'js/03-combat-core.js';
+  let s = readFileSync(FILE, 'utf8').replace(/\r\n/g, '\n');
+  const doneMarkers = [
+    '_ffProgressUpdate(_ffAcc, _tickDebt, true);',
+    'function _ffReanchorCatchupClock()',
+    'const FF_PROGRESS_INTERVAL_MS = 250;',
+    'function _ffProgressUpdate(acc, remainingMs, force)',
+    'if (player.dead || _ffAcc.aborted) _tickDebt = 0;',
+    'let _ffResumeGeneration = 0;',
+    '_ffResumeToken !== _ffResumeGeneration',
+    '_ffResumeGeneration++;',
+    '補跑 tick／進度 DOM 是償還既有時間債的 housekeeping',
+    '收尾重繪／大型存檔也屬於 housekeeping',
+    '前景補跑讓步時間暫停遊戲鐘',
+    "try { logSys('<span class=\"text-red-400 font-bold\">補跑連續發生錯誤"
+  ];
+  if (doneMarkers.every((marker) => s.includes(marker))) { already++; return; }
+  if (doneMarkers.some((marker) => s.includes(marker))) {
+    throw new Error(`[${FILE}] 手機補算正確性補丁只剩部分，拒絕靜默略過。`);
+  }
+
+  const replaceExact = (from, to, label) => {
+    const first = s.indexOf(from);
+    const second = first < 0 ? -1 : s.indexOf(from, first + from.length);
+    if (first < 0 || second >= 0) {
+      throw new Error(`[${FILE}] 找不到唯一「${label}」錨點。`);
+    }
+    s = s.slice(0, first) + to + s.slice(first + from.length);
+  };
+
+  replaceExact(
+`        _ffProgressUpdate(_ffAcc, _tickDebt);
+        _ffScheduleNext();`,
+`        _ffProgressUpdate(_ffAcc, _tickDebt, true);
+        _ffReanchorCatchupClock();   // 補跑提示屬於 housekeeping；重錨後不讓提示成本反過來製造新債務
+        _ffScheduleNext();`,
+    '首次進度繪製');
+
+  replaceExact(
+`    if (player.dead) _tickDebt = 0;   // 進入下方統一收尾與最終重繪，不留下死亡後的補跑債務
+    if (!_hidden) _ffProgressUpdate(_ffAcc, _tickDebt);
+    if (_tickDebt < TICK_MS) {   // 補跑完畢`,
+`    if (!_hidden) _ffProgressUpdate(_ffAcc, _tickDebt);
+    // 補跑 tick／進度 DOM 是償還既有時間債的 housekeeping，本身不得再製造新債務；
+    // 否則單 tick + 48ms 讓步超過 100ms 的慢手機永遠追不完，save/render 也會形成回授。
+    _ffReanchorCatchupClock();
+    if (player.dead || _ffAcc.aborted) _tickDebt = 0;   // 重錨後再清除，三次錯誤停損不會被本批耗時復活
+    if (_tickDebt < TICK_MS) {   // 補跑完畢`,
+    '批次 wall-time 與停止順序');
+
+  replaceExact(
+`    if (_acc.aborted && typeof logSys === 'function') {
+        logSys('<span class="text-red-400 font-bold">補跑連續發生錯誤，已停止剩餘補跑，避免進度卡在重複補跑；請重新整理後確認。</span>');
+    }`,
+`    if (_acc.aborted && typeof logSys === 'function') {
+        try { logSys('<span class="text-red-400 font-bold">補跑連續發生錯誤，已停止剩餘補跑，避免進度卡在重複補跑；請重新整理後確認。</span>'); } catch (e) {}
+    }`,
+    '錯誤提示清理');
+
+  replaceExact(
+`const FF_MOBILE_YIELD_MS = 48;
+const FF_HARD_CAP = 6000;`,
+`const FF_MOBILE_YIELD_MS = 48;
+const FF_PROGRESS_INTERVAL_MS = 250;
+const FF_HARD_CAP = 6000;`,
+    '進度節流常數');
+
+  replaceExact(
+`let _ffResumeTimer = null;
+let _ffProgressEl = null;`,
+`let _ffResumeTimer = null;
+let _ffResumeGeneration = 0;   // invalidate 已排入 task queue、clearTimeout 也未必攔得住的舊前景 callback
+let _ffProgressEl = null;`,
+    '續跑 callback 世代');
+
+  replaceExact(
+`function _ffYieldMs() { return _ffMobileDevice() ? FF_MOBILE_YIELD_MS : FF_YIELD_MS; }
+function _ffShouldYield(budget0, mobile) {`,
+`function _ffYieldMs() { return _ffMobileDevice() ? FF_MOBILE_YIELD_MS : FF_YIELD_MS; }
+function _ffReanchorCatchupClock() {
+    _loopLast = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    return _loopLast;
+}
+function _ffShouldYield(budget0, mobile) {`,
+    '補跑虛擬時鐘重錨 helper');
+
+  replaceExact(
+`function _ffProgressUpdate(acc, remainingMs) {
+    if (!acc || typeof document === 'undefined' || document.hidden) return;`,
+`function _ffProgressUpdate(acc, remainingMs, force) {
+    if (!acc || typeof document === 'undefined' || document.hidden) return;
+    let paintNow = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    if (!force && Number.isFinite(acc.progressPaintAt) && paintNow - acc.progressPaintAt < FF_PROGRESS_INTERVAL_MS) return;
+    acc.progressPaintAt = paintNow;`,
+    '進度 DOM 節流');
+
+  replaceExact(
+`    _ffErrorStreak = 0;
+    _ffProgressHide();
+}`,
+`    _ffErrorStreak = 0;
+    _ffProgressHide();
+    _ffReanchorCatchupClock();   // 收尾重繪／大型存檔也屬於 housekeeping，不可回灌成 finish→save 迴圈
+}`,
+    '補跑收尾時鐘重錨');
+
+  replaceExact(
+`    _ffResumeTimer = setTimeout(function () {
+        _ffResumeTimer = null;
+        if (_tickDebt >= TICK_MS && state && state.running && player && !player.dead) gameLoop();`,
+`    let _ffResumeToken = ++_ffResumeGeneration;
+    _ffResumeTimer = setTimeout(function () {
+        if (_ffResumeToken !== _ffResumeGeneration) return;   // hide／換角已取消；不得清掉新 timer 或吞掉背景 elapsed
+        _ffResumeTimer = null;
+        if (typeof document === 'undefined' || !document.hidden) _ffReanchorCatchupClock();   // 前景補跑讓步時間暫停遊戲鐘；背景 heartbeat 仍由正常 elapsed 全額入債
+        if (_tickDebt >= TICK_MS && state && state.running && player && !player.dead) gameLoop();`,
+    '前景續跑虛擬時鐘');
+
+  replaceExact(
+`function _ffCancelScheduledLoop() {
+    if (_ffResumeTimer !== null) clearTimeout(_ffResumeTimer);`,
+`function _ffCancelScheduledLoop() {
+    _ffResumeGeneration++;
+    if (_ffResumeTimer !== null) clearTimeout(_ffResumeTimer);`,
+    '續跑 callback 取消世代');
+
+  const missing = doneMarkers.filter((marker) => !s.includes(marker));
+  if (missing.length || /overloadDroppedMs|FF_MOBILE_MAX_CATCHUP_WALL_MS|adaptiveMinTicks/.test(s)) {
+    throw new Error(`[${FILE}] 手機補算正確性產生不完整或含危險停損：${missing.join(' | ') || 'unsafe marker'}`);
+  }
+  if (!CHECK) writeFileSync(FILE, s);
+  changed++;
+  console.log(`[patch] 手機補算 wall-time 守恆、進度節流與錯誤停損（${FILE}）`);
+}
+
+// ── 補丁 19：切換前後景時作廢舊補跑 callback ───────────────────────
+function patchBackgroundCatchupTimerCancellation() {
+  const FILE = 'js/01-drops-config.js';
+  let s = readFileSync(FILE, 'utf8').replace(/\r\n/g, '\n');
+  const hiddenMarker = '凍結前作廢前景續跑；回前景不得由逾期 callback 先吞掉 hidden elapsed';
+  const pagehideMarker = 'bfcache／pagehide 也作廢已排程的前景 callback';
+  if (s.includes(hiddenMarker) && s.includes(pagehideMarker)) { already++; return; }
+  if (s.includes(hiddenMarker) || s.includes(pagehideMarker)) {
+    throw new Error(`[${FILE}] 前後景補跑 timer 取消補丁只剩部分，拒絕靜默略過。`);
+  }
+
+  const replaceExact = (from, to, label) => {
+    const first = s.indexOf(from);
+    const second = first < 0 ? -1 : s.indexOf(from, first + from.length);
+    if (first < 0 || second >= 0) throw new Error(`[${FILE}] 找不到唯一「${label}」錨點。`);
+    s = s.slice(0, first) + to + s.slice(first + from.length);
+  };
+
+  replaceExact(
+`        if (document.hidden) { if (!_ffHiddenAt) _ffHiddenAt = _perfNow(); return; }`,
+`        if (document.hidden) {
+            if (typeof _ffCancelScheduledLoop === 'function') _ffCancelScheduledLoop();   // 凍結前作廢前景續跑；回前景不得由逾期 callback 先吞掉 hidden elapsed
+            if (!_ffHiddenAt) _ffHiddenAt = _perfNow();
+            return;
+        }`,
+    'visibility hidden 分支');
+
+  replaceExact(
+`if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('pageshow', function (ev) {`,
+`if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('pagehide', function () {
+        if (typeof _ffCancelScheduledLoop === 'function') _ffCancelScheduledLoop();   // bfcache／pagehide 也作廢已排程的前景 callback
+    });
+    window.addEventListener('pageshow', function (ev) {`,
+    'pagehide 取消分支');
+
+  if (!s.includes(hiddenMarker) || !s.includes(pagehideMarker)) {
+    throw new Error(`[${FILE}] 前後景補跑 timer 取消補丁產生不完整。`);
+  }
+  if (!CHECK) writeFileSync(FILE, s);
+  changed++;
+  console.log(`[patch] 前後景切換作廢舊補跑 callback（${FILE}）`);
+}
+
+const PATCHES = [patchMaybeSpawnMobs, patchTradEnHook, patch16Slots, patchPetAnimTicker, patchBossHuntEscape, patchUseItemKeepModal, patchSellNowNoForce, patchLegacyOfflineOwnership, patchVersionedAssetCaches, patchMobileMemoryPreviewGate, patchMobileMobThumbGate, patchCoalescedSaveCompression, patchMobileImageLifecycleHooks, patchMobileLoginResources, patchMobileCardThumbGate, patchBackgroundHeartbeatBlobLifecycle, patchMobileCatchupScheduler, patchMobileCatchupAccounting, patchBackgroundCatchupTimerCancellation];
 
 try {
   for (const p of PATCHES) p();

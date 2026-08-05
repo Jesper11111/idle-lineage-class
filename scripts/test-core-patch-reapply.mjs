@@ -110,6 +110,32 @@ try {
   const first = runPatch(fixture);
   const firstPlugin = runPluginPatch(fixture);
   const firstOffline = runOfflinePatch(fixture);
+  const patchedCore = readFileSync(join(fixture, 'js/03-combat-core.js'), 'utf8');
+  for (const marker of [
+    '_ffProgressUpdate(_ffAcc, _tickDebt, true);',
+    'function _ffReanchorCatchupClock()',
+    'const FF_PROGRESS_INTERVAL_MS = 250;',
+    'if (player.dead || _ffAcc.aborted) _tickDebt = 0;',
+    'let _ffResumeGeneration = 0;',
+    '_ffResumeToken !== _ffResumeGeneration',
+    '_ffResumeGeneration++;',
+    '收尾重繪／大型存檔也屬於 housekeeping',
+    '前景補跑讓步時間暫停遊戲鐘',
+  ]) {
+    assert.ok(patchedCore.includes(marker), `乾淨來源套補丁後缺少手機補算 marker: ${marker}`);
+  }
+  assert.doesNotMatch(patchedCore, /overloadDroppedMs|FF_MOBILE_MAX_CATCHUP_WALL_MS|adaptiveMinTicks/,
+    '乾淨來源套補丁後不得產生會略過債務或強迫長任務的舊停損');
+  const patchedDrops = readFileSync(join(fixture, 'js/01-drops-config.js'), 'utf8');
+  assert.match(patchedDrops, /凍結前作廢前景續跑；回前景不得由逾期 callback 先吞掉 hidden elapsed/,
+    '乾淨來源套補丁後，visibility hidden 必須作廢舊補跑 callback');
+  assert.match(patchedDrops, /bfcache／pagehide 也作廢已排程的前景 callback/,
+    '乾淨來源套補丁後，pagehide 必須作廢舊補跑 callback');
+  const patchedSave = readFileSync(join(fixture, 'js/13-shop-save.js'), 'utf8');
+  assert.match(patchedSave, /成功提示不是持久化交易的一部分/,
+    '乾淨來源套補丁後必須隔離成功日誌例外');
+  assert.match(patchedSave, /本次進度未完整寫入/,
+    '乾淨來源套補丁後必須保留精確失敗提示');
   const firstHash = treeHash(fixture);
   const second = runPatch(fixture);
   const secondPlugin = runPluginPatch(fixture);
