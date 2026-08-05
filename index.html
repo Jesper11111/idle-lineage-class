@@ -610,7 +610,7 @@
     <script src="js/00-data.js?v=00db9dc57e.8.34-merc-trial-class-loot"></script>
 <script src="js/01-drops-config.js?v=c49dce25da.8.26-flywing-relics"></script>
 <script src="js/02-stats-recompute.js?v=0209ba097c.8.26-flywing-relics"></script>
-    <script src="js/03-combat-core.js?v=7e8c09e131.8.26-flywing-relics"></script>
+    <script src="js/03-combat-core.js?v=f025f46e69.8.26-flywing-relics"></script>
     <script src="js/04-combat-attack.js?v=55cf3df538.8.26-flywing-relics"></script>
 <script src="js/05-kill-progression.js?v=a3c64de307.8.34-merc-trial-class-loot"></script>
     <script src="js/06-status-allies.js?v=08e051184f.8.34-merc-trial-class-loot"></script>
@@ -642,7 +642,7 @@
     <!-- ═══════════ 加掛版外掛層（核心永遠是原作者原版；我們的功能全部是外掛疊上去） ═══════════ -->
     <!-- 此區塊由 scripts/sync-upstream.mjs 於「拉上游 index.html 後」自動注入到 </body> 之前。?v= 由 stamp-code-versions 補。 -->
     <!-- afk-toggles 必須最先載入：外掛開關中樞（逃生門，自己不可被關；某支外掛壞掉時玩家關掉它就能用原版繼續玩） -->
-    <script src="afk-toggles.js?v=72724d5fcc"></script>
+    <script src="afk-toggles.js?v=63d7fe5110"></script>
     <!-- afk-banner：非官方轉載橫幅讓位（基礎設施、無開關；不可掛在 afk-mobile 裡，玩家關掉手機版面就會整個頂端被蓋住） -->
     <script src="afk-banner.js?v=29fa2d5746"></script>
     <!-- 存檔解壓快取：必須排在所有會讀 localStorage 的外掛之前（核心每殺一隻怪都重解壓一次血盟狀態） -->
@@ -662,17 +662,17 @@
     <script src="afk-mobile-banner.js?v=ec574f91b7"></script>
     <script src="afk-offline-owner.js?v=b2dd3cc476"></script>
     <script src="afk-merc-policy.js?v=3dd1acc540"></script>
-    <script src="afk-mobile-memory.js?v=b9f1c6fc82"></script>
-    <script src="afk-mobile-audio-memory.js?v=82fefa462d"></script>
+    <script src="afk-mobile-memory.js?v=7fa005caa0"></script>
+    <script src="afk-mobile-audio-memory.js?v=71600a2ee3"></script>
     <!-- 先載入、DOMContentLoaded 才安裝，確保包在 PP 後續 renderTabs wrappers 的最外層。 -->
     <script src="afk-powersave-inventory.js?v=30aa4b8b5a"></script>
     <script src="afk-junk-autosell-policy.js?v=d2921501ab"></script>
     <!-- END JESPER LOCAL POLICY -->
-    <script src="afk-offline.js?v=47141d3d85"></script>
+    <script src="afk-offline.js?v=98cf5a1470"></script>
     <!-- 手機版面 / 返回鍵 -->
-    <script src="afk-mobile.js?v=be17f8cb1f"></script>
+    <script src="afk-mobile.js?v=543b867005"></script>
     <script src="afk-backnav.js?v=a02389afc7"></script>
-    <script src="afk-battlehud.js?v=5623ddfb37"></script>
+    <script src="afk-battlehud.js?v=a9842b42d6"></script>
     <script src="afk-mapbar.js?v=048a44152b"></script>
     <script src="afk-nozoom.js?v=cf5af6ecd5"></script>
     <!-- afk-statusicon：手機狀態圖示縮小一半（純 CSS，只在窄畫面生效） -->
@@ -687,13 +687,13 @@
     <!-- 整包備份／還原（本機檔案）：入口掛在 afk-storage 的設定選單裡，必須排在它之後 -->
     <script src="afk-fullsave.js?v=e6c111818d"></script>
     <!-- 存檔空間警告：localStorage 用量 >80% 時首頁紅色警告(唯讀;與 afk-storage 同一套估算) -->
-    <script src="afk-quotawarn.js?v=ad30a6f1d1"></script>
+    <script src="afk-quotawarn.js?v=18a1cae9ee"></script>
     <!-- 首頁公告卡（通用框架：檔頭 NOTICE 設成 null 就不顯示，要發公告時填一組設定即可） -->
     <script src="afk-notice.js?v=22a53935d8"></script>
     <script src="afk-history.js?v=06586ebde4"></script>
     <script src="afk-reissueid.js?v=b6195567f1"></script>
     <script src="afk-diag.js?v=5a937fd41b"></script>
-    <script src="afk-powersave.js?v=ce38d8ef21"></script>
+    <script src="afk-powersave.js?v=f22ad0bcf1"></script>
     <!-- 遊戲內小工具 -->
     <script src="afk-statpts.js?v=4e96609d8d"></script>
     <!-- 能力分頁條列式：拿掉背景圖改大字卡片(純 CSS,DOM/updateUI 不動) -->
@@ -704,11 +704,11 @@
     <script src="afk-junkmgr.js?v=7b526a640b"></script>
     <!-- 傭兵招募擋下提示：核心只寫系統日誌，改跳彈窗（不重刻條件，收核心自己的紅字） -->
     <script src="afk-mercguard.js?v=b05f7ef97d"></script>
-    <script src="afk-bossring.js?v=f7eb186235"></script>
-    <script src="afk-itemsearch.js?v=82c78d7bda"></script>
-    <script src="afk-invlist.js?v=4e1ef85ea8"></script>
+    <script src="afk-bossring.js?v=c0719b7ace"></script>
+    <script src="afk-itemsearch.js?v=23d5c1b91e"></script>
+    <script src="afk-invlist.js?v=4b2a835051"></script>
     <script src="afk-eqlist.js?v=7a7533b7ce"></script>
-    <script src="afk-npclist.js?v=f46b6af71a"></script>
+    <script src="afk-npclist.js?v=d91222e9a4"></script>
     <!-- afk-npclabel：村莊 NPC 名牌不要跑出畫面 -->
     <script src="afk-npclabel.js?v=21861a88d8"></script>
     <script src="afk-mobname.js?v=d74c25c2c9"></script>
@@ -736,12 +736,12 @@
     <!-- afk-locksafe：上鎖的裝備不會被潘朵拉收購/遺物布告欄拿走 -->
     <script src="afk-locksafe.js?v=a1ab38bb29"></script>
     <!-- 傳統模式(偽)/自動衝裝：需搭配 scripts/apply-core-patches.mjs 的 gainItem _tEn 鉤子 -->
-    <script src="afk-traditional.js?v=a367c9c073"></script>
-    <script src="afk-warehouse.js?v=db1cbe6a5e"></script>
+    <script src="afk-traditional.js?v=99472abfb1"></script>
+    <script src="afk-warehouse.js?v=c23b41a87a"></script>
     <!-- 倉庫批次存取:勾選/全選一次搬完(核心是一件一件搬、每件都 saveGame,幾千格搬不動);排在 afk-warehouse 之後 → afterRender 在它的注入之後才跑 -->
     <script src="afk-whbatch.js?v=5a09745cd2"></script>
     <!-- 迷你遊戲（我方自製） -->
-    <script src="afk-dograce.js?v=6e83ec4926"></script>
+    <script src="afk-dograce.js?v=72135b4c65"></script>
     <!-- PWA / SW / 統計 / 品牌（skin 固定排最後） -->
     <script src="afk-pwa.js?v=69835ae5d4"></script>
     <script src="afk-sw.js?v=0c1440decf"></script>
