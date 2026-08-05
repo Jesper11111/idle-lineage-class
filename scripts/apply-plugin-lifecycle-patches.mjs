@@ -173,18 +173,24 @@ patch('afk-powersave.js', [
   "cb.addEventListener('change', function () {\n                set(cb.getAttribute('data-ps'), cb.checked);",
   "typeof window.__afkMobileMemoryRefresh === 'function'",
   'window.__afkMobileMemoryRefresh(false);',
-], (input) => replaceOnce(
-  input,
-  "            cb.addEventListener('change', function () { set(cb.getAttribute('data-ps'), cb.checked); });",
-  "            cb.addEventListener('change', function () {\n" +
-  "                set(cb.getAttribute('data-ps'), cb.checked);\n" +
-  "                if (typeof window.__afkMobileMemoryRefresh === 'function') {\n" +
-  "                    window.__afkMobileMemoryRefresh(false);\n" +
-  "                }\n" +
-  "            });",
-  'afk-powersave.js',
-  '省電設定即時刷新'
-));
+], (input) => {
+  const oldHandler = "            cb.addEventListener('change', function () { set(cb.getAttribute('data-ps'), cb.checked); });";
+  const nofxHandler = "            cb.addEventListener('change', function () { set(cb.getAttribute('data-ps'), cb.checked); applyNofx(); });";
+  const next = "            cb.addEventListener('change', function () {\n" +
+    "                set(cb.getAttribute('data-ps'), cb.checked);\n" +
+    (input.includes(nofxHandler) ? "                applyNofx();\n" : '') +
+    "                if (typeof window.__afkMobileMemoryRefresh === 'function') {\n" +
+    "                    window.__afkMobileMemoryRefresh(false);\n" +
+    "                }\n" +
+    "            });";
+  return replaceOnce(
+    input,
+    input.includes(nofxHandler) ? nofxHandler : oldHandler,
+    next,
+    'afk-powersave.js',
+    '省電設定即時刷新'
+  );
+});
 
 patch('afk-mobile.js', [
   '🔒 Jesper 本地離線換角守衛',
