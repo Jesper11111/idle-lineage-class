@@ -49,12 +49,15 @@
     // ── 每存檔位開關 ──────────────────────────────────────────
     function slotOf() { return (typeof currentSlot !== 'undefined' && currentSlot != null) ? currentSlot : null; }
     function key(slot) { return 'afk_trad_' + slot; }
+    // 🚀 isOn 掛在 gainItem 熱路徑(每個掉落物問一次),快取避免同步 IO;本檔是唯一寫入者(比照 afk-bossring)
+    var _onCache = {};
     function isOn(slot) {
         if (slot == null) slot = slotOf();
         if (slot == null) return false;
-        try { return localStorage.getItem(key(slot)) === '1'; } catch (e) { return false; }
+        if (slot in _onCache) return _onCache[slot];
+        try { return (_onCache[slot] = localStorage.getItem(key(slot)) === '1'); } catch (e) { return false; }
     }
-    function setOn(slot, on) { try { localStorage.setItem(key(slot), on ? '1' : '0'); } catch (e) {} }
+    function setOn(slot, on) { try { localStorage.setItem(key(slot), on ? '1' : '0'); } catch (e) {} _onCache[slot] = !!on; }
 
     // ── 核心鉤子：gainItem 的 _tEn 由這裡決定 ────────────────────
     //   d=物品定義, forceNormal=商店等「不給強化」旗標, noAffix=寵物白板(仍給強化)

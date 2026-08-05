@@ -765,14 +765,23 @@
             _subviewRaceId = ph.raceId; renderBetPanel(ph);   // 新一場：刷新賠率/狀態
         }
     }
-    function startLoop() { if (_raf == null) _raf = requestAnimationFrame(loop); }
-    function stopLoop() { if (_raf != null) { cancelAnimationFrame(_raf); _raf = null; } }
+    // 只剩小圓球時畫面每秒才變一次(倒數字),60fps 的 rAF 純浪費 → 降成 0.5 秒 setTimeout;
+    // 賽道視圖開著才需要逐幀(狗在跑)。兩種排程共用 loop,誰在跑由 _raf/_slow 各記各的。
+    var _slow = null;
+    function startLoop() { if (_raf == null && _slow == null) _raf = requestAnimationFrame(loop); }
+    function stopLoop() {
+        if (_raf != null) { cancelAnimationFrame(_raf); _raf = null; }
+        if (_slow != null) { clearTimeout(_slow); _slow = null; }
+    }
     function loop() {
-        _raf = requestAnimationFrame(loop);
+        _raf = null;
+        if (_slow != null) { clearTimeout(_slow); _slow = null; }
         var win = el('dograce-win'), ball = el('dograce-ball');
         var winOpen = win && win.style.display !== 'none';
         var ballOpen = ball && ball.style.display !== 'none';
         if (!winOpen && !ballOpen) { stopLoop(); return; }
+        if (winOpen) _raf = requestAnimationFrame(loop);
+        else _slow = setTimeout(loop, 500);
         var now = nowMs(), ph = phaseOf(now), race = seededRace(ph.raceId);
         if (ballOpen) {
             var bi = ballInfo(ph), cd = el('dograce-ball-cd'), ico = el('dograce-ball-ico');

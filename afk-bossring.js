@@ -97,7 +97,7 @@
         cb.checked = isOn();
         cb.addEventListener('change', function () { setOn(cb.checked); });
     }
-    setInterval(injectCheckbox, 1500);
+    setInterval(function () { if (!document.hidden) injectCheckbox(); }, 1500);   // 純 DOM 注入檢查,背景分頁跳過(自動找王的 tick 不在此列,照常跑)
     injectCheckbox();
 
     function anyBoss() { try { return mapState.mobs.some(function (m) { return m && m.boss && !m._dead; }); } catch (e) { return true; } }
