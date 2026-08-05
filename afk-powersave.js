@@ -33,6 +33,21 @@
         }
     });
 
+    // ①-b 關動畫時,怪物卡的初始圖要改要「待機首幀」而不是「登場動畫首幀」。
+    //   核心戰鬥渲染呼叫 mobStillImg(name, img, preferSpawn=true) → 初始 src = spawn_0.png,
+    //   本來會在下一個 8fps tick 被 _mobAnimApply 換成真正的幀;動畫關掉後那步不跑 → 圖就凍在 spawn_0。
+    //   而破土/從骨堆爬起那類登場動畫的第 0 幀是**全透明的**(實測 骷髏/史巴托/殘暴的史巴托/被侵蝕的安塔瑞斯 0%、
+    //   林德拜爾 0.15%、巨大骷髏 0.32%、安塔瑞斯 0.43%)→ 玩家看到的是「這隻怪沒有圖」。
+    //   順帶解掉另一個副作用:動畫關著時幀檔探測不會跑,mobStillImg 會對「根本沒有登場動畫」的 530 隻怪
+    //   每次重繪都固定要一次 spawn_0.png(404)。
+    if (typeof window.mobStillImg === 'function' && !window.mobStillImg.__afkPs) {
+        var _origStill = window.mobStillImg;
+        window.mobStillImg = function (name, staticUrl, preferSpawn) {
+            return _origStill.call(this, name, staticUrl, on('noanim') ? false : preferSpawn);
+        };
+        window.mobStillImg.__afkPs = true;
+    }
+
     // ② 降畫面更新頻率：時間節流 updateUI / renderMobs（開啟時 ~最多 8fps）。遊戲邏輯(tick)不受影響。
     var _last = {};
     var MIN_MS = 125;   // 約 8fps
