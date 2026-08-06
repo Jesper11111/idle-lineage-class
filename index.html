@@ -633,7 +633,7 @@
     <script src="js/22-pets.js?v=8e36922cec.8.23-sherine-set-rework"></script>
     <script src="js/24-pandora-relic-market.js?v=f50c6e518f.7.70"></script>
     <script src="js/25-clan-system.js?v=c78fb35df2.8.7-social-private"></script>
-    <script src="js/26-world-channel.js?v=9f45eaff51.8.13-private-bond"></script>
+    <script src="js/26-world-channel.js?v=f30ff24761.8.13-private-bond"></script>
 <script src="js/28-pvp-arena.js?v=3448feb9f9.7.89-stage33-host-sign"></script>
 <script src="js/29-siege-v2-data.js?v=eae6887df7.7.63-siege-v2"></script>
 <script src="js/30-siege-v2.js?v=616f9643f4.7.89-castle-ring-layout"></script>
@@ -658,17 +658,18 @@
     <script src="afk-extradata.js?v=0529b1eb31"></script>
     <!-- 離線快速結算（自己 monkey-patch 包核心 saveGame/loadGame/changeMap/killMob/gainItem；搭配 maybeSpawnMobs 補丁） -->
     <!-- BEGIN JESPER LOCAL POLICY -->
-    <!-- Jesper 本地層：全裝置隱藏來源橫幅、離線互斥、舊傭兵政策、手機圖片／音效記憶體上限、同步保留的背包增量更新、廢品自動販賣安全；必須早於 PP 的 afk-offline.js。 -->
+    <!-- Jesper 本地層：全裝置隱藏來源橫幅、離線互斥、舊傭兵／性向政策、手機圖片／音效記憶體上限、同步保留的背包增量更新、廢品自動販賣安全；必須早於 PP 的 afk-offline.js。 -->
     <script src="afk-mobile-banner.js?v=ec574f91b7"></script>
     <script src="afk-offline-owner.js?v=b2dd3cc476"></script>
     <script src="afk-merc-policy.js?v=3dd1acc540"></script>
+    <script src="afk-alignment-policy.js?v=b820453744"></script>
     <script src="afk-mobile-memory.js?v=7fa005caa0"></script>
     <script src="afk-mobile-audio-memory.js?v=71600a2ee3"></script>
     <!-- 先載入、DOMContentLoaded 才安裝，確保包在 PP 後續 renderTabs wrappers 的最外層。 -->
     <script src="afk-powersave-inventory.js?v=30aa4b8b5a"></script>
     <script src="afk-junk-autosell-policy.js?v=d2921501ab"></script>
     <!-- END JESPER LOCAL POLICY -->
-    <script src="afk-offline.js?v=b3335ac8a9"></script>
+    <script src="afk-offline.js?v=4829652bf0"></script>
     <!-- 手機版面 / 返回鍵 -->
     <script src="afk-mobile.js?v=543b867005"></script>
     <script src="afk-backnav.js?v=a02389afc7"></script>
@@ -681,7 +682,7 @@
     <script src="afk-slotinfo.js?v=ecb9ec5a26"></script>
     <script src="afk-loadslots.js?v=a43834b125"></script>
     <script src="afk-dex.js?v=23ee3c34ff"></script>
-    <script src="afk-wiki.js?v=87df27ba3a"></script>
+    <script src="afk-wiki.js?v=73d4088964"></script>
     <!-- 設定選單 / 存檔 / 診斷 / 離線紀錄 -->
     <script src="afk-storage.js?v=302890a0df"></script>
     <!-- 整包備份／還原（本機檔案）：入口掛在 afk-storage 的設定選單裡，必須排在它之後 -->

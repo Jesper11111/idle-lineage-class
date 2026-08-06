@@ -1,5 +1,5 @@
 /* ============================================================================
- * smoke-hooks.mjs — 冒煙測試:用無頭瀏覽器載入 index.html,確認五支外掛都 hook 成功
+ * smoke-hooks.mjs — 冒煙測試:用無頭瀏覽器載入 index.html,確認必要外掛都 hook 成功
  *
  * 用途:自動同步 PP index.html 後,驗證 PP 更新沒有改壞外掛掛點(改 id / DOM 結構)。
  *   - 全部 hooks OK → exit 0(workflow 才會 commit/push)
@@ -52,7 +52,7 @@ const logs = [];
 // afk-battlehud 桌機也會 init(只是 CSS 讓它不顯示)→ 放 need 即可;它取代的是核心手機版 #mobile-vitals。
 // afk-touchtip 只在觸控裝置 init(桌機有 hover,本來就不該掛)→ 桌機那輪永遠等不到,必須放手機輪。
 const needMobileOnly = ['[AFK-touchtip]'];
-const need = ['[AFK]', '[AFK-merc-policy]', '[AFK-banner]', '[AFK-mobile-banner]', '[AFK-mobile-memory]', '[AFK-mobile-audio-memory]', '[AFK-lzcache]', '[AFK-synccompress]', '[AFK-mobile]', '[AFK-backnav]', '[AFK-battlehud]', '[AFK-mapbar]', '[AFK-nozoom]', '[AFK-trackinfo]', '[AFK-relicguard]', '[AFK-enhtarget]', '[AFK-retrial]', '[AFK-battlebuffs]', '[AFK-slotinfo]', '[AFK-dex]', '[AFK-wiki]', '[AFK-syncinfo]', '[AFK-statpts]', '[AFK-statlist]', '[AFK-pwa]', '[AFK-storage]', '[AFK-history]', '[AFK-quotawarn]', '[AFK-notice]', '[AFK-reissueid]', '[AFK-diag]', '[AFK-mobname]', '[AFK-training]', '[AFK-powersave]', '[AFK-powersave-inventory]', '[AFK-junk-autosell-policy]', '[AFK-itemsearch]', '[AFK-eqlist]', '[AFK-npclist]', '[AFK-skin]', '[AFK-junkmgr]', '[AFK-mercguard]'];
+const need = ['[AFK]', '[AFK-merc-policy]', '[AFK-alignment-policy]', '[AFK-banner]', '[AFK-mobile-banner]', '[AFK-mobile-memory]', '[AFK-mobile-audio-memory]', '[AFK-lzcache]', '[AFK-synccompress]', '[AFK-mobile]', '[AFK-backnav]', '[AFK-battlehud]', '[AFK-mapbar]', '[AFK-nozoom]', '[AFK-trackinfo]', '[AFK-relicguard]', '[AFK-enhtarget]', '[AFK-retrial]', '[AFK-battlebuffs]', '[AFK-slotinfo]', '[AFK-dex]', '[AFK-wiki]', '[AFK-syncinfo]', '[AFK-statpts]', '[AFK-statlist]', '[AFK-pwa]', '[AFK-storage]', '[AFK-history]', '[AFK-quotawarn]', '[AFK-notice]', '[AFK-reissueid]', '[AFK-diag]', '[AFK-mobname]', '[AFK-training]', '[AFK-powersave]', '[AFK-powersave-inventory]', '[AFK-junk-autosell-policy]', '[AFK-itemsearch]', '[AFK-eqlist]', '[AFK-npclist]', '[AFK-skin]', '[AFK-junkmgr]', '[AFK-mercguard]'];
 const seen = (list) => list.every((n) => logs.some((l) => l.includes(n) && l.includes('hooks OK')));
 
 // ⚠ 不用 waitUntil:'networkidle':作者新版(.49 起)加了背景音樂 assets/bgm/*.mp3，<audio> 媒體串流會讓網路
@@ -505,4 +505,4 @@ if (mercPolicyProblems.length) {
   process.exit(1);
 }
 
-console.log('冒煙測試通過:外掛 hooks、舊離線互斥、傭兵混合政策與 v3.8.34 戰鬥模組均成立，且地圖名已完整翻譯。');
+console.log('冒煙測試通過:外掛 hooks、舊離線互斥、傭兵／性向政策與 v3.8.34 戰鬥模組均成立，且地圖名已完整翻譯。');
