@@ -658,10 +658,11 @@
     <script src="afk-extradata.js?v=0529b1eb31"></script>
     <!-- 離線快速結算（自己 monkey-patch 包核心 saveGame/loadGame/changeMap/killMob/gainItem；搭配 maybeSpawnMobs 補丁） -->
     <!-- BEGIN JESPER LOCAL POLICY -->
-    <!-- Jesper 本地層：全裝置隱藏來源橫幅、離線互斥、舊傭兵政策、手機圖片／音效記憶體上限、同步保留的背包增量更新、廢品自動販賣安全；必須早於 PP 的 afk-offline.js。 -->
+    <!-- Jesper 本地層：全裝置隱藏來源橫幅、離線互斥、舊傭兵／性向政策、手機圖片／音效記憶體上限、同步保留的背包增量更新、廢品自動販賣安全；必須早於 PP 的 afk-offline.js。 -->
     <script src="afk-mobile-banner.js?v=ec574f91b7"></script>
     <script src="afk-offline-owner.js?v=b2dd3cc476"></script>
     <script src="afk-merc-policy.js?v=3dd1acc540"></script>
+    <script src="afk-alignment-policy.js"></script>
     <script src="afk-mobile-memory.js?v=7fa005caa0"></script>
     <script src="afk-mobile-audio-memory.js?v=71600a2ee3"></script>
     <!-- 先載入、DOMContentLoaded 才安裝，確保包在 PP 後續 renderTabs wrappers 的最外層。 -->

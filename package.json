@@ -11,6 +11,7 @@
     "test:powersave-inventory": "node scripts/test-powersave-inventory.mjs",
     "test:junk-autosell": "node scripts/test-junk-autosell-policy.mjs",
     "test:merc-exp": "node scripts/test-merc-exp-policy.mjs",
+    "test:alignment": "node scripts/test-alignment-policy.mjs",
     "test:mobile-memory": "node scripts/test-mobile-memory.mjs",
     "test:mobile-stress": "node scripts/test-mobile-stability-stress.mjs",
     "test:mobile-stress-webkit": "node scripts/test-mobile-stability-stress.mjs --webkit",

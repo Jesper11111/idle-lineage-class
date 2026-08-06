@@ -45,8 +45,8 @@ function mirrorFlatDir(name, accept = () => true) {
   console.log(`[sync] 鏡像 ${name}/：${upstreamFiles.size} 檔`);
 }
 
-// 先直接預演外部 PP checkout；五層補丁全通過前不可覆蓋目前可用工作樹。
-// 隔離 fixture 會依正式順序驗證首次可套、第二次零變更與五層 --check。
+// 先直接預演外部 PP checkout；六層補丁全通過前不可覆蓋目前可用工作樹。
+// 隔離 fixture 會依正式順序驗證首次可套、第二次零變更與六層 --check。
 runNode('scripts/test-full-sync-preflight.mjs', '--source-dir', UP);
 runNode('scripts/check-save-io.mjs', '--source-dir', UP);
 
@@ -58,6 +58,7 @@ const localAfkFiles = new Set([
   'afk-mobile-banner.js',
   'afk-offline-owner.js',
   'afk-merc-policy.js',
+  'afk-alignment-policy.js',
   'afk-mobile-memory.js',
   'afk-mobile-audio-memory.js',
   'afk-powersave-inventory.js',
@@ -89,13 +90,14 @@ idx = idx.replace(offlineTag[0], block + '\n' + offlineTag[0]);
 writeFileSync('index.html', idx);
 console.log('[sync] index.html = PP 完成品 + Jesper 本地政策層');
 
-// 固定重套順序：核心 → PP 外掛生命週期 → Shines 回移 → Jesper 政策 → 離線安全。
+// 固定重套順序：核心 → PP 外掛生命週期 → Shines 回移 → Jesper 傭兵政策 → 性向政策 → 離線安全。
 // 全部套完才跑 --check 與行為測試，避免只驗到半套中間狀態。
 const patchScripts = [
   'scripts/apply-core-patches.mjs',
   'scripts/apply-plugin-lifecycle-patches.mjs',
   'scripts/apply-shines-backports.mjs',
   'scripts/apply-policy-patches.mjs',
+  'scripts/apply-alignment-policy-patches.mjs',
   'scripts/apply-offline-safety-patches.mjs',
 ];
 for (const script of patchScripts) runNode(script);

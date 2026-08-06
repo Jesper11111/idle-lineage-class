@@ -70,6 +70,7 @@ CI 版:GitHub Actions `sync-upstream.yml`(**只有 `workflow_dispatch`,無 GitHu
 | `afk-extradata.js` | dex/wiki 共用手動補充資料(`AFK_EXTRA`:itemAcquire/武器特性白話/mapName) |
 | `afk-offline-owner.js` | 在 PP offline 載入前宣告本站舊離線引擎擁有結算權 |
 | `afk-merc-policy.js` | 傭兵經驗權重 0.4、王族本人統率 +30%/名（最高 +210%、帶滿保底含娃娃單練）、金幣 ×1、每名未倒地傭兵掉寶 +60%／招募／受僱政策、回城免費更新快照與妖精傭兵不限當前屬性精靈魔法 |
+| `afk-alignment-policy.js` | 一般怪物依等級、正負修正與平方根隨機除數增加性向；+1,000／+10,000 後分段遞減，線上與離線共用擊殺管線 |
 | `afk-offline.js` | PP 舊版離線掛機整套;由本站安全補丁維持嚴格獨占、首次遷移不補算與特殊副本禁圖 |
 | `afk-mobile.js` | 手機版面薄殼(底部導覽列切三欄、手機幾何的彈窗讓位、浮動日誌;版面用上游原版) |
 | `afk-backnav.js` | 手機返回鍵/手勢在子畫面回上層而不是關 PWA |

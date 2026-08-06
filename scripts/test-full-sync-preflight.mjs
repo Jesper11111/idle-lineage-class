@@ -25,6 +25,7 @@ const LOCAL_POLICY_FILES = [
   'afk-mobile-banner.js',
   'afk-offline-owner.js',
   'afk-merc-policy.js',
+  'afk-alignment-policy.js',
   'afk-mobile-memory.js',
   'afk-mobile-audio-memory.js',
   'afk-powersave-inventory.js',
@@ -38,6 +39,7 @@ const PATCH_SCRIPTS = [
   'scripts/apply-plugin-lifecycle-patches.mjs',
   'scripts/apply-shines-backports.mjs',
   'scripts/apply-policy-patches.mjs',
+  'scripts/apply-alignment-policy-patches.mjs',
   'scripts/apply-offline-safety-patches.mjs',
 ];
 
@@ -178,9 +180,10 @@ try {
   assert.match(checkOutputs[1], /\d+ 支 PP 外掛生命週期修正完整/, '外掛 --check 未通過');
   assert.match(checkOutputs[2], /全部 \d+ 個 Shines 回移契約均已就位/, 'Shines --check 未通過');
   assert.match(checkOutputs[3], /傭兵經驗 0\.4 權重、王族統率 \+30%\/名（最高 \+210%）/, '政策 --check 未通過');
-  assert.match(checkOutputs[4], /離線安全政策均已就位/, '離線 --check 未通過');
+  assert.match(checkOutputs[4], /怪物等級、雙層隨機、性向分段/, '性向政策 --check 未通過');
+  assert.match(checkOutputs[5], /離線安全政策均已就位/, '離線 --check 未通過');
 
-  console.log(`✅ 完整同步隔離預演：核心 → 外掛 → Shines → 政策 → 離線，首次套用、二次零變更、五層 --check 通過（${sourceDir || sourceRef}）`);
+  console.log(`✅ 完整同步隔離預演：核心 → 外掛 → Shines → 傭兵政策 → 性向政策 → 離線，首次套用、二次零變更、六層 --check 通過（${sourceDir || sourceRef}）`);
   if (process.env.AFK_PATCH_TEST_VERBOSE === '1') {
     console.log(firstOutputs.map(output => output.trim()).join('\n'));
   }
